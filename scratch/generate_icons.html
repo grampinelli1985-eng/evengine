@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Icon Generator</title>
+</head>
+<body>
+  <h1>EVEngine Icon Generator</h1>
+  <div id="status">Generating...</div>
+  
+  <div>
+    <h3>512x512</h3>
+    <textarea id="icon512" style="width: 100%; height: 100px;"></textarea>
+  </div>
+  <div>
+    <h3>192x192</h3>
+    <textarea id="icon192" style="width: 100%; height: 100px;"></textarea>
+  </div>
+  <div>
+    <h3>favicon (32x32)</h3>
+    <textarea id="favicon" style="width: 100%; height: 100px;"></textarea>
+  </div>
+
+  <script>
+    function generateIcon(size) {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      
+      // 1. Clear with transparent background
+      ctx.clearRect(0, 0, size, size);
+      
+      // 2. Draw rounded square (squircle)
+      // Add padding: 5% of size
+      const padding = size * 0.05;
+      const rectSize = size - padding * 2;
+      const x = padding;
+      const y = padding;
+      const radius = rectSize * 0.25; // 25% corner radius
+      
+      // Blue background (#2563eb)
+      ctx.fillStyle = '#2563eb';
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.arcTo(x + rectSize, y, x + rectSize, y + rectSize, radius);
+      ctx.arcTo(x + rectSize, y + rectSize, x, y + rectSize, radius);
+      ctx.arcTo(x, y + rectSize, x, y, radius);
+      ctx.arcTo(x, y, x + rectSize, y, radius);
+      ctx.closePath();
+      ctx.fill();
+      
+      // 3. Draw letter "E" in white
+      const eWidth = rectSize * 0.45;
+      const eHeight = rectSize * 0.6;
+      const eX = x + (rectSize - eWidth) / 2;
+      const eY = y + (rectSize - eHeight) / 2;
+      
+      ctx.fillStyle = '#ffffff';
+      
+      // Left vertical stem
+      const stemWidth = eWidth * 0.28;
+      ctx.fillRect(eX, eY, stemWidth, eHeight);
+      
+      // Top horizontal bar
+      const barHeight = eHeight * 0.21;
+      ctx.fillRect(eX, eY, eWidth, barHeight);
+      
+      // Middle horizontal bar
+      const midBarHeight = eHeight * 0.18;
+      const midBarWidth = eWidth * 0.82;
+      const midBarY = eY + (eHeight - midBarHeight) / 2;
+      ctx.fillRect(eX, midBarY, midBarWidth, midBarHeight);
+      
+      // Bottom horizontal bar
+      ctx.fillRect(eX, eY + eHeight - barHeight, eWidth, barHeight);
+      
+      return canvas.toDataURL('image/png');
+    }
+
+    try {
+      document.getElementById('icon512').value = generateIcon(512);
+      document.getElementById('icon192').value = generateIcon(192);
+      document.getElementById('favicon').value = generateIcon(32);
+      document.getElementById('status').innerText = 'Done!';
+    } catch (e) {
+      document.getElementById('status').innerText = 'Error: ' + e.message;
+    }
+  </script>
+</body>
+</html>

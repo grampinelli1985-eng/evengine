@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0a0a0b;
+  --color-sidebar: #0d0d0f;
+  --color-card: #141416;
+  --color-accent: #2563eb;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --font-sans: -apple-system, BlinkMacSystemFont, "San Francisco", "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, "San Francisco", "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  @apply bg-background text-[#e1e1e3];
+  overflow-x: hidden;
+  width: 100%;
+  position: relative;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  outline-color: var(--color-accent);
+}
+
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+@keyframes borderPulse {
+  0% {
+    border-color: rgba(239, 68, 68, 0.2);
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.05);
+  }
+  50% {
+    border-color: rgba(239, 68, 68, 0.6);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.25);
+  }
+  100% {
+    border-color: rgba(239, 68, 68, 0.2);
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.05);
+  }
+}
+
+.animate-pulse-border {
+  animation: borderPulse 2s infinite ease-in-out;
+}
+
+@keyframes approvedPulse {
+  0% {
+    border-color: rgba(0, 230, 118, 0.25);
+    box-shadow: 0 0 12px rgba(0, 230, 118, 0.08);
+  }
+  50% {
+    border-color: rgba(0, 230, 118, 0.85);
+    box-shadow: 0 0 24px rgba(0, 230, 118, 0.45);
+  }
+  100% {
+    border-color: rgba(0, 230, 118, 0.25);
+    box-shadow: 0 0 12px rgba(0, 230, 118, 0.08);
+  }
+}
+
+.animate-pulse-approved {
+  animation: approvedPulse 2.2s infinite ease-in-out;
+}
+

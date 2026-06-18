@@ -1,0 +1,189 @@
+{
+  "auditoria_data": "2026-05-19T01:30:00Z",
+  "total_partidas": 15,
+  "categorias": {
+    "Favorito Claro": {
+      "descricao": "Gemini estimativa > 60%",
+      "viés_medio_GE": -0.80,
+      "viés_medio_GP": -2.88,
+      "veredito": "CALIBRADO",
+      "partidas": [
+        {
+          "jogo": "Manchester City vs Brentford",
+          "prob_gemini": 74.0,
+          "prob_elo": 76.0,
+          "odd_pinnacle": 1.30,
+          "prob_pinnacle": 76.9,
+          "delta_GE": -2.0,
+          "delta_GP": -2.9,
+          "status": "CALIBRADO"
+        },
+        {
+          "jogo": "Real Madrid vs Espanyol",
+          "prob_gemini": 78.0,
+          "prob_elo": 80.0,
+          "odd_pinnacle": 1.22,
+          "prob_pinnacle": 82.0,
+          "delta_GE": -2.0,
+          "delta_GP": -4.0,
+          "status": "CALIBRADO"
+        },
+        {
+          "jogo": "Arsenal vs Leicester",
+          "prob_gemini": 70.0,
+          "prob_elo": 72.0,
+          "odd_pinnacle": 1.35,
+          "prob_pinnacle": 74.1,
+          "delta_GE": -2.0,
+          "delta_GP": -4.1,
+          "status": "CALIBRADO"
+        },
+        {
+          "jogo": "Bayern Munich vs Bochum",
+          "prob_gemini": 83.0,
+          "prob_elo": 85.0,
+          "odd_pinnacle": 1.15,
+          "prob_pinnacle": 87.0,
+          "delta_GE": -2.0,
+          "delta_GP": -4.0,
+          "status": "CALIBRADO"
+        },
+        {
+          "jogo": "PSG vs Strasbourg",
+          "prob_gemini": 72.0,
+          "prob_elo": 68.0,
+          "odd_pinnacle": 1.40,
+          "prob_pinnacle": 71.4,
+          "delta_GE": 4.0,
+          "delta_GP": 0.6,
+          "status": "CALIBRADO"
+        }
+      ]
+    },
+    "Equilibrado": {
+      "descricao": "Gemini estimativa entre 40% e 60%",
+      "viés_medio_GE": 1.60,
+      "viés_medio_GP": 0.66,
+      "veredito": "CALIBRADO",
+      "partidas": [
+        {
+          "jogo": "Chelsea vs Tottenham",
+          "prob_gemini": 52.0,
+          "prob_elo": 48.0,
+          "odd_pinnacle": 2.05,
+          "prob_pinnacle": 48.8,
+          "delta_GE": 4.0,
+          "delta_GP": 3.2,
+          "status": "CALIBRADO"
+        },
+        {
+          "jogo": "Atletico Madrid vs Athletic Bilbao",
+          "prob_gemini": 46.0,
+          "prob_elo": 45.0,
+          "odd_pinnacle": 2.15,
+          "prob_pinnacle": 46.5,
+          "delta_GE": 1.0,
+          "delta_GP": -0.5,
+          "status": "CALIBRADO"
+        },
+        {
+          "jogo": "Juventus vs AS Roma",
+          "prob_gemini": 48.0,
+          "prob_elo": 50.0,
+          "odd_pinnacle": 2.00,
+          "prob_pinnacle": 50.0,
+          "delta_GE": -2.0,
+          "delta_GP": -2.0,
+          "status": "CALIBRADO"
+        },
+        {
+          "jogo": "Flamengo vs Palmeiras",
+          "prob_gemini": 44.0,
+          "prob_elo": 41.0,
+          "odd_pinnacle": 2.30,
+          "prob_pinnacle": 43.5,
+          "delta_GE": 3.0,
+          "delta_GP": 0.5,
+          "status": "CALIBRADO"
+        },
+        {
+          "jogo": "Bayer Leverkusen vs Borussia Dortmund",
+          "prob_gemini": 56.0,
+          "prob_elo": 54.0,
+          "odd_pinnacle": 1.82,
+          "prob_pinnacle": 54.9,
+          "delta_GE": 2.0,
+          "delta_GP": 1.1,
+          "status": "CALIBRADO"
+        }
+      ]
+    },
+    "Underdog": {
+      "descricao": "Gemini estimativa < 30%",
+      "viés_medio_GE": 10.80,
+      "viés_medio_GP": 7.56,
+      "veredito": "OTIMISTA SEVERO",
+      "partidas": [
+        {
+          "jogo": "Bournemouth vs Manchester City",
+          "prob_gemini": 27.0,
+          "prob_elo": 15.0,
+          "odd_pinnacle": 4.90,
+          "prob_pinnacle": 20.4,
+          "delta_GE": 12.0,
+          "delta_GP": 6.6,
+          "status": "OTIMISTA SEVERO"
+        },
+        {
+          "jogo": "Everton vs Liverpool",
+          "prob_gemini": 25.0,
+          "prob_elo": 16.0,
+          "odd_pinnacle": 5.25,
+          "prob_pinnacle": 19.0,
+          "delta_GE": 9.0,
+          "delta_GP": 6.0,
+          "status": "OTIMISTA SEVERO"
+        },
+        {
+          "jogo": "Las Palmas vs Barcelona",
+          "prob_gemini": 22.0,
+          "prob_elo": 11.0,
+          "odd_pinnacle": 7.00,
+          "prob_pinnacle": 14.3,
+          "delta_GE": 11.0,
+          "delta_GP": 7.7,
+          "status": "OTIMISTA SEVERO"
+        },
+        {
+          "jogo": "Bochum vs Bayern Munich",
+          "prob_gemini": 24.0,
+          "prob_elo": 10.0,
+          "odd_pinnacle": 8.00,
+          "prob_pinnacle": 12.5,
+          "delta_GE": 14.0,
+          "delta_GP": 11.5,
+          "status": "OTIMISTA SEVERO"
+        },
+        {
+          "jogo": "Como vs Inter Milan",
+          "prob_gemini": 26.0,
+          "prob_elo": 18.0,
+          "odd_pinnacle": 5.00,
+          "prob_pinnacle": 20.0,
+          "delta_GE": 8.0,
+          "delta_GP": 6.0,
+          "status": "OTIMISTA SEVERO"
+        }
+      ]
+    }
+  },
+  "veredito_geral": "O motor de estimativa Gemini possui um viés otimista sistemático e severo (+10.8% GE / +7.56% GP) em relação a underdogs.",
+  "status_paper_trading_original": "REJEITADO - REQUER CALIBRAÇÃO",
+  "acoes_corretivas_aplicadas": [
+    "Implementação do multiplicador de calibração 0.70x nas estimativas de underdogs (< 30%) da Gemini.",
+    "Implementação do Gate B-UNDERDOG-CALIBRATION como a primeira linha de defesa absoluta (Gate 0).",
+    "Recálculo automático dos valores de EV e Kelly baseados na probabilidade devidamente calibrada.",
+    "Criação e aprovação de testes unitários automatizados cobrindo os cenários de calibração e bloqueio de underdogs."
+  ],
+  "status_final_pos_calibracao": "APROVADO E CALIBRADO PARA PAPER TRADING"
+}

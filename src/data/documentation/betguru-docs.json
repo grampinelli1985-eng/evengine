@@ -1,0 +1,486 @@
+{
+  "version": "1.0",
+  "lastUpdated": "2026-05-22",
+  "totalSections": 10,
+  "sections": [
+    {
+      "id": "visao-geral",
+      "title": "Visão Geral",
+      "icon": "📖",
+      "order": 1,
+      "content": "## O que é EVENGINE?\n\nEVENGINE é um **sistema quantitativo de análise de apostas esportivas** que utiliza:\n\n* **Inteligência Artificial (Gemini):** Para decodificar notícias, desfalques, motivações e contextos qualitativos que números não conseguem capturar.\n* **Modelos Matemáticos (Poisson e ELO):** Para calcular probabilidades limpas baseadas em histórico de gols e força relativa determinística.\n* **Análise de Mercado (Sharp Money Detection):** Para monitorar as linhas das casas profissionais (*sharp books*, como a Pinnacle) e evitar apostar contra os sindicatos de investidores.\n* **Gerenciamento de Risco (9 Gates de Proteção):** Para filtrar apostas de margem fina e proteger rigorosamente a sua banca contra a volatilidade e ruína.\n\n---\n\n## 🛡️ Não é um Palpiteiro\n\nEVENGINE **NÃO** é um gerador de palpites recreativo.\n\nEVENGINE **É** um:\n* **Engine quantitativo profissional:** Operando com a rigidez analítica de um *Hedge Fund* quantitativo esportivo.\n* **Sistema de proteção de patrimônio:** Focado primordialmente em gerenciar riscos e evitar perdas de valor esperado negativo (EV-).\n* **Calculador de value betting:** Identificando desvios onde as casas de apostas públicas precificaram errado.\n* **Detector de armadilhas de mercado:** Protegendo você de timing ruim e oscilações manipuladas pelas casas.\n\n---\n\n## ✅ Garantias e Limitações\n\n### 🟢 O Sistema GARANTE:\n1. **Proteção contra odds desvalorizadas:** Bloqueio instantâneo se a odd disponível não contiver vantagem matemática.\n2. **Defesa contra sharp money adverso:** Bloqueio se os apostadores profissionais se posicionarem contra a nossa posição.\n3. **Cálculo preciso de Value (EV):** Desconto sistemático do *vig* (margem da casa) para calcular probabilidades reais.\n4. **Alocação de stake científica:** Uso de *Quarter-Kelly* para maximizar o crescimento geométrico minimizando a volatilidade.\n\n### 🔴 O Sistema NÃO GARANTE:\n1. **100% de acertos:** O futebol possui aleatoriedade intrínseca e fatores imprevistos.\n2. **Lucro rápido:** Ganhos consistentes exigem tempo, disciplina e convergência estatística (mínimo 30-60 dias).\n3. **Ausência de *reds* individuais:** Sequências de perdas (*bad runs*) fazem parte do percurso matemático. O foco é no ROI de longo prazo.",
+      "subsections": [
+        {
+          "id": "o-que-e-evengine",
+          "title": "O que é EVENGINE?",
+          "content": "EVENGINE é um sistema quantitativo de análise de apostas esportivas que combina inteligência artificial (Gemini) com modelos matemáticos consagrados e gerenciamento de risco cirúrgico para prover recomendações de valor esperado positivo (EV+)."
+        },
+        {
+          "id": "nao-palpiteiro",
+          "title": "Não é um Palpiteiro",
+          "content": "O EVENGINE não opera com achismos, intuições ou palpites emocionais. Ele é construído para operar de forma fria e probabilística, focando em proteção de capital e valor esperável geométrico de longo prazo."
+        },
+        {
+          "id": "garantias",
+          "title": "Garantias e Limitações",
+          "content": "O sistema garante a integridade estatística, a calibragem dos modelos e o veto rígido contra apostas de valor negativo ou expostas a riscos severos. Ele não garante lucros em curtíssimo prazo devido à variância intrínseca dos esportes."
+        }
+      ],
+      "keywords": [
+        "evengine",
+        "sistema",
+        "quantitativo",
+        "análise",
+        "introdução",
+        "limitações",
+        "garantias"
+      ]
+    },
+    {
+      "id": "filosofia",
+      "title": "💡 Filosofia do Sistema",
+      "icon": "💡",
+      "order": 2,
+      "content": "## Princípio Fundamental\n\n> \"Uma aposta não é boa ou ruim por seus resultados.\n> Uma aposta é boa se tem Valor Esperado (EV) positivo no momento da entrada.\"\n\nEsta é a fundação da atuação de qualquer investidor esportivo quantitativo profissional. O resultado de uma única partida é influenciado por desvios de sorte e azar. No entanto, apostar repetidamente em odds que pagam mais do que a sua probabilidade matemática real garante retornos lucráveis inevitáveis no longo prazo.\n\n---\n\n## 📊 O que EVENGINE Entende\n\n### 🟢 APOSTA COM EV +5%:\n* **Se ganhar:** \"Sucesso matemático. Executamos uma aposta com edge positivo.\"\n* **Se perder:** \"Sucesso matemático idêntico. A aposta foi correta. A variância do jogo causou a derrota, mas repetir esse cenário 100 vezes trará lucro.\"\n* **Conclusão:** Ambos os casos representam sucesso operacional.\n\n### 🔴 APOSTA COM EV -10%:\n* **Se ganhar:** \"Fracasso matemático. Ganhamos por mera sorte, mas tomar essa decisão repetidamente levará à ruína inevitável da banca.\"\n* **Se perder:** \"Exatamente o esperado para decisões ruins.\"\n* **Conclusão:** Ambos os casos representam fracasso operacional.\n\n---\n\n## 🧠 Mentalidade Amadora vs. Profissional\n\n### ❌ O Apostador Amador:\n* Avalia o sucesso puramente pela taxa de acerto do dia anterior.\n* Acha que odds baixas (ex: 1.20) são apostas seguras e garantidas.\n* Aumenta as stakes irracionalmente para recuperar perdas (*loss chasing*).\n* Ignora o movimento das odds de mercado e a margem cobrada pela casa.\n\n### 🟢 O Profissional (EVENGINE):\n* Foca no valor esperado (EV) acumulado e no crescimento geométrico da banca.\n* Entende que as zebras representam excelentes oportunidades se estiverem hiperprecificadas pelas casas.\n* Segue rigorosamente a alocação de stake do *Quarter-Kelly*.\n* Só opera quando todos os portões de segurança de risco aprovarem a operação.",
+      "subsections": [
+        {
+          "id": "principio-fundamental",
+          "title": "Princípio Fundamental",
+          "content": "Uma aposta é matematicamente correta quando a odd oferecida é superior à odd justa calculada, independente do resultado de curto prazo da partida específica."
+        },
+        {
+          "id": "ev-entendimento",
+          "title": "O que EVENGINE Entende",
+          "content": "Entrar em mercados com EV positivo é o único caminho matematicamente sustentável. Perdas parciais com EV positivo são normais e aceitáveis; vitórias com EV negativo são perigosas ilusões."
+        },
+        {
+          "id": "mentalidade",
+          "title": "Mentalidade Correta",
+          "content": "O investidor quantitativo profissional aceita a variância de curto prazo e foca em manter um Closing Line Value (CLV) positivo e disciplina operacional estrita."
+        }
+      ],
+      "keywords": [
+        "filosofia",
+        "mentalidade",
+        "EV",
+        "edge",
+        "longo prazo",
+        "variância",
+        "banca"
+      ]
+    },
+    {
+      "id": "como-funciona",
+      "title": "🔧 Como Funciona",
+      "icon": "🔧",
+      "order": 3,
+      "content": "## Fluxo Completo de Análise e Execução\n\nO EVENGINE opera através de um pipeline analítico rigoroso dividido em 7 fases bem definidas:\n\n```\nFASE 1: Entrada do Jogo\n        │ (Seleção de partida futura com liquidez)\n        ▼\nFASE 2: Coleta Multidimensional de Dados\n        ├─ Odds de múltiplas casas (Pinnacle como âncora, Bet365, Betfair)\n        ├─ Histórico de confrontos diretos (H2H) dos últimos anos\n        ├─ Estatísticas factuais de forma (últimos 10 jogos)\n        ├─ Ratings de força relativa ELO local\n        ├─ Line Movement (Variação de cotações nas últimas 48h)\n        └─ Dados qualitativos de Scouting (Lesões, suspensões, clima, motivação)\n        ▼\nFASE 3: Processamento Qualitativo por IA (Gemini 2.0 Flash)\n        ├─ Contexto e a narrativa de campo (Scouting)\n        ├─ Gera probabilidades subjetivas calibradas\n        └─ Retorna o score de confiança técnica da análise\n        ▼\nFASE 4: Processamento Quantitativo Estatístico (Modelos Físicos)\n        ├─ Distribuição Poisson: Projeta gols esperados individuais e BTTS\n        └─ Modelo ELO: Determina probabilidade baseline livre de overround\n        ▼\nFASE 5: Fusão Estatística e Cálculo de Valor\n        ├─ Blend ponderado (60/40) Poisson vs Gemini\n        ├─ Desconto sistemático do Vig (Margem) das odds de referência\n        └─ Cálculo do Valor Esperado (EV) de todos os mercados\n        ▼\nFASE 6: Os 9 Portões de Proteção de Risco\n        ├─ Filtra e bloqueia automaticamente se violar qualquer Gate (B1 a B-UNDERDOG)\n        └─ Avalia a convergência entre os modelos estatísticos e a IA\n        ▼\nFASE 7: Saída Recomendada na Interface (UI)\n        ├─ Seleciona o melhor mercado pelo Kelly-Adjusted Return\n        ├─ Determina a stake ideal precisa (Quarter-Kelly)\n        └─ Exibe a razão de bloqueio de cada gate que vetou a entrada\n```",
+      "subsections": [
+        {
+          "id": "fluxo-completo",
+          "title": "Fluxo Completo",
+          "content": "Do cadastro de um jogo à decisão final, o EVENGINE executa análises qualitativas (IA) e quantitativas (Poisson e ELO) em milissegundos, passando tudo pelo filtro dos 9 Gates antes de liberar um bilhete."
+        },
+        {
+          "id": "entrada-saida",
+          "title": "Entrada vs Saída",
+          "content": "A entrada é qualquer jogo de futebol futuro elegível. A saída é um relatório analítico contendo probabilidades de cada mercado, Valor Esperado (EV), stake exata recomendada ou os motivos formais de bloqueio."
+        }
+      ],
+      "keywords": [
+        "fluxo",
+        "funcionamento",
+        "pipeline",
+        "etapas",
+        "modelos",
+        "scouting",
+        "coleta"
+      ]
+    },
+    {
+      "id": "os-9-gates",
+      "title": "🚫 Os 9 Gates de Proteção",
+      "icon": "🚫",
+      "order": 4,
+      "content": "## O Escudo Defensivo do seu Patrimônio\n\nAntes de qualquer aposta ser aprovada, o motor de decisão do EVENGINE submete o relatório a **9 Portões de Bloqueio Rígidos**. Se **um único** portão fechar (ficar vermelho), a entrada inteira é vetada. \n\n### 🚪 Os 9 Portões de Bloqueio:\n\n* **B1 — EV Insuficiente:** `EV < 3%` — Exige vantagem real sobre a casa para cobrir erros de estimativa.\n* **B2 — Kelly Reduzido:** `Kelly % < 0.5%` — Cancela apostas cujo edge é tão irrelevante que não vale a exposição.\n* **B3 — Divergência:** `Delta > 15pp` — Vetado se o Poisson (estatística) e o Gemini (IA) discordarem muito.\n* **B5 — Ligas Menores:** `Tier C ou D` — Proíbe operações em ligas de baixa liquidez e dados altamente ruidosos.\n* **B6 — Múltiplas Longas:** `Seleções >= 3` — Impede o acúmulo de apostas onde o *vig* da casa se multiplica contra você.\n* **B7 — Line Move Adverso:** `Variação > 5%` — Vetado se o *Sharp Money* do mercado profissional apostou contra nós.\n* **B-DADOS — Falha Factual:** `Faltam > 3 dados` — Cancela análises baseadas em estatísticas gravemente incompletas.\n* **B-NO-REF — Sem Pinnacle:** `Sem odd Pinnacle` — Bloqueia se não houver cotação confiável da casa sharp de referência.\n* **B-UNDERDOG — Underdog Bias:** `Delta > 8pp se < 30%` — Bloqueia zebras hiperestimadas pela IA (viés otimista de underdogs).\n\n---\n\n## 🚪 Gate B1: Valor Esperado Mínimo (EV)\n* **Critério:** O Valor Esperado calculado precisa ser ≥ 3%.\n* **Razão:** Menos que 3% de vantagem teórica nos deixa vulneráveis à margem de erro. O piso de 3% garante gordura estatística suficiente para operar no longo prazo.\n* **Exemplo:** EV +2.4% é ❌ BLOQUEADO. EV +4.5% é ✅ APROVADO.\n\n---\n\n## 🚪 Gate B2: Fração Mínima de Kelly\n* **Critério:** A alocação teórica calculada pelo Kelly Criterion deve ser ≥ 0.5% da banca total.\n* **Razão:** Entradas que demandam frações minúsculas representam um edge irrelevante e não compensam o risco residual.\n* **Exemplo:** Kelly 0.3% é ❌ BLOQUEADO. Kelly 1.2% é ✅ APROVADO.\n\n---\n\n## 🚪 Gate B3: Convergência Estatística vs. IA\n* **Critério:** A diferença absoluta entre a probabilidade do Gemini e a probabilidade de Poisson deve ser ≤ 15%.\n* **Razão:** Se a IA projeta 60% e o Poisson estatístico projeta 40%, há um conflito de dados crônico. O sistema exige convergência mínima (consenso) entre os dois mundos para mitigar incertezas.\n* **Exemplo:** Gemini 55% vs. Poisson 38% (Delta 17pp) é ❌ BLOQUEADO.\n\n---\n\n## 🚪 Gate B5: Tier de Qualidade de Liga\n* **Critério:** Operar exclusivamente em ligas classificadas como Tier A ou Tier B.\n* **Razão:** Ligas menores (Séries regionais, copas desconhecidas) possuem pouca liquidez, dados fracos e assimetria onde a casa de apostas sempre leva vantagem. Os profissionais operam em ligas de alta integridade.\n* **Exemplo:** Premier League (Tier A) ✅ PASSA. 4ª Divisão Regional da Islândia (Tier D) ❌ BLOQUEADO.\n\n---\n\n## 🚪 Gate B6: Proibição de Múltiplas Longas\n* **Critério:** Limite estrito de no máximo 2 seleções por bilhete (recomenda-se apostas simples).\n* **Razão:** Cada seleção inserida multiplica a margem da casa (*overround*). Apostas triplas ou acumuladas de 5 jogos convertem edges positivos individuais em expectativas matemáticas negativas acumuladas.\n* **Exemplo:** Dupla de jogos ✅ PASSA. Tripla ou superior ❌ BLOQUEADA.\n\n---\n\n## 🚪 Gate B7: Line Movement Adverso (Defesa Contra Sharps)\n* **Critério:** Variação máxima de 5% contra a nossa recomendação na Pinnacle.\n* **Razão:** Se a odd na casa de referência profissional despencou muito no sentido oposto nas últimas horas, significa que os sindicatos de *Sharp Money* identificaram informações novas (escalação de última hora, etc.) e apostaram pesado no outro time. Ir contra esse movimento é suicídio quantitativo.\n* **Exemplo:** Odd subiu 6.2% contra nós ❌ BLOQUEADO. Odd flutuou 1.5% ✅ PASSA.\n\n---\n\n## 🚪 Gate B-DADOS: Cobertura Factual Mínima\n* **Critério:** Não pode haver falta de dados em mais de 3 critérios factuais (como forma recente, histórico H2H e status de lesões).\n* **Razão:** Operar sem dados confiáveis adiciona ruído especulativo às estimativas da inteligência artificial e destrói a precisão dos modelos.\n* **Exemplo:** Faltam dados de H2H, Escalações, Clima e Notícias de Campo ❌ BLOQUEADO.\n\n---\n\n## 🚪 Gate B-UNDERDOG-CALIBRATION: Antiviés de Zebras\n* **Critério:** Para resultados com probabilidade estimada < 30% (underdogs), a divergência entre a IA e o modelo físico (ELO) não deve exceder 8%.\n* **Razão:** As IAs qualitativas sofrem de um viés sistemático de otimismo para zebras (atribuindo superestimação de +10.8pp). Para compensar, o EVENGINE aplica um multiplicador de `0.70x` na IA em underdogs e bloqueia qualquer descalibração acima de 8pp.\n* **Exemplo:** Gemini estima 28% e ELO projeta 15% (Delta 13pp) ❌ BLOQUEADO.",
+      "subsections": [
+        {
+          "id": "resumo-gates",
+          "title": "Resumo dos 9 Gates",
+          "content": "Os portões filtram as apostas de forma contínua, analisando EV, Kelly, convergência estatística, qualidade de dados, comportamento do mercado profissional e vieses de Inteligência Artificial."
+        },
+        {
+          "id": "gate-b1",
+          "title": "Gate B1: EV Insuficiente",
+          "content": "Garante que apenas operações com retorno esperado maior ou igual a 3% sejam liberadas, criando uma barreira de segurança contra desvios amostrais."
+        },
+        {
+          "id": "gate-b7",
+          "title": "Gate B7: Line Movement Adverso",
+          "content": "Protege o patrimônio ao impedir entradas que estejam na contramão do fluxo de dinheiro inteligente (Sharp Money) monitorado nas casas asiáticas."
+        },
+        {
+          "id": "gate-b-underdog",
+          "title": "Gate B-UNDERDOG-CALIBRATION",
+          "content": "Corrige de forma matemática o viés otimista de underdogs intrínseco aos modelos de linguagem de grande escala (LLMs), aplicando redutores de 0.70x e limitadores de desvio de 8pp."
+        }
+      ],
+      "keywords": [
+        "gates",
+        "bloqueio",
+        "portões",
+        "B1",
+        "B2",
+        "B3",
+        "B5",
+        "B6",
+        "B7",
+        "convergência",
+        "underdog",
+        "line movement"
+      ]
+    },
+    {
+      "id": "leitura-paineis",
+      "title": "📊 Leitura de Painéis",
+      "icon": "📊",
+      "order": 5,
+      "content": "## Decodificando o Painel Principal (Bilhete Diário)\n\nO painel central de controle é projetado para dar clareza imediata sobre as operações do dia:\n\n* **Partidas Analisadas:** Total de confrontos varridos pelos scripts de integração de dados no dia.\n* **Partidas Removidas:** Quantidade de jogos que violaram pelo menos um dos 9 Gates de Risco e foram sumariamente abortados.\n* **Recomendações Aprovadas:** Os bilhetes limpos, de alto valor esperado (EV+) e chancelados por todas as travas.\n* **Score de Confiança:** Avaliação qualitativa expressa de 0 a 100 baseada na solidez das fontes e convergência geral.\n\n---\n\n## 🧐 Interpretando Cores e Status\n\nO sistema utiliza um padrão visual estrito para sinalizar a integridade dos portões e mercados:\n\n* **🟢 VERDE (PASSOU):** O critério ou gate está totalmente saudável. Representa conformidade e vantagem teórica.\n* **🟡 AMARELO (AVISO):** O portão passou, mas no limiar exato do risco (ex: EV de +3.1%, ou divergência Poisson/IA em 14pp). Recomenda cautela ao registrar a stake.\n* **🔴 VERMELHO (BLOQUEOU):** O portão falhou. A aposta torna-se inválida e o botão de geração de bilhetes é trancado.\n\n---\n\n## 💰 Painel de Valor Esperado por Mercado\n\nAo inspecionar uma partida, o painel exibe todos os mercados analisados. O EVENGINE avalia:\n\n1. **Vitória Casa (H2H 1)**\n2. **Empate (H2H X)**\n3. **Vitória Fora (H2H 2)**\n4. **Dupla Chance (1X, 12, X2)**\n5. **Over/Under Gols (Poisson)**\n6. **Ambos Marcam (BTTS)**\n\nO sistema **seleciona automaticamente** o melhor mercado baseado no cálculo do *Kelly-Adjusted Return* (maior EV balanceado por stake recomendável) e o destaca na tela com o selo **✅ SELECIONADO PELO GATE**. Você deve sempre priorizar esse mercado exato para o seu paper trading.",
+      "subsections": [
+        {
+          "id": "bilhete-diario",
+          "title": "Painel Principal: Bilhete Diário",
+          "content": "Mostra o consolidado de partidas e recomendações aprovadas do dia, com atalhos de monitoramento de banca e registro rápido."
+        },
+        {
+          "id": "analise-tecnica",
+          "title": "Painel de Análise Técnica",
+          "content": "Abre o detalhamento de um jogo específico, revelando as odds Pinnacle/Bet365, o delta de mercado, as forças ELO de cada time e o status individual dos 9 portões."
+        },
+        {
+          "id": "valor-esperado",
+          "title": "Painel de Valor Esperado",
+          "content": "Lista de forma comparativa o EV matemático de cada mercado disponível, colorindo em verde os edges saudáveis (>3%) e em vermelho as opções de expectativa negativa."
+        }
+      ],
+      "keywords": [
+        "painéis",
+        "leitura",
+        "análise",
+        "cores",
+        "verde",
+        "vermelho",
+        "mercado",
+        "composto",
+        "score"
+      ]
+    },
+    {
+      "id": "sharp-money",
+      "title": "🔍 Sharp Money Explicado",
+      "icon": "🔍",
+      "order": 6,
+      "content": "## O que é Sharp Money?\n\n**Sharp Money** é a denominação dada ao dinheiro injetado por **apostadores e sindicatos profissionais** altamente sofisticados. Eles operam com infraestruturas pesadas, doutores (PhDs) em estatística, conexões privilegiadas de campo e bancos de dados privados.\n\nEles diferem dos apostadores recreativos (*Public Money*), que apostam de forma recreativa baseando-se em paixões e sentimentos. Os *Sharps* operam apenas quando detectam precificações matematicamente ineficientes. Eles geram volumes de capital massivos.\n\n---\n\n## 🔄 A Corrida das Odds e a Referência Pinnacle\n\nA **Pinnacle** é uma casa de apostas profissional de origem asiática. Ela se diferencia por aceitar limites de apostas multimilionários e **nunca limitar ou banir apostadores vencedores**. Por esta razão, todos os *Sharps* do planeta operam na Pinnacle.\n\nO fluxo funciona da seguinte forma:\n\n```\nPRECIFICAÇÃO INICIAL (Odds abrem na Pinnacle)\n  │\n  ▼\nDETECÇÃO QUANTITATIVA (Sindicato Sharp descobre odd errada)\n  │\n  ▼\nAPOSTA MASSIVA (Sharps colocam milhões naquela odd)\n  │\n  ▼\nREAJUSTE DE DEFESA (Pinnacle percebe o volume e desaba a odd)\n  │\n  ▼\nATUALIZAÇÃO DE MERCADO (O movimento foi consumado. O valor sumiu)\n```\n\nAs casas de apostas públicas (como a Bet365 e a Betano) copiam os movimentos da Pinnacle para se protegerem. No entanto, existe um pequeno atraso (*delay*) in que as odds das casas públicas ainda permanecem altas. O EVENGINE varre o mercado para aproveitar esse exato gap antes que ele feche.\n\n---\n\n## 🛡️ A Defesa Ativa do Gate B7\n\nSe os *Sharps* apostaram pesado no time oposto, a Pinnacle reajustará a linha imediatamente. O EVENGINE calcula a variação e, se o movimento contra nós ultrapassar **5%**, o **Gate B7** bloqueia a entrada.\n\n**O motivo é simples:** Os apostadores mais bem informados e equipados do planeta estão posicionados do outro lado do campo. Apostar contra o *Sharp Money* é estar sistematicamente do lado perdedor na expectativa matemática de longo prazo.",
+      "subsections": [
+        {
+          "id": "o-que-e-sharp",
+          "title": "O que é Sharp Money?",
+          "content": "Representa o fluxo financeiro de apostadores profissionais, fundos quantitativos esportivos e sindicatos organizados que movem as linhas de apostas do mercado global."
+        },
+        {
+          "id": "como-atuam",
+          "title": "Como Sharps Atuam",
+          "content": "Detectam gaps em odds e injetam volumes expressivos, provocando correções de segurança nos preços das maiores casas profissionais do mundo."
+        },
+        {
+          "id": "pinnacle-referencia",
+          "title": "Pinnacle é a Referência",
+          "content": "A Pinnacle é a âncora de cotações devido à sua política de livre concorrência profissional e tolerância com apostadores lucrativos. Suas odds refletem a probabilidade estatística mais limpa do mercado."
+        }
+      ],
+      "keywords": [
+        "sharp money",
+        "sharps",
+        "pinnacle",
+        "profissionais",
+        "sindicatos",
+        "asiáticas",
+        "vig",
+        "steam move"
+      ]
+    },
+    {
+      "id": "value-betting",
+      "title": "💰 Value Betting (EV)",
+      "icon": "💰",
+      "order": 7,
+      "content": "## A Equação do Valor Esperado (EV)\n\nNo investimento quantitativo, o sucesso é resumido em uma única equação matemática de Valor Esperado (EV):\n\nEV = (Probabilidade Real * Odd Oferecida) - 1\n\n### 📐 Três Cenários de EV na Prática:\n\n* **Cenário A: EV Positivo (+8.0% EV)**\n  * Projeção Real do Sistema: **60%** (0.60)\n  * Odd da Bet365: **1.80**\n  * Cálculo: EV = (0.60 * 1.80) - 1 = 1.08 - 1 = +0.08 (+8.0%)\n  * **Significado:** A cada R$ 100 apostados, você tem uma rentabilidade teórica esperada de R$ 8,00 no longo prazo. ✅ **APOSTE.**\n\n* **Cenário B: EV Justo (0% EV - Paridade)**\n  * Projeção Real do Sistema: **60%** (0.60)\n  * Odd da Bet365: **1.67**\n  * Cálculo: EV = (0.60 * 1.67) - 1 = 1.002 - 1 = 0%\n  * **Significado:** Odd perfeitamente justa (*fair*). Sem vantagem teórica para nenhum lado. ❌ **IGNORAR.**\n\n* **Cenário C: EV Negativo (-10.0% EV)**\n  * Projeção Real do Sistema: **60%** (0.60)\n  * Odd da Bet365: **1.50**\n  * Cálculo: EV = (0.60 * 1.50) - 1 = 0.90 - 1 = -0.10 (-10.0%)\n  * **Significado:** Você perde 10% do seu capital na expectativa estatística de longo prazo. A casa de apostas tem todo o edge. ❌ **BLOQUEAR.**\n\n---\n\n## ⚖️ Remoção do Overround (O Preço Verdadeiro)\n\nAs casas de apostas públicas ganham dinheiro precificando as odds com uma margem de lucro embutida (*vig* ou *overround*). Para que o EVENGINE encontre o valor verdadeiro, ele desconta esse imposto implicitamente normalizando as odds na seguinte proporção:\n\nProbabilidade Justa_i = (1 / Odd_i) / Σ(1 / Odd_j)\n\nAo fazer isso, o motor garante que está buscando edges contra as probabilidades reais e higienizadas, não contra números inflados artificialmente pelas casas.",
+      "subsections": [
+        {
+          "id": "o-que-e-ev",
+          "title": "O que é EV?",
+          "content": "O Valor Esperado (EV) calcula o ganho ou perda teórico projetado para uma aposta sob repetições contínuas, baseado na discrepância entre a chance calculada e a cotação oferecida."
+        },
+        {
+          "id": "apostar-ev-positivo",
+          "title": "Apostar com EV Positivo",
+          "content": "Garante vantagem de longo prazo sobre o mercado. Lucrar não depende de acertar cada jogo, mas sim de colocar capital continuamente onde a matemática está a seu favor."
+        },
+        {
+          "id": "longo-curto-prazo",
+          "title": "Longo Prazo vs. Curto Prazo",
+          "content": "No curto prazo, impera a variância amostral (sorte). No longo prazo (100+ apostas), o PnL converge inevitavelmente para o EV médio acumulado, conforme dita a Lei dos Grandes Números."
+        }
+      ],
+      "keywords": [
+        "EV",
+        "valor esperado",
+        "value betting",
+        "overround",
+        "vig",
+        "margem",
+        "cálculo",
+        "fórmula"
+      ]
+    },
+    {
+      "id": "paper-trading",
+      "title": "📋 Paper Trading",
+      "icon": "📋",
+      "order": 8,
+      "content": "## O que é Paper Trading?\n\n**Paper Trading** é o registro honesto e meticuloso de recomendações de apostas **SEM a aplicação de dinheiro real**. \n\nTrata-se da fase obrigatória e científica de validação de qualquer modelo quantitativo de investimentos antes de colocar o patrimônio em risco financeiro. \n\n---\n\n## 🛠️ O Guia de 30 Dias (Passo a Passo)\n\n### 📝 Passo 1: Criar sua Planilha de Controle\nAbra o Google Sheets ou Excel e crie uma planilha com as seguintes colunas:\n1. **Data/Hora** da partida\n2. **Confronto** (Time Casa vs. Visitante)\n3. **Mercado Recomendado** (Copiar o mercado destacado pelo selo de seleção do Gate)\n4. **Odd Pinnacle** (Odd justa de referência quantitativa)\n5. **Odd da sua Casa** (A cotação real onde você simula a entrada - ex: Bet365)\n6. **Stake Recomendada** (A alocação Quarter-Kelly em R$ calculada pelo sistema)\n7. **Probabilidade do Sistema** (%) e **EV Estimado** (%)\n8. **Status** (Vencida, Perdida, Cancelada)\n9. **Closing Line Value (CLV)** (Medida matemática de qualidade de entrada)\n10. **PnL Simulado** (Resultado financeiro líquido em R$)\n\n### 📥 Passo 2: Registrar o Bilhete Diário\nRegistre a entrada **imediatamente** após o EVENGINE emitir a aprovação final. Nunca omita nenhuma aposta recomendada e nunca registre palpites que foram bloqueados pelos Gates.\n\n### 📊 Passo 3: Registrar Resultados e Lucro/Prejuízo\nApós o encerramento do jogo, preencha os dados de status e calcule o ganho/perda líquido:\n* **Se o bilhete ganhou:** PnL = Stake * (Odd da sua Casa - 1)\n* **Se o bilhete perdeu:** PnL = -Stake\n\n### ⚖️ Passo 4: Calcular o CLV (Closing Line Value)\nO CLV é o indicador de ouro que mede o seu *timing* de mercado em relação aos profissionais. Ele calcula se você conseguiu odds melhores que as cotações oficiais de fechamento da Pinnacle:\n\nCLV = (Odd da sua Entrada / Odd de Fechamento Pinnacle) - 1\n\n---\n\n## 🏁 A Decisão no 31º Dia\n\nApós acumular 30 dias de dados de paper trading (média recomendável de 15 a 30 entradas), avalie o seu relatório:\n\n* **🟢 CLV Médio ≥ +1.5% (Aprovado):** Você está pegando odds excelentes e batendo o mercado de forma consistente. É o sinal verde formal para começar a operar com capital real de forma conservadora (1% da banca).\n* **🟡 CLV Médio entre 0% e +1.5% (Marginal):** Seu timing está no limite. Recomenda-se ajustar os horários de análise ou renovar a calibração de dados e fazer mais 30 dias de paper trading.\n* **🔴 CLV Médio < 0% (Reprovado):** Você está entrando atrasado na corrida das odds, quando o valor já sumiu. Revise o pipeline de execução e não utilize dinheiro real sob nenhuma circunstância.",
+      "subsections": [
+        {
+          "id": "o-que-e-paper",
+          "title": "O que é Paper Trading?",
+          "content": "A simulação estrita de apostas sem dinheiro real por 30 dias é a única ferramenta estatística válida para auditar o timing operacional e a rentabilidade do sistema no seu ambiente local."
+        },
+        {
+          "id": "calcular-clv",
+          "title": "Passo 4: Calcular CLV",
+          "content": "O Closing Line Value (CLV) mede a diferença percentual entre a odd que você pegou e a odd final de fechamento da partida na Pinnacle. Bater a linha de fechamento é o único fator correlacionado à lucratividade profissional sustentada."
+        },
+        {
+          "id": "decisao-31",
+          "title": "Decisão no Dia 31",
+          "content": "Avalie o CLV médio e o ROI do período simulado. Só libere capital real se o CLV médio superar +1.5%, comprovando o timing matemático qualificado."
+        }
+      ],
+      "keywords": [
+        "paper trading",
+        "planilha",
+        "simulação",
+        "Google Sheets",
+        "CLV",
+        "timing",
+        "ROI",
+        "validação",
+        "dia 31"
+      ]
+    },
+    {
+      "id": "faq",
+      "title": "❓ FAQ (Perguntas Frequentes)",
+      "icon": "❓",
+      "order": 9,
+      "content": "## FAQ Técnico EVENGINE\n\n### P1: O EVENGINE garante lucro financeiro?\n**R:** Não. Nenhum sistema quantitativo honesto promete lucros certos a curto prazo. O que o EVENGINE garante é que **cada aposta aprovada tem vantagem matemática de longo prazo (EV ≥ 3%)** e está protegida por um escudo rígido contra vieses de IA e movimentos adversos de *Sharps*. No longo prazo, a matemática garante lucratividade sustentada.\n\n### P2: Qual é a taxa de acerto esperada do sistema?\n**R:** Operando em odds médias com EV positivo de +5%, a taxa de acerto estatística esperada gravita entre **55% e 60%**. O sistema não é programado para \"acertar tudo\", mas sim para garantir que o retorno financeiro nas vitórias seja estatisticamente maior do que as perdas inevitáveis nas derrotas.\n\n### P3: Posso fracionar ou alterar o tamanho da stake recomendada?\n**R:** **Não.** O cálculo de Kelly é extremamente sensível à sua relação probabilidade/odd. Alterar ou diminuir stakes de forma arbitrária adultera todo o controle de drawdown geométrico, invalida os dados da planilha de paper trading e pode expor a sua banca a riscos de ruína indesejados.\n\n### P4: Por que o EVENGINE proíbe apostas múltiplas longas?\n**R:** Múltiplas com 3 ou mais seleções multiplicam a taxa de comissão (*vig*) da casa exponencialmente contra a sua banca. Isso destrói o valor esperado (EV). O sistema atua de forma científica, aprovando apenas apostas simples e duplas qualificadas (Gate B6).\n\n### P5: O que devo fazer se um jogo for bloqueado?\n**R:** **Respeite o veto sumariamente.** Se um portão ficou vermelho, há uma anomalia severa de dados, divergência de modelos ou movimento agressivo de *Sharps* contra a nossa posição. Forçar aposta em jogos bloqueados é violar toda a engenharia de risco do sistema.",
+      "subsections": [
+        {
+          "id": "faq-garante-lucro",
+          "title": "P1: Garante Lucro?",
+          "content": "Nenhum sistema elimina a variância do futebol. Garantimos edge matemático consistente e proteção de capital, o que converte em lucro sistemático no longo prazo."
+        },
+        {
+          "id": "faq-multiplas",
+          "title": "P4: Posso Apostar em Múltiplas?",
+          "content": "O EVENGINE veta triplas ou acumuladas longas porque elas multiplicam o overround das casas de forma exponencial, convertendo valor positivo in perda matemática garantida."
+        },
+        {
+          "id": "faq-bloqueio",
+          "title": "P5: O que fazer em Bloqueios?",
+          "content": "Respeite o motor de decisão do sistema. Bloqueios significam que o gerenciamento de risco identificou ameaças graves ao seu capital. Aguarde o próximo bilhete aprovado."
+        }
+      ],
+      "keywords": [
+        "FAQ",
+        "perguntas",
+        "dúvidas",
+        "respostas",
+        "banca",
+        "lucro",
+        "múltiplas",
+        "bloqueios",
+        "stake"
+      ]
+    },
+    {
+      "id": "glossario",
+      "title": "📚 Glossário",
+      "icon": "📚",
+      "order": 10,
+      "content": "## Glossário Analítico EVENGINE\n\n### A\n* **Ambos Marcam (BTTS):** Mercado esportivo onde a aposta é vencedora se ambos os times marcarem ao menos um gol. Calculado via probabilidade de Poisson independente.\n* **Análise Técnica:** Visualização aprofundada das cotações, forças ELO e portões de segurança de uma partida de futebol.\n\n### B\n* **Banca:** O montante financeiro total reservado exclusivamente para a sua atividade operacional de investimentos.\n* **Bilhete Diário:** Relatório central consolidado exibindo o sumário de partidas aprovadas e filtradas no dia.\n\n### C\n* **Closing Line Value (CLV):** Indicador de performance quantitativa que calcula a variação percentual entre a odd de entrada e a odd final de fechamento da Pinnacle.\n* **Convergência:** Grau de acordo estatístico entre previsões qualitativas (IA) e modelos matemáticos de distribuição de gols (Poisson).\n\n### D\n* **Distribuição de Poisson:** Modelo probabilístico de base matemática discreta utilizado para projetar a frequência de gols de cada equipe em um confronto.\n* **Drawdown:** A medida percentual de declínio do saldo da banca a partir de seu pico histórico até o ponto mais baixo de uma sequência de perdas.\n\n### E\n* **ELO Rating:** Modelo quantitativo determinístico que estima a força relativa de equipes esportivas, calibrado localmente com peso de mando de campo (+65 pontos).\n* **Expected Value (EV):** O valor estatístico esperado de ganho ou perda de uma operação de aposta de acordo com a probabilidade real normalizada.\n\n### K\n* **Kelly Criterion (Critério de Kelly):** Algoritmo de otimização de crescimento geométrico de capital que determina a fração ideal de banca a ser alocada baseando-se no edge e nas odds.\n\n### L\n* **Lei dos Grandes Números:** Teorema que garante que o resultado cumulativo de um grande número de ensaios converge inevitavelmente para o valor esperado teórico (EV).\n* **Line Movement:** A flutuação dinâmica das odds no mercado decorrente do volume de dinheiro aportado nas casas.\n\n### O\n* **Overround (Vig):** A comissão e margem de lucro embutida de forma implícita pelas casas de apostas no valor bruto das odds.\n\n### Q\n* **Quarter-Kelly:** Gestão de banca conservadora recomendada pelo EVENGINE, que aloca apenas 25% (um quarto) do cálculo de Kelly cheio para reduzir a volatilidade em 75%.\n\n### S\n* **Sharp Money:** Capital aportado por sindicatos de apostadores profissionais, fundos esportivos quantitativos e traders de elite.\n\n### U\n* **Underdog (Zebra):** Equipe esportiva precificada com baixa chance de vitória (< 30%), sujeita a viés qualitativo de superestimação em LLMs.\n\n### V\n* **Value Betting:** Prática de buscar e apostar continuamente em cotações que possuem Valor Esperado (EV) positivo.",
+      "subsections": [
+        {
+          "id": "glossario-a",
+          "title": "Termos de A a E",
+          "content": "BTTS, Análise Técnica, Banca, CLV, Convergência, Poisson, Drawdown, ELO e Expected Value (EV)."
+        },
+        {
+          "id": "glossario-k",
+          "title": "Termos de K a V",
+          "content": "Kelly Criterion, Lei dos Grandes Números, Line Movement, Overround, Quarter-Kelly, Sharp Money, Underdog e Value Betting."
+        }
+      ],
+      "keywords": [
+        "glossário",
+        "dicionário",
+        "termos",
+        "definições",
+        "conceitos",
+        "letras",
+        "A-Z"
+      ]
+    }
+  ],
+  "glossary": [
+    {
+      "term": "Ambos Marcam (BTTS)",
+      "definition": "Mercado em que você aposta que as duas equipes marcarão gols na partida. O EVENGINE calcula a probabilidade verdadeira do BTTS usando as distribuições de Poisson integradas de gols esperados de cada time.",
+      "relatedSections": [
+        "como-funciona",
+        "leitura-paineis",
+        "glossario"
+      ]
+    },
+    {
+      "term": "Closing Line Value (CLV)",
+      "definition": "Percentual de vantagem obtido ao comparar a odd que você apostou com a odd final de fechamento da Pinnacle. Um CLV positivo de longo prazo é o maior indicador de que você está batendo as casas e terá lucros consistentes.",
+      "relatedSections": [
+        "paper-trading",
+        "faq",
+        "glossario"
+      ]
+    },
+    {
+      "term": "Expected Value (EV)",
+      "definition": "O Valor Esperado é o ganho ou perda de capital projetado para uma aposta em termos percentuais. A fórmula é EV = (Probabilidade Real * Odd) - 1. Edges acima de +3% passam no Gate B1.",
+      "relatedSections": [
+        "value-betting",
+        "filosofia",
+        "os-9-gates",
+        "glossario"
+      ]
+    },
+    {
+      "term": "Kelly Criterion",
+      "definition": "Fórmula matemática clássica (f* = (bp - q) / b) utilizada para calcular o tamanho ótimo de uma aposta esportiva ou financeira. O EVENGINE usa uma versão de segurança de 25% (Quarter-Kelly).",
+      "relatedSections": [
+        "os-9-gates",
+        "value-betting",
+        "faq",
+        "glossario"
+      ]
+    },
+    {
+      "term": "Sharp Money",
+      "definition": "O fluxo financeiro gerado por profissionais do mercado esportivo que possuem recursos massivos e modelos matemáticos superiores. O EVENGINE monitora e evita ir contra esse dinheiro inteligente através do Gate B7.",
+      "relatedSections": [
+        "sharp-money",
+        "os-9-gates",
+        "glossario"
+      ]
+    },
+    {
+      "term": "Underdog Bias Calibration",
+      "definition": "O ajuste estatístico feito para conter o viés natural de otimismo qualitativo da Inteligência Artificial em zebras (probabilidade < 30%). O EVENGINE aplica um fator de correção multiplicador de 0.70x e monitora os desvios.",
+      "relatedSections": [
+        "os-9-gates",
+        "como-funciona",
+        "glossario"
+      ]
+    }
+  ],
+  "searchIndex": [
+    {
+      "term": "sharp money",
+      "relevance": 10,
+      "sections": [
+        "sharp-money",
+        "os-9-gates"
+      ]
+    },
+    {
+      "term": "EV",
+      "relevance": 10,
+      "sections": [
+        "value-betting",
+        "filosofia"
+      ]
+    },
+    {
+      "term": "gates",
+      "relevance": 10,
+      "sections": [
+        "os-9-gates"
+      ]
+    },
+    {
+      "term": "paper trading",
+      "relevance": 9,
+      "sections": [
+        "paper-trading"
+      ]
+    },
+    {
+      "term": "bloqueado",
+      "relevance": 8,
+      "sections": [
+        "os-9-gates",
+        "faq"
+      ]
+    },
+    {
+      "term": "ELO",
+      "relevance": 8,
+      "sections": [
+        "como-funciona",
+        "os-9-gates",
+        "glossario"
+      ]
+    },
+    {
+      "term": "Poisson",
+      "relevance": 8,
+      "sections": [
+        "como-funciona",
+        "os-9-gates",
+        "value-betting"
+      ]
+    },
+    {
+      "term": "Kelly",
+      "relevance": 9,
+      "sections": [
+        "os-9-gates",
+        "value-betting",
+        "faq"
+      ]
+    },
+    {
+      "term": "CLV",
+      "relevance": 9,
+      "sections": [
+        "paper-trading",
+        "glossario"
+      ]
+    },
+    {
+      "term": "Underdog",
+      "relevance": 8,
+      "sections": [
+        "os-9-gates",
+        "como-funciona"
+      ]
+    }
+  ]
+}
