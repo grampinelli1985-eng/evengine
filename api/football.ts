@@ -1,53 +1,44 @@
+/**
+ * Vercel Serverless Function — proxy seguro para API-Football (api-sports.io)
+ * Rota: /api/football/* → https://v3.football.api-sports.io/*
+ *
+ * A chave API_FOOTBALL_KEY fica apenas no servidor (process.env),
+ * nunca exposta ao browser.
+ */
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import fetch from 'node-fetch';
+
+const API_BASE = 'https://v3.football.api-sports.io';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS Headers
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
+  const apiKey = process.env.API_FOOTBALL_KEY || '';
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'API_FOOTBALL_KEY não configurada no servidor' });
   }
 
-  const fullPath = req.url || '';
-  // Extrair o path após /api/football/
-  const pathPart = fullPath.split('/api/football/')[1] || '';
-  if (!pathPart) {
-    return res.status(400).json({ error: 'Missing path' });
-  }
+  // Extrai o subpath após /api/football e mantém a query string completa
+  const fullUrl = req.url || '';
+  const afterBase = fullUrl.replace(/^\/api\/football\/?/, '');
+  const targetUrl = `${API_BASE}/${afterBase}`;
 
-  // O req.url já inclui a query string
-  const url = `https://v3.football.api-sports.io/${pathPart}`;
-  
-  console.log(`[Vercel Proxy] Forwarding to: ${url}`);
-  
   try {
-    const apiKey = process.env.API_FOOTBALL_KEY || process.env.VITE_APIFOOTBALL_KEY || '';
-    const response = await fetch(url, {
-      headers: { 
+    const apiRes = await fetch(targetUrl, {
+      method: req.method || 'GET',
+      headers: {
         'x-apisports-key': apiKey,
-        'x-rapidapi-host': 'v3.football.api-sports.io',
-        'User-Agent': 'EVEngine/1.0',
-        'Accept': 'application/json'
-      }
+        'Content-Type': 'application/json',
+      },
+      body: req.method !== 'GET' && req.method !== 'HEAD'
+        ? JSON.stringify(req.body)
+        : undefined,
     });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      return res.status(response.status).json({ error: errorText });
-    }
-    
-    const data = await response.json();
-    res.status(200).json(data);
+
+    const data = await apiRes.json();
+
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
+    res.status(apiRes.status).json(data);
   } catch (err) {
-    console.error(`[Vercel Proxy] Error:`, err);
-    res.status(500).json({ error: String(err) });
+    res.status(502).json({ error: 'Proxy error', detail: String(err) });
   }
 }
