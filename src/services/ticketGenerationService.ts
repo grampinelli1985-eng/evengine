@@ -180,9 +180,9 @@ export class TicketGenerationService {
     const stakePct = bankroll > 0 ? (stake / bankroll) * 100 : 0;
     const parts: string[] = [];
 
-    if (stakePct > 8) {
+    if (stakePct > 2.5) {
       parts.push("Agressivo");
-    } else if (stakePct < 3) {
+    } else if (stakePct < 1.0) {
       parts.push("Conservador");
     }
 

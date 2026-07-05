@@ -103,4 +103,5 @@ export type EngineInput = {
   oddManualBet365?: number | null;
   bancaTotal?: number; // valor total da banca em reais para calculo
   userConfirmedAudit?: boolean; // Confirmação de auditoria do usuário
+  currentLocalTime?: string;
 };

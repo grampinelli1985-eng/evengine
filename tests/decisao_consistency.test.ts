@@ -121,7 +121,9 @@ describe('DecisaoEngine Consistency', () => {
         },
         scouting: {
           data_source: 'api-football',
-          desfalques: false
+          desfalques: false,
+          home_form: ['V', 'V', 'V', 'V', 'V'],
+          away_form: ['V', 'V', 'V', 'V', 'V']
         },
         h2h: {
           fonte: 'api-football'
@@ -352,8 +354,8 @@ describe('DecisaoEngine Consistency', () => {
               {
                 market: 'Dupla Chance 1X',
                 odd_api: 1.30,
-                prob_ia: 80,
-                edge: 0.04
+                prob_ia: 90,
+                edge: 0.17
               },
               {
                 market: 'Dupla Chance X2',
@@ -574,8 +576,9 @@ describe('DecisaoEngine Consistency', () => {
       expect(result.sharp_context).toBeDefined();
       expect(result.sharp_context.desfalques_verificados).toBe(false);
       expect(result.sharp_context.ajuste_probabilidade_aplicado).toContain('-3.0pp');
-      // No hard block because B-DADOS list excludes desfalques, and only 2 factals missing (forms)
-      expect(result.status).toBe('APROVADO');
+      // Triggers block B-DADOS due to lack of effective matches (Gate 3 Data Trust)
+      expect(result.status).toBe('BLOQUEADO');
+      expect(result.bloqueio.codigo).toBe('B-DADOS');
       expect(result.alertas.length).toBeGreaterThan(0);
       expect(result.alertas[0]).toContain('⚠️ DADO AUSENTE: Suspensões não verificadas');
     });
@@ -738,6 +741,7 @@ describe('DecisaoEngine Consistency', () => {
   describe('Bloco 6 — Atualização e Validação de Linha', () => {
     const baseInputTemplate = {
       analysis: {
+        currentLocalTime: '2026-05-29T20:06:00',
         valueBet: {
           report: {
             melhor_value: {
@@ -750,7 +754,9 @@ describe('DecisaoEngine Consistency', () => {
         },
         scouting: {
           data_source: 'api-football',
-          desfalques: false
+          desfalques: false,
+          home_form: ['V', 'V', 'V', 'V', 'V'],
+          away_form: ['V', 'V', 'V', 'V', 'V']
         },
         h2h: {
           fonte: 'api-football'

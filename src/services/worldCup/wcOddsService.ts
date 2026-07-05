@@ -123,7 +123,7 @@ const WC_MOCK_MATCHES: WCMatch[] = [
   },
   {
     id: 'wc_mock_5',
-    sport_key: 'soccer_fifa_world_cup_qualifier_south_america',
+    sport_key: 'soccer_fifa_world_cup_qualifiers_south_america',
     sport_title: 'Eliminatórias CONMEBOL',
     commence_time: new Date(Date.now() + 1000 * 60 * 60 * 72).toISOString(),
     home_team: 'Portugal',

@@ -21,7 +21,7 @@ ALTER TABLE analyses RENAME COLUMN entrada_bruta_do_motor TO raw_engine_input;
 ALTER TABLE analyses RENAME COLUMN "fonte de dados de Poisson" TO poisson_data_source;
 
 -- Adicionar colunas que estão no payload mas podem não existir na tabela
-ALTER TABLE analyses ADD COLUMN IF NOT EXISTS odd_bet365_manual numeric(8,2);
+ALTER TABLE analyses ADD COLUMN IF NOT EXISTS odd_manual numeric(8,2);
 ALTER TABLE analyses ADD COLUMN IF NOT EXISTS odd_pinnacle numeric(8,2);
 ALTER TABLE analyses ADD COLUMN IF NOT EXISTS odd_betfair numeric(8,2);
 

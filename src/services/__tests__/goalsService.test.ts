@@ -35,14 +35,14 @@ describe('Goals Service', () => {
     it('should pass test-case compliance for lambda = 2.16', () => {
       const dist = poissonDistribution(2.16);
       
-      expect(dist.prob0).toBe(0.115);
-      expect(dist.prob1).toBe(0.248);
-      expect(dist.prob2).toBe(0.268);
-      expect(dist.prob3).toBe(0.192);
-      expect(dist.prob4plus).toBe(0.177);
-      expect(dist.over0_5).toBe(0.885);
-      expect(dist.over1_5).toBe(0.637);
-      expect(dist.over2_5).toBe(0.39); // Exato conforme especificação
+      expect(dist.prob0).toBe(0.1153);
+      expect(dist.prob1).toBe(0.2491);
+      expect(dist.prob2).toBe(0.2690);
+      expect(dist.prob3).toBe(0.1937);
+      expect(dist.prob4plus).toBe(0.1728);
+      expect(dist.over0_5).toBe(0.8847);
+      expect(dist.over1_5).toBe(0.6356);
+      expect(dist.over2_5).toBe(0.3665); // Exato conforme especificação matemática
     });
 
     it('should handle lambda < 0 gracefully', () => {
@@ -79,7 +79,7 @@ describe('Goals Service', () => {
 
     it('should pass custom test-case compliance for prob = 0.39 and odd = 1.95', () => {
       const ev = calculateGoalsEV(0.39, 1.95);
-      expect(ev).toBe(0.0405); // Exato conforme especificação (+4.05% EV)
+      expect(ev).toBe(-0.2395); // Exato conforme matemática real (-23.95% EV)
     });
 
     it('should handle null/undefined inputs gracefully', () => {

@@ -5,62 +5,111 @@
 
 import { Match, AnalysisResponse, ValueBetReport, MarketValueBet, LEAGUES, MarketReference } from '../types';
 
-const MAX_EDGE_REALISTA = 0.30;
+const MAX_EDGE_REALISTA = 0.12; // EV-04: edges above 12% vs Pinnacle are virtually impossible and indicate model error
+export const MIN_PROB_THRESHOLD = 5;
 
 export const KELLY_MAX_ABSOLUTO = 0.03; // 3% do bankroll — teto hard
+
+// GATE-02: Min/max odd filter for clubs
+const CLUB_MIN_ODD = 1.40;
+const CLUB_MAX_ODD = 5.00;
 
 export function aplicarKellyMax(kellyCalculado: number): number {
   return Math.min(kellyCalculado, KELLY_MAX_ABSOLUTO);
 }
 
 /**
- * Remove a margem da casa (overround/vig) das odds, retornando
- * probabilidades "justas" que somam exatamente 100%.
- *
- * Exemplo: odds [2.10, 3.40, 3.80]
- * → implied [47.6%, 29.4%, 26.3%] (soma 103.3% — overround de 3.3%)
- * → fair [46.1%, 28.5%, 25.4%] (soma 100%)
- *
- * @param odds Array de odds decimais (ex: [2.10, 3.40, 3.80])
- * @returns Array de probabilidades justas em fração (0-1)
- * @throws Error se alguma odd for inválida (≤ 1.0, NaN, null, undefined, Infinity)
+ * Remove a margem da casa (overround/vig) das odds usando normalização proporcional simples.
+ * Adequado para mercados de 2 outcomes; para H2H 3-way use removeOverroundShin.
  */
 export function removeOverround(odds: number[]): number[] {
-  // 1. Validar entrada
   if (!Array.isArray(odds) || odds.length === 0) {
     throw new Error('removeOverround: array de odds vazio ou inválido');
   }
   if (odds.some(o => o === null || o === undefined || isNaN(o) || !isFinite(o) || o <= 1.0)) {
     throw new Error(`removeOverround: odds inválidas detectadas: ${JSON.stringify(odds)}`);
   }
-
-  // 2. Probabilidade implícita bruta de cada odd: 1/odd
   const implied = odds.map(o => 1 / o);
-
-  // 3. Overround = soma das probabilidades implícitas
   const overround = implied.reduce((sum, p) => sum + p, 0);
-
-  // 4. Normalizar (probabilidade justa = implícita / overround)
   return implied.map(p => p / overround);
 }
 
+/**
+ * EV-02: Shin method for overround removal — more accurate than proportional normalization.
+ *
+ * The Shin (1993) model accounts for the favourite-longshot bias present in football markets:
+ * bookmakers inflate longshot prices more than favourites, so simple proportional normalization
+ * underestimates favourite true probability and overestimates longshot true probability.
+ *
+ * Use for 3-way H2H markets. For 2-way markets, proportional normalization is equivalent.
+ */
+export function removeOverroundShin(odds: number[]): number[] {
+  if (!Array.isArray(odds) || odds.length === 0) {
+    throw new Error('removeOverroundShin: array de odds vazio ou inválido');
+  }
+  if (odds.some(o => o === null || o === undefined || isNaN(o) || !isFinite(o) || o <= 1.0)) {
+    throw new Error(`removeOverroundShin: odds inválidas: ${JSON.stringify(odds)}`);
+  }
+
+  // Only meaningful for 3+ way markets — fall back to proportional for 2-way
+  if (odds.length < 3) return removeOverround(odds);
+
+  const implied = odds.map(o => 1 / o);
+  const S = implied.reduce((s, p) => s + p, 0);
+  const n = odds.length;
+
+  // Initial estimate of z (insider fraction parameter)
+  let z = (S - 1) / (S - 1 / n);
+  z = Math.max(0.001, Math.min(0.15, z));
+
+  // Newton-Raphson iteration to find z where sum of Shin probs = 1
+  for (let iter = 0; iter < 20; iter++) {
+    const shinProbs = implied.map(q => {
+      const discriminant = z * z + 4 * (1 - z) * (q / S);
+      return (Math.sqrt(Math.max(0, discriminant)) - z) / (2 * (1 - z));
+    });
+    const shinSum = shinProbs.reduce((s, p) => s + p, 0);
+    const residual = shinSum - 1;
+    if (Math.abs(residual) < 1e-8) break;
+
+    const dz = 1e-6;
+    const zPlus = Math.max(0.001, z + dz);
+    const shinProbsPlus = implied.map(q => {
+      const d = zPlus * zPlus + 4 * (1 - zPlus) * (q / S);
+      return (Math.sqrt(Math.max(0, d)) - zPlus) / (2 * (1 - zPlus));
+    });
+    const dSumdz = (shinProbsPlus.reduce((s, p) => s + p, 0) - shinSum) / dz;
+    if (Math.abs(dSumdz) < 1e-12) break;
+    z = Math.max(0.0001, Math.min(0.20, z - residual / dSumdz));
+  }
+
+  const fairProbs = implied.map(q => {
+    const discriminant = z * z + 4 * (1 - z) * (q / S);
+    return (Math.sqrt(Math.max(0, discriminant)) - z) / (2 * (1 - z));
+  });
+
+  // Normalize to exactly 1 to eliminate floating-point drift
+  const total = fairProbs.reduce((s, p) => s + p, 0);
+  return fairProbs.map(p => p / total);
+}
+
 export function calcularValueBets(match: Match, analysis: AnalysisResponse): ValueBetReport {
-  const bookmaker = match.bookmakers?.[0];
+  // EV-01: Always use Pinnacle (or betfair_ex_eu as fallback) for reference bookmaker
+  const refBookmaker = match.bookmakers?.find(b => b.key === 'pinnacle')
+    ?? match.bookmakers?.find(b => b.key === 'betfair_ex_eu')
+    ?? match.bookmakers?.[0];
+  const bookmaker = refBookmaker;
   if (!bookmaker) return { mercados: [], total_value_bets: 0, tem_value: false, melhor_value: null };
 
   const league = LEAGUES.find(l => l.key === match.sport_key);
   const imprevisibilidade = league?.imprevisibilidade || 'media';
 
-  // MENOR 3: w = 0.85 quando liga não está mapeada (shrinkage conservador como precaução).
-  // Liga conhecida: usa imprevisibilidade para calcular w normalmente.
-  // Liga desconhecida (league === undefined): w = 0.85 independente do fallback 'media'.
   const w = !league ? 0.85 :
             imprevisibilidade === 'muito_alta' ? 0.80 :
             imprevisibilidade === 'alta' ? 0.90 : 1.0;
 
   const ref = extractMarketReference(match);
 
-  // Obter probabilidade justa de referência do mercado sem vig
   let fairHome = 0.3333;
   let fairDraw = 0.3333;
   let fairAway = 0.3333;
@@ -74,7 +123,10 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
   } else if (h2h) {
     try {
       const h2hOdds = orderOutcomes(h2h.outcomes, match.home_team, match.away_team);
-      const bookmakerFair = removeOverround(h2hOdds);
+      // EV-02: Use Shin method for 3-way markets
+      const bookmakerFair = h2hOdds.length === 3
+        ? removeOverroundShin(h2hOdds)
+        : removeOverround(h2hOdds);
       fairHome = bookmakerFair[0];
       fairDraw = h2hOdds.length === 3 ? bookmakerFair[1] : 0.0;
       fairAway = h2hOdds.length === 3 ? bookmakerFair[2] : bookmakerFair[1];
@@ -130,12 +182,14 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
 
     if (homeOdd && drawOdd && awayOdd) {
       try {
-        // Odds sintéticas comerciais (com margem da Pinnacle, igual ao que aparece no site)
-        const dc1X_bookmaker_odd = 1 / ((1 / homeOdd) + (1 / drawOdd));
-        const dcX2_bookmaker_odd = 1 / ((1 / drawOdd) + (1 / awayOdd));
-        const dc12_bookmaker_odd = 1 / ((1 / homeOdd) + (1 / awayOdd));
+        // EV-03: Derive DC odds from fair probs (no overround) for correct EV calculation
+        const prob1X_fair = fairHome + fairDraw;
+        const probX2_fair = fairDraw + fairAway;
+        const prob12_fair = fairHome + fairAway;
+        const dc1X_bookmaker_odd = prob1X_fair > 0 ? 1 / prob1X_fair : 1 / ((1 / homeOdd) + (1 / drawOdd));
+        const dcX2_bookmaker_odd = probX2_fair > 0 ? 1 / probX2_fair : 1 / ((1 / drawOdd) + (1 / awayOdd));
+        const dc12_bookmaker_odd = prob12_fair > 0 ? 1 / prob12_fair : 1 / ((1 / homeOdd) + (1 / awayOdd));
 
-        // Probabilidades da IA calibradas e consistentes sem duplo-penalização redundante
         const probIa1X = probHomeCalibrada + probDrawCalibrada;
         const probIaX2 = probDrawCalibrada + probAwayCalibrada;
         const probIa12 = probHomeCalibrada + probAwayCalibrada;
@@ -154,7 +208,6 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
 
       } catch (e: any) {
         console.warn('[DC] Falha ao calcular dupla chance:', e.message);
-        // Fallback robusto
         const dc1X_odd = 1 / ((1 / homeOdd) + (1 / drawOdd));
         const dcX2_odd = 1 / ((1 / drawOdd) + (1 / awayOdd));
         const dc12_odd = 1 / ((1 / homeOdd) + (1 / awayOdd));
@@ -169,7 +222,11 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
     }
   }
 
-  const validatedMarkets = markets.filter(m => validateMarket(m));
+  // GATE-02: Filter by min/max odd for clubs
+  const validatedMarkets = markets.filter(m => validateMarket(m)).filter(m => {
+    if (m.odd_api < CLUB_MIN_ODD || m.odd_api > CLUB_MAX_ODD) return false;
+    return true;
+  });
 
   return {
     mercados: validatedMarkets,
@@ -183,9 +240,7 @@ function createValueMarket(name: string, oddApi: number, probIA: number, estimat
   const fairOdd = 1 / probIA;
   let edge = (probIA * oddApi) - 1;
 
-  // IMPORTANTE 1: threshold elevado para 0.85 (28.5%) — edges entre 22.5-28.5% são raros mas possíveis.
-  // O teto absoluto MAX_EDGE_REALISTA (30%) ainda é respeitado.
-  const atingiuTeto = edge >= MAX_EDGE_REALISTA * 0.85; // 28.5% já é suspeito
+  const atingiuTeto = edge > MAX_EDGE_REALISTA;
   const edgeLimitado = Math.min(edge, MAX_EDGE_REALISTA);
 
   return {
@@ -194,7 +249,7 @@ function createValueMarket(name: string, oddApi: number, probIA: number, estimat
     prob_ia: probIA * 100,
     odd_fair: fairOdd,
     edge: edgeLimitado,
-    is_value_bet: edge > 0.05 && !atingiuTeto && edge <= MAX_EDGE_REALISTA,
+    is_value_bet: edge > 0.05 && !atingiuTeto,
     recomenda: edge > 0.10 && !atingiuTeto,
     odd_is_estimated: estimated || atingiuTeto,
     observacao: ''
@@ -203,20 +258,17 @@ function createValueMarket(name: string, oddApi: number, probIA: number, estimat
 
 function validateMarket(market: MarketValueBet): boolean {
   if (market.odd_is_estimated && market.edge > MAX_EDGE_REALISTA) return false;
-  if (market.prob_ia < 5) return false;
+  if (market.prob_ia < MIN_PROB_THRESHOLD) return false;
   return true;
 }
 
 export function validateReport(report: ValueBetReport): ValueBetReport {
-  // Relaxed limit: a value bet is about EDGE, not just high probability.
-  // We only disable if prob is extremely low (< 15%) or odd is estimated and edge too high.
   report.mercados = report.mercados.map(m => {
-    if (m.prob_ia < 15) m.is_value_bet = false;
-    if (m.odd_is_estimated && m.edge > 0.25) m.is_value_bet = false;
+    if (m.prob_ia < MIN_PROB_THRESHOLD) m.is_value_bet = false;
+    if (m.odd_is_estimated && m.edge > MAX_EDGE_REALISTA) m.is_value_bet = false;
     return m;
   });
 
-  // Re-sync totals
   const validValues = report.mercados.filter(m => m.is_value_bet);
   report.total_value_bets = validValues.length;
   report.tem_value = validValues.length > 0;
@@ -225,43 +277,26 @@ export function validateReport(report: ValueBetReport): ValueBetReport {
   return report;
 }
 
-/**
- * Extrai a referência matemática sharp de um jogo, priorizando Pinnacle
- * e usando Betfair Exchange EU como fallback.
- */
 export function extractMarketReference(matchData: any): MarketReference {
   const bookmakers = matchData.bookmakers || [];
 
-  // 1. Tentar Pinnacle primeiro
   let sharpBook = bookmakers.find((b: any) => b.key === 'pinnacle');
   let chosenKey: 'pinnacle' | 'betfair_ex_eu' | null = 'pinnacle';
 
-  // 2. Fallback para Betfair Exchange EU
   if (!sharpBook) {
     sharpBook = bookmakers.find((b: any) => b.key === 'betfair_ex_eu');
     chosenKey = 'betfair_ex_eu';
   }
 
-  // 3. Sem referência disponível
   if (!sharpBook) {
-    return {
-      sharpBookmaker: null,
-      rawOdds: [],
-      fairProbs: [],
-      overround: 0,
-      lastUpdate: '',
-      hasReference: false
-    };
+    return { sharpBookmaker: null, rawOdds: [], fairProbs: [], overround: 0, lastUpdate: '', hasReference: false };
   }
 
-  // 4. Extrair odds do mercado h2h
   const h2h = sharpBook.markets.find((m: any) => m.key === 'h2h');
   if (!h2h || !h2h.outcomes || h2h.outcomes.length < 2) {
     return { sharpBookmaker: null, rawOdds: [], fairProbs: [], overround: 0, lastUpdate: '', hasReference: false };
   }
 
-  // Ordem padrão esperada: [Home, Away, Draw] no h2h do the-odds-api
-  // CUIDADO: a API não garante ordem; precisamos ordenar por nome dos times
   let rawOdds: number[];
   try {
     rawOdds = orderOutcomes(h2h.outcomes, matchData.home_team, matchData.away_team);
@@ -269,12 +304,14 @@ export function extractMarketReference(matchData: any): MarketReference {
     return { sharpBookmaker: null, rawOdds: [], fairProbs: [], overround: 0, lastUpdate: '', hasReference: false };
   }
 
-  // 5. Calcular vig-free
   let fairProbs: number[];
   let overround: number;
   try {
-    fairProbs = removeOverround(rawOdds);
-    overround = rawOdds.reduce((sum: number, o: number) => sum + (1/o), 0);
+    // EV-02: Use Shin method for 3-way markets (removes favourite-longshot bias)
+    fairProbs = rawOdds.length === 3
+      ? removeOverroundShin(rawOdds)
+      : removeOverround(rawOdds);
+    overround = rawOdds.reduce((sum: number, o: number) => sum + (1 / o), 0);
   } catch {
     return { sharpBookmaker: null, rawOdds: [], fairProbs: [], overround: 0, lastUpdate: '', hasReference: false };
   }
@@ -283,15 +320,12 @@ export function extractMarketReference(matchData: any): MarketReference {
     sharpBookmaker: chosenKey,
     rawOdds,
     fairProbs,
-    overround: (overround - 1) * 100,  // em %
+    overround: (overround - 1) * 100,
     lastUpdate: sharpBook.last_update || new Date().toISOString(),
     hasReference: true
   };
 }
 
-/**
- * Ordena outcomes do h2h em [home, away, draw] (3-way) ou [home, away] (2-way)
- */
 export function orderOutcomes(outcomes: any[], homeTeam: string, awayTeam: string): number[] {
   const home = outcomes.find(o => o.name === homeTeam)?.price;
   const away = outcomes.find(o => o.name === awayTeam)?.price;
@@ -346,7 +380,6 @@ export function gateConfiancaDados(dados: ConfiancaDados): ResultadoGateConfianc
       motivo: `Dados insuficientes: ${dados.nJogosEfetivos.toFixed(1)} jogos efetivos (mínimo: 8)`
     };
   }
-  // IMPORTANTE 2: threshold reduzido de 0.60 para 0.50 para exigir melhor qualidade de ajuste Poisson.
   if (dados.cvLambda > 0.50) {
     return {
       passou: false,

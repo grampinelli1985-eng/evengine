@@ -6,12 +6,9 @@
 import { ScoutingReport } from '../types';
 import { GEMINI_MODEL } from '../config/ai';
 import { hasQuota, trackRequest } from './apiQuotaService';
-
+import { getSportmonksTeamId, getSeasonId, getTeamXgLast5, getTeamPpdaLast5, SPORTMONKS_LEAGUE_BY_NAME } from './sportmonksService';
 
 import { GoogleGenAI } from "@google/genai";
-
-// Removido API_FOOTBALL_KEY do frontend por segurança (via Proxy)
-
 
 const TEAM_ID_CACHE = new Map<string, number>();
 
@@ -37,31 +34,24 @@ export const ALIAS_TIMES_HOLANDESES: Record<string, string[]> = {
 };
 
 function normalizarNomeTime(nome: string): string {
-  // 1. Unicode Normalization (removes accents)
   const semAcentos = nome
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(/[̀-ͯ]/g, '');
 
-  // 2. Remove common prefixes and suffixes
   return semAcentos
-    .replace(/^(1\.|2\.|3\.)\s*(FC|fc|FC\s|fc\s)/gi, '') // "1. FC "
-    .replace(/^(FC|AFC|SC|RKC|NEC|PEC)\s/gi, '') // remove prefixos holandeses e genéricos
-    .replace(/\s(FC|CF|AC|SC|e\.V\.|RCD|RC|Stade|CFR|FK|AZ|PSV|UD|CD|Club|Club de Futbol)\s?$/gi, '') // suffixes
-    .replace(/^(Borussia|VfL|VfB|TSG|SV|SC|RCD|RC|Stade)\s/gi, '') // prefixes
+    .replace(/^(1\.|2\.|3\.)\s*(FC|fc|FC\s|fc\s)/gi, '')
+    .replace(/^(FC|AFC|SC|RKC|NEC|PEC)\s/gi, '')
+    .replace(/\s(FC|CF|AC|SC|e\.V\.|RCD|RC|Stade|CFR|FK|AZ|PSV|UD|CD|Club|Club de Futbol)\s?$/gi, '')
+    .replace(/^(Borussia|VfL|VfB|TSG|SV|SC|RCD|RC|Stade)\s/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
 }
 
-
-
 const API_BASE_URL = '/api/football';
 const ODDS_API_KEY = import.meta.env.VITE_ODDS_API_KEY || '';
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 const genAI = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
-
-// Removido isKeyValid por não ser mais necessário no front
-
 
 export const TEAM_NAME_MAP: Record<string, number> = {
   // Eredivisie
@@ -95,7 +85,7 @@ export const TEAM_NAME_MAP: Record<string, number> = {
   'Vitória': 1932, 'Juventude': 1165, 'Cuiabá': 2472,
   'Mirassol': 2541,
 
-  // Premier League (20 times) e Aliases Comuns
+  // Premier League
   'Arsenal': 42, 'Manchester City': 50, 'Manchester United': 33,
   'Liverpool': 40, 'Chelsea': 49, 'Tottenham': 47, 'Tottenham Hotspur': 47,
   'Newcastle': 34, 'Newcastle United': 34, 'Aston Villa': 66, 'Fulham': 36,
@@ -122,7 +112,7 @@ export const TEAM_NAME_MAP: Record<string, number> = {
   'LDU Quito': 1440, 'Universitario': 1444,
   'Alianza Lima': 1443, 'Sporting Cristal': 1445,
 
-  // Copa Sul-Americana - times frequentes
+  // Copa Sul-Americana
   'Godoy Cruz': 449, 'Newell\'s Old Boys': 450, 'Banfield': 452,
   'Arsenal de Sarandí': 453, 'Rosario Central': 430,
   'Goiás': 1375, 'Sport Recife': 2294, 'Avaí': 1370,
@@ -138,42 +128,52 @@ export const TEAM_NAME_MAP: Record<string, number> = {
 };
 
 const AUTO_MAP_KEY = 'evengine_team_auto_map';
+const FIXTURES_CACHE_KEY = 'evengine_fixtures_preload_date';
 
 let dailyFixturesLoaded = false;
 let isPreloading = false;
 
 async function preloadDailyFixtures() {
   if (dailyFixturesLoaded || isPreloading) return;
+
+  // Persiste entre reloads: só faz a chamada uma vez por dia UTC
+  const today = new Date().toISOString().split('T')[0];
+  const lastLoaded = localStorage.getItem(FIXTURES_CACHE_KEY);
+  if (lastLoaded === today) {
+    dailyFixturesLoaded = true;
+    return;
+  }
+
   isPreloading = true;
   try {
-     const today = new Date().toISOString().split('T')[0];
-     if (!hasQuota(1)) return;
-     trackRequest();
-     const res = await fetch(`${API_BASE_URL}/fixtures?date=${today}`, {
-       signal: AbortSignal.timeout(6000)
-     });
-     if (res.ok) {
-        const data = await res.json();
-        if (data.response && data.response.length > 0) {
-           const autoMap = getAutoMap();
-           data.response.forEach((f: any) => {
-              if (f.teams?.home) autoMap[f.teams.home.name] = f.teams.home.id;
-              if (f.teams?.away) autoMap[f.teams.away.name] = f.teams.away.id;
-           });
-           saveAutoMap(autoMap);
-        }
-     }
+    if (!hasQuota(1)) return;
+    const res = await fetch(`${API_BASE_URL}/fixtures?date=${today}`, {
+      signal: AbortSignal.timeout(6000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.response && data.response.length > 0) {
+        const autoMap = getAutoMap();
+        data.response.forEach((f: any) => {
+          if (f.teams?.home) autoMap[f.teams.home.name] = f.teams.home.id;
+          if (f.teams?.away) autoMap[f.teams.away.name] = f.teams.away.id;
+        });
+        saveAutoMap(autoMap);
+        localStorage.setItem(FIXTURES_CACHE_KEY, today);
+      }
+    }
   } catch (e) {
-     console.warn('Falha no preload da grade diária:', e);
+    console.warn('Falha no preload da grade diária:', e);
   } finally {
-     dailyFixturesLoaded = true;
-     isPreloading = false;
+    dailyFixturesLoaded = true;
+    isPreloading = false;
   }
 }
 
 function getAutoMap(): Record<string, number> {
   const stored = localStorage.getItem(AUTO_MAP_KEY);
-  return stored ? JSON.parse(stored) : {};
+  if (!stored) return {};
+  try { return JSON.parse(stored); } catch { return {}; }
 }
 
 function saveAutoMap(map: Record<string, number>) {
@@ -181,11 +181,9 @@ function saveAutoMap(map: Record<string, number>) {
 }
 
 export async function getTeamIdAsync(teamName: string): Promise<number> {
-  // 1. Mapa manual (Nome exato)
   if (TEAM_NAME_MAP[teamName]) return TEAM_NAME_MAP[teamName];
-  
-  // 2. Busca nos ALIAS de times holandeses
-  const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+  const normalize = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   const normalizedQuery = normalize(teamName);
 
   for (const [realName, aliases] of Object.entries(ALIAS_TIMES_HOLANDESES)) {
@@ -193,39 +191,32 @@ export async function getTeamIdAsync(teamName: string): Promise<number> {
       normalize(realName) === normalizedQuery ||
       aliases.some(alias => normalize(alias) === normalizedQuery)
     ) {
-      if (TEAM_NAME_MAP[realName]) {
-        return TEAM_NAME_MAP[realName];
-      }
+      if (TEAM_NAME_MAP[realName]) return TEAM_NAME_MAP[realName];
     }
   }
 
-  // 3. Normalização e comparação com mapa
   for (const [name, id] of Object.entries(TEAM_NAME_MAP)) {
     if (normalize(name) === normalizedQuery) return id;
     if (normalize(name).includes(normalizedQuery)) return id;
   }
 
-  // 4. Auto-map cache
   const autoMap = getAutoMap();
   if (autoMap[teamName]) return autoMap[teamName];
 
-  // 5. Preload da Grade Diária se não estiver em cache
   if (!dailyFixturesLoaded) {
     await preloadDailyFixtures();
   }
 
-  // 6. Tenta buscar no AutoMap atualizado por similaridade
   const updatedAutoMap = getAutoMap();
   if (updatedAutoMap[teamName]) return updatedAutoMap[teamName];
 
   for (const [gradeName, id] of Object.entries(updatedAutoMap)) {
     const normGrade = normalize(gradeName);
     if (
-      normGrade === normalizedQuery || 
-      normGrade.includes(normalizedQuery) || 
+      normGrade === normalizedQuery ||
+      normGrade.includes(normalizedQuery) ||
       normalizedQuery.includes(normGrade)
     ) {
-      // Memoriza para acelerar a próxima
       updatedAutoMap[teamName] = id;
       saveAutoMap(updatedAutoMap);
       return id;
@@ -249,14 +240,17 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
   const awayId = await getTeamIdAsync(awayTeam);
 
   const fetchForm = async (id: number, teamName: string) => {
-    // 1. Tenta API-Football se tiver ID válido
+    const now = new Date();
+    const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+
     if (id !== -1 && hasQuota(1)) {
-      trackRequest();
       try {
-        const res = await fetch(`${API_BASE_URL}/teams/statistics?league=${leagueId || 71}&season=${new Date().getFullYear()}&team=${id}`, {
+        const res = await fetch(`${API_BASE_URL}/teams/statistics?league=${leagueId || 71}&season=${season}&team=${id}`, {
           signal: AbortSignal.timeout(4500)
         });
 
+        if (!res.ok) throw new Error('Response not ok');
+        trackRequest();
         const data = await responseToJson(res);
         const form = data?.response?.form || '';
         if (form.length >= 3) {
@@ -269,31 +263,26 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
       }
     }
 
-    // 2. Se falhar ou time não mapeado, chama o agente de busca do Gemini
     return await fetchFormaRecenteViaGeminiSearch(teamName);
   };
 
   const fetchH2H = async (h: number, a: number) => {
     if (h === -1 || a === -1) return [];
     if (!hasQuota(1)) return [];
-    trackRequest();
     try {
       const h2hUrl = `${API_BASE_URL}/fixtures/headtohead?h2h=${h}-${a}&last=10`;
       const res = await fetch(h2hUrl, {
         signal: AbortSignal.timeout(4000)
       });
 
+      if (!res.ok) throw new Error('Response not ok');
+      trackRequest();
       const data = await responseToJson(res);
       const rawH2H = data?.response || [];
-      
-      // Ordenar por data decrescente (mais recentes primeiro)
+
       const sortedH2H = [...rawH2H].sort((a: any, b: any) => {
-        const timeA = a.fixture?.timestamp 
-          ? a.fixture.timestamp * 1000 
-          : new Date(a.fixture?.date || 0).getTime();
-        const timeB = b.fixture?.timestamp 
-          ? b.fixture.timestamp * 1000 
-          : new Date(b.fixture?.date || 0).getTime();
+        const timeA = a.fixture?.timestamp ? a.fixture.timestamp * 1000 : new Date(a.fixture?.date || 0).getTime();
+        const timeB = b.fixture?.timestamp ? b.fixture.timestamp * 1000 : new Date(b.fixture?.date || 0).getTime();
         return timeB - timeA;
       });
 
@@ -337,7 +326,6 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
   }
 }
 
-
 async function responseToJson(res: Response) {
   try { return await res.json(); } catch (e) { return null; }
 }
@@ -345,20 +333,26 @@ async function responseToJson(res: Response) {
 export async function fetchInjuries(teamName: string, leagueId: number): Promise<string[]> {
   const teamId = await getTeamIdAsync(teamName);
   if (teamId === -1 || !hasQuota(1)) return [];
-  
+
   const cacheKey = `injuries_${teamId}_${leagueId}`;
   const cached = sessionStorage.getItem(cacheKey);
   if (cached) {
-    const { data, timestamp } = JSON.parse(cached);
-    if (Date.now() - timestamp < 3 * 60 * 60 * 1000) return data;
+    try {
+      const { data, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < 3 * 60 * 60 * 1000) return data;
+    } catch { sessionStorage.removeItem(cacheKey); }
   }
 
+  const now = new Date();
+  const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+
   try {
-    trackRequest();
-    const res = await fetch(`${API_BASE_URL}/injuries?team=${teamId}&league=${leagueId}&season=${new Date().getFullYear()}`, {
+    const res = await fetch(`${API_BASE_URL}/injuries?team=${teamId}&league=${leagueId}&season=${season}`, {
       signal: AbortSignal.timeout(4000)
     });
 
+    if (!res.ok) return [];
+    trackRequest();
     const data = await responseToJson(res);
     const injuries = (data?.response || []).map((i: any) => i.player.name);
     sessionStorage.setItem(cacheKey, JSON.stringify({ data: injuries, timestamp: Date.now() }));
@@ -367,8 +361,6 @@ export async function fetchInjuries(teamName: string, leagueId: number): Promise
     return [];
   }
 }
-
-// ─── THE ODDS API + GEMINI FORM FETCHING ─────────────
 
 const LIGAS_SUPORTADAS = [
   'soccer_epl', 'soccer_serie_a', 'soccer_spain_la_liga',
@@ -386,46 +378,34 @@ async function buscarResultadosRecentes(
 ): Promise<Array<{ resultado: 'W'|'D'|'L'; placar: string; adversario: string }>> {
   try {
     if (!ODDS_API_KEY) return [];
-    const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${ODDS_API_KEY}&daysFrom=3`; // Max 3 days allowed by /scores/
+    const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${ODDS_API_KEY}&daysFrom=3`;
     const res = await fetch(url);
-    
+
     if (res.status === 422) {
-      console.warn(`[The Odds API] Erro 422: Janela de dias (daysFrom) inválida ou plano limitado para ${sportKey}.`);
+      console.warn(`[The Odds API] Erro 422: Janela de dias inválida para ${sportKey}.`);
       return [];
     }
 
     if (!res.ok) return [];
 
-    
     const jogos = await res.json();
-    
-    // Filtrar jogos do time que já foram completados
     const jogosDoTime = jogos
       .filter((j: any) =>
         j.completed === true &&
         (j.home_team === teamName || j.away_team === teamName) &&
         j.scores?.length >= 2
       )
-      .slice(-5); // últimos 5
+      .slice(-5);
 
     return jogosDoTime.map((j: any) => {
       const ehCasa = j.home_team === teamName;
-      const scoreTime = parseInt(
-        j.scores?.find((s: any) => s.name === teamName)?.score ?? '0', 10
-      );
+      const scoreTime = parseInt(j.scores?.find((s: any) => s.name === teamName)?.score ?? '0', 10);
       const adversario = ehCasa ? j.away_team : j.home_team;
-      const scoreAdv = parseInt(
-        j.scores?.find((s: any) => s.name === adversario)?.score ?? '0', 10
-      );
-      
-      const resultado: 'W'|'D'|'L' = scoreTime > scoreAdv ? 'W'
-        : scoreTime === scoreAdv ? 'D' : 'L';
-      
+      const scoreAdv = parseInt(j.scores?.find((s: any) => s.name === adversario)?.score ?? '0', 10);
+      const resultado: 'W'|'D'|'L' = scoreTime > scoreAdv ? 'W' : scoreTime === scoreAdv ? 'D' : 'L';
       return {
         resultado,
-        placar: ehCasa
-          ? `${scoreTime}-${scoreAdv}`
-          : `${scoreAdv}-${scoreTime}`,
+        placar: ehCasa ? `${scoreTime}-${scoreAdv}` : `${scoreAdv}-${scoreTime}`,
         adversario
       };
     });
@@ -434,24 +414,21 @@ async function buscarResultadosRecentes(
   }
 }
 
+const formCache = new Map<string, string[]>();
+
 export async function fetchFormaRecenteViaGeminiSearch(teamName: string): Promise<string[]> {
+  if (formCache.has(teamName)) return formCache.get(teamName)!;
+
   if (!genAI) {
     console.warn("Gemini genAI instance not initialized, cannot run search.");
     return ['?', '?', '?', '?', '?'];
   }
 
   const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().toLocaleString('en-US', { month: 'long' });
-  const queries = [
-    `"${teamName} results last 5 matches ${currentYear}"`,
-    `"${teamName} form guide ${currentMonth} ${currentYear}"`,
-    `"${teamName} recent matches sofascore"`
-  ];
+  const query = `"${teamName} results last 5 matches ${currentYear}"`;
 
-  for (let i = 0; i < queries.length; i++) {
-    const query = queries[i];
-    try {
-      const systemInstruction = `Você é um agente de busca esportiva (Scout).
+  try {
+    const systemInstruction = `Você é um agente de busca esportiva (Scout).
 Sua PRIORIDADE MÁXIMA é obter a forma recente (últimos 5 jogos concluídos) do time informado.
 Você DEVE obrigatoriamente usar a ferramenta Google Search para buscar informações reais e atualizadas de 2026.
 Analise os resultados encontrados e retorne exatamente os últimos 5 jogos em ordem cronológica (o mais antigo primeiro, o mais recente por último).
@@ -467,39 +444,41 @@ Se você não conseguir determinar com certeza os resultados reais de todos os 5
 }
 Responda APENAS com o JSON, sem markdown ou explicações.`;
 
-      const userMessage = `Por favor, encontre a forma recente dos últimos 5 jogos do time "${teamName}" em 2026 usando a busca: ${query}`;
+    const userMessage = `Por favor, encontre a forma recente dos últimos 5 jogos do time "${teamName}" em 2026 usando a busca: ${query}`;
 
-      const response = await genAI.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          tools: [{ googleSearch: {} }] // Ativa a busca no Google integrada
-        }
-      });
-
-      const text = response.text || '';
-      const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
-
-      if (parsed && parsed.sucesso && Array.isArray(parsed.forma) && parsed.forma.length === 5 && parsed.forma.every((c: string) => ['V', 'E', 'D', '?'].includes(c)) && parsed.forma.some((c: string) => c !== '?')) {
-        return parsed.forma;
-      } else {
-        console.warn(`[Scout Search] Query ${i+1} sem dados válidos para ${teamName}.`);
+    const response = await genAI.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        tools: [{ googleSearch: {} }]
       }
-    } catch (err) {
-      console.error(`[Scout Search] Erro na Query ${i+1} para ${teamName}:`, err);
+    });
+
+    const text = response.text || '';
+    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+
+    if (parsed && parsed.sucesso && Array.isArray(parsed.forma) && parsed.forma.length === 5 &&
+      parsed.forma.every((c: string) => ['V', 'E', 'D', '?'].includes(c)) &&
+      parsed.forma.some((c: string) => c !== '?')) {
+      formCache.set(teamName, parsed.forma);
+      return parsed.forma;
     }
+  } catch (err) {
+    console.error(`[Scout Search] Erro na Query para ${teamName}:`, err);
   }
 
-  console.error(`[Scout Search] ❌ Todas as 3 queries de busca falharam para o time: ${teamName}`);
-  return ['?', '?', '?', '?', '?'];
+  console.error(`[Scout Search] ❌ A busca do Gemini falhou para o time: ${teamName}`);
+  const fallback = ['?', '?', '?', '?', '?'];
+  formCache.set(teamName, fallback);
+  return fallback;
 }
 
 export interface FormResult {
   data: Array<{ resultado: 'W'|'D'|'L'; placar: string; adversario: string }>;
-  source: 'api_football' | 'football_data' | 'the_odds_api' | 'unavailable';
+  source: 'api_football' | 'football_data' | 'the_odds_api' | 'unavailable' | 'gemini_search';
   confiavel: boolean;
 }
 
@@ -509,72 +488,63 @@ export async function getFormaRecente(
   liga: string,
   teamId?: number
 ): Promise<FormResult> {
-  
-  // 1. Tentar API-Football (Primária)
   const resolvedId = teamId && teamId !== -1 ? teamId : await getTeamIdAsync(teamName);
   if (resolvedId && resolvedId !== -1) {
     try {
-      const res = await fetch(`${API_BASE_URL}/teams/statistics?league=${LEAGUE_ID_MAP[sportKey] || 71}&season=${new Date().getFullYear()}&team=${resolvedId}`, {
+      const now = new Date();
+      const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+      const res = await fetch(`${API_BASE_URL}/teams/statistics?league=${LEAGUE_ID_MAP[sportKey] || 71}&season=${season}&team=${resolvedId}`, {
         signal: AbortSignal.timeout(4000)
       });
+      // [INC-SC-2 FIX] Verificar res.ok antes de chamar .json()
+      if (!res.ok) throw new Error(`API-Football status ${res.status}`);
       const data = await res.json();
       const formStr = data?.response?.form || '';
       if (formStr.length >= 3) {
-        const results = formStr.split('').slice(-5).map((r: string) => ({
-          resultado: normalizeResult(r) as 'W'|'D'|'L',
-          placar: 'N/A',
-          adversario: 'N/A'
-        }));
+        const results = formStr.split('').slice(-5).map((r: string) => {
+          const norm = normalizeResult(r); // retorna 'V'/'E'/'D'/'?'
+          const resultado: 'W'|'D'|'L' = norm === 'V' ? 'W' : norm === 'E' ? 'D' : 'L';
+          return { resultado, placar: 'N/A', adversario: 'N/A' };
+        });
         return { data: results, source: 'api_football', confiavel: true };
       }
     } catch (e) { /* fallback */ }
   }
 
-  // 2. Tentar The Odds API /scores (Secundária)
   const resultadosAPI = await buscarResultadosRecentes(teamName, sportKey);
   if (resultadosAPI.length > 0) {
     return { data: resultadosAPI, source: 'the_odds_api', confiavel: true };
   }
 
-  // 3. Tentar Gemini Search agent (Terciária)
   try {
     const geminiForm = await fetchFormaRecenteViaGeminiSearch(teamName);
     if (geminiForm.some(r => r !== '?')) {
-      const mapped = geminiForm.map(r => ({
-        resultado: (r === 'V' ? 'W' : r === 'E' ? 'D' : 'L') as 'W'|'D'|'L',
-        placar: 'N/A',
-        adversario: 'N/A'
-      }));
-      return { data: mapped, source: 'the_odds_api', confiavel: true };
+      const mapped = geminiForm
+        .filter(r => r !== '?')
+        .map(r => ({
+          resultado: (r === 'V' ? 'W' : r === 'E' ? 'D' : 'L') as 'W'|'D'|'L',
+          placar: 'N/A',
+          adversario: 'N/A'
+        }));
+      return { data: mapped, source: 'gemini_search', confiavel: true };
     }
   } catch (e) {
     console.warn(`Gemini Search agent failed for ${teamName}:`, e);
   }
-  
-  // 4. Último recurso: Unavailable
-  return { 
-    data: [], 
-    source: 'unavailable', 
-    confiavel: false 
-  };
+
+  return { data: [], source: 'unavailable', confiavel: false };
 }
-
-
 
 export async function buscarEstatisticasMedias(
   homeTeam: string,
   awayTeam: string,
   liga: string
-): Promise<{
-  escanteios: { media_home: number; media_away: number; total_min: number; total_max: number; probabilidade: number };
-  finalizacoes: { media_home: number; media_away: number; total_min: number; total_max: number; probabilidade: number };
-  fonte?: string;
-  confiavel?: boolean;
-}> {
+): Promise<any> {
+  let baseResult: any;
   try {
     if (!genAI) throw new Error('API key not initialized');
     const prompt = `Você é um banco de dados estatístico de futebol.
-    
+
 Para a partida ${homeTeam} vs ${awayTeam} na ${liga},
 baseado nos últimos 5 jogos de cada time, retorne APENAS
 este JSON exato sem markdown sem explicações:
@@ -610,7 +580,6 @@ Retorne APENAS o JSON.`;
     const response = await genAI.models.generateContent({
       model: GEMINI_MODEL,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-
       config: {
         systemInstruction: 'Responda APENAS com JSON válido. Sem markdown, sem texto adicional.',
         responseMimeType: 'application/json'
@@ -619,65 +588,103 @@ Retorne APENAS o JSON.`;
 
     const text = response.text || '';
     const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
     const parsed = JSON.parse(cleaned);
-    return {
-      ...parsed,
-      fonte: 'gemini_inferido',
-      confiavel: false
-    };
+    baseResult = { ...parsed, fonte: 'gemini_inferido', confiavel: false };
   } catch {
-    // Fallback com médias conservadoras
-    return {
+    baseResult = {
       escanteios: { media_home: 5.0, media_away: 4.5, total_min: 8, total_max: 11, probabilidade: 70 },
       finalizacoes: { media_home: 12.0, media_away: 10.0, total_min: 20, total_max: 26, probabilidade: 70 },
       fonte: 'unavailable',
       confiavel: false
     };
   }
+
+  // ENRICH WITH SPORTMONKS
+  let xg_home_last5: number | null = null;
+  let xg_away_last5: number | null = null;
+  let ppda_home: number | null = null;
+  let ppda_away: number | null = null;
+  let pressao_alta_home = false;
+  let pressao_alta_away = false;
+
+  const hasSportmonksToken = !!import.meta.env.VITE_SPORTMONKS_TOKEN;
+  if (hasSportmonksToken) {
+    try {
+      const leagueKey = Object.keys(SPORTMONKS_LEAGUE_BY_NAME).find(
+        k => liga.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(liga.toLowerCase())
+      );
+      const leagueId = leagueKey ? SPORTMONKS_LEAGUE_BY_NAME[leagueKey] : null;
+
+      if (leagueId) {
+        const now = new Date();
+        const year = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+        const seasonId = await getSeasonId(leagueId, year);
+
+        if (seasonId) {
+          const [homeId, awayId] = await Promise.all([
+            getSportmonksTeamId(homeTeam),
+            getSportmonksTeamId(awayTeam)
+          ]);
+
+          const fetches = [];
+          if (homeId) {
+            fetches.push(getTeamXgLast5(homeId, seasonId).then(val => { xg_home_last5 = val; }));
+            fetches.push(getTeamPpdaLast5(homeId, seasonId).then(val => {
+              ppda_home = val;
+              if (val !== null && val < 8) pressao_alta_home = true;
+            }));
+          }
+          if (awayId) {
+            fetches.push(getTeamXgLast5(awayId, seasonId).then(val => { xg_away_last5 = val; }));
+            fetches.push(getTeamPpdaLast5(awayId, seasonId).then(val => {
+              ppda_away = val;
+              if (val !== null && val < 8) pressao_alta_away = true;
+            }));
+          }
+
+          if (fetches.length > 0) await Promise.all(fetches);
+        }
+      }
+    } catch (e) {
+      console.warn('[Sportmonks] Error enriching statistics:', e);
+    }
+  }
+
+  return {
+    ...baseResult,
+    xg_home_last5,
+    xg_away_last5,
+    ppda_home,
+    ppda_away,
+    pressao_alta_home,
+    pressao_alta_away
+  };
 }
-
-
-
 
 function verificarCorrespondenciaTime(nomeFixture: string, nomeDesejado: string): boolean {
   const normFixture = normalizarNomeTime(nomeFixture);
   const normDesejado = normalizarNomeTime(nomeDesejado);
-  
   if (normFixture === normDesejado) return true;
   if (normFixture.includes(normDesejado) || normDesejado.includes(normFixture)) return true;
-  
   return false;
 }
 
 function validarLoteH2H(fixtures: any[], homeTeam: string, awayTeam: string): boolean {
   if (!fixtures || fixtures.length === 0) return false;
-  
-  // Analisar a primeira fixture como amostra do lote
   const f = fixtures[0];
   const homeFixture = f.teams?.home?.name;
   const awayFixture = f.teams?.away?.name;
-  
   if (!homeFixture || !awayFixture) return false;
-  
-  // Verifica se a fixture envolve pelo menos um dos times da nossa partida (ou ambos)
   const envolveHome = verificarCorrespondenciaTime(homeFixture, homeTeam) || verificarCorrespondenciaTime(awayFixture, homeTeam);
   const envolveAway = verificarCorrespondenciaTime(homeFixture, awayTeam) || verificarCorrespondenciaTime(awayFixture, awayTeam);
-  
   return envolveHome && envolveAway;
 }
 
-// Função auxiliar para mapear e calcular estatísticas de H2H
-function mapearConfrontos(
-  fixtures: any[],
-  homeTeam: string,
-  awayTeam: string
-) {
+function mapearConfrontos(fixtures: any[], homeTeam: string, awayTeam: string) {
   const confrontos = fixtures.slice(0, 5).map((f: any) => {
     const homeGoals = f.goals.home ?? 0;
     const awayGoals = f.goals.away ?? 0;
-    const vencedor = homeGoals > awayGoals ? 'home'
-      : awayGoals > homeGoals ? 'away' : 'draw';
+    const vencedor = homeGoals > awayGoals ? 'home' : awayGoals > homeGoals ? 'away' : 'draw';
     return {
       data: f.fixture.date?.substring(0, 10),
       homeTeam: f.teams.home.name,
@@ -688,8 +695,6 @@ function mapearConfrontos(
     };
   });
 
-  // Correção: conta vitórias home/away independente de onde o jogo ocorreu historicamente
-  // e usa correspondência de texto flexível (verificarCorrespondenciaTime)
   const vitorias_home = confrontos.filter(c =>
     (c.vencedor === 'home' && verificarCorrespondenciaTime(c.homeTeam, homeTeam)) ||
     (c.vencedor === 'away' && verificarCorrespondenciaTime(c.awayTeam, homeTeam))
@@ -700,15 +705,9 @@ function mapearConfrontos(
     (c.vencedor === 'away' && verificarCorrespondenciaTime(c.awayTeam, awayTeam))
   ).length;
 
-  const empates = confrontos.filter(
-    c => c.vencedor === 'draw'
-  ).length;
-  const totalGols = confrontos.reduce(
-    (a, c) => a + c.totalGols, 0
-  );
-  const over25 = confrontos.filter(
-    c => c.totalGols > 2
-  ).length;
+  const empates = confrontos.filter(c => c.vencedor === 'draw').length;
+  const totalGols = confrontos.reduce((a, c) => a + c.totalGols, 0);
+  const over25 = confrontos.filter(c => c.totalGols > 2).length;
 
   return {
     confrontos,
@@ -718,65 +717,47 @@ function mapearConfrontos(
       vitorias_away,
       media_gols_home: parseFloat(
         (confrontos.reduce((a, c) => {
-          if (verificarCorrespondenciaTime(c.homeTeam, homeTeam)) {
-            return a + parseInt(c.placar.split('-')[0], 10);
-          }
+          if (verificarCorrespondenciaTime(c.homeTeam, homeTeam)) return a + parseInt(c.placar.split('-')[0], 10);
           return a + parseInt(c.placar.split('-')[1], 10);
         }, 0) / (confrontos.length || 1)).toFixed(1)
       ),
       media_gols_away: parseFloat(
         (confrontos.reduce((a, c) => {
-          if (verificarCorrespondenciaTime(c.awayTeam, awayTeam)) {
-            return a + parseInt(c.placar.split('-')[1], 10);
-          }
+          if (verificarCorrespondenciaTime(c.awayTeam, awayTeam)) return a + parseInt(c.placar.split('-')[1], 10);
           return a + parseInt(c.placar.split('-')[0], 10);
         }, 0) / (confrontos.length || 1)).toFixed(1)
       ),
-      over25_percentual: Math.round(
-        (over25 / (confrontos.length || 1)) * 100
-      )
+      over25_percentual: Math.round((over25 / (confrontos.length || 1)) * 100)
     },
     fonte: 'api-football'
   };
 }
 
-async function buscarH2HviaAPIFootball(
-  homeTeam: string,
-  awayTeam: string
-): Promise<any> {
+async function buscarH2HviaAPIFootball(homeTeam: string, awayTeam: string): Promise<any> {
   try {
-
-    // Buscar IDs dos times usando cache e mapeamento local (TEAM_NAME_MAP)
     const homeId = await getTeamIdAsync(homeTeam);
     const awayId = await getTeamIdAsync(awayTeam);
 
-
     if (homeId === -1 || awayId === -1) {
-      console.warn('Time não encontrado na API-Football:',
-        homeId === -1 ? homeTeam : awayTeam
-      );
+      console.warn('Time não encontrado na API-Football:', homeId === -1 ? homeTeam : awayTeam);
       return null;
     }
 
     const h2hUrl = `${API_BASE_URL}/fixtures/headtohead?h2h=${homeId}-${awayId}`;
+    const resH2H = await fetch(h2hUrl, { signal: AbortSignal.timeout(5000) });
 
-    const resH2H = await fetch(
-      h2hUrl,
-      { signal: AbortSignal.timeout(5000) }
-    );
-
+    // [INC-SC-1 FIX] Verificar res.ok antes de chamar .json() para evitar parse de resposta de erro
+    if (!resH2H.ok) {
+      console.warn(`[H2H] API-Football retornou status ${resH2H.status}`);
+      return null;
+    }
 
     const dataH2H = await resH2H.json();
     const rawFixtures = dataH2H.response ?? [];
-    
-    // Ordenar por data decrescente (mais recentes primeiro) para garantir que slice(0, 10) pegue os mais novos
+
     const sortedFixtures = [...rawFixtures].sort((a: any, b: any) => {
-      const timeA = a.fixture?.timestamp 
-        ? a.fixture.timestamp * 1000 
-        : new Date(a.fixture?.date || 0).getTime();
-      const timeB = b.fixture?.timestamp 
-        ? b.fixture.timestamp * 1000 
-        : new Date(b.fixture?.date || 0).getTime();
+      const timeA = a.fixture?.timestamp ? a.fixture.timestamp * 1000 : new Date(a.fixture?.date || 0).getTime();
+      const timeB = b.fixture?.timestamp ? b.fixture.timestamp * 1000 : new Date(b.fixture?.date || 0).getTime();
       return timeB - timeA;
     });
 
@@ -786,61 +767,40 @@ async function buscarH2HviaAPIFootball(
       try {
         const currentYear = new Date().getFullYear();
         const fixturesUrl = `${API_BASE_URL}/fixtures?team=${homeId}&season=${currentYear}`;
-        
-        const resFixtures = await fetch(
-          fixturesUrl,
-          { signal: AbortSignal.timeout(5000) }
-        );
+        const resFixtures = await fetch(fixturesUrl, { signal: AbortSignal.timeout(5000) });
 
+        if (resFixtures.ok) {
+          const dataFixtures = await resFixtures.json();
+          const rawConfrontos = dataFixtures.response?.filter(
+            (f: any) => f.teams.home.id === awayId || f.teams.away.id === awayId
+          ) ?? [];
 
-        const dataFixtures = await resFixtures.json();
-        
-        // Filtrar apenas jogos contra o visitante
-        const rawConfrontos = dataFixtures.response?.filter(
-          (f: any) =>
-            f.teams.home.id === awayId ||
-            f.teams.away.id === awayId
-        ) ?? [];
+          const sortedConfrontos = [...rawConfrontos].sort((a: any, b: any) => {
+            const timeA = a.fixture?.timestamp ? a.fixture.timestamp * 1000 : new Date(a.fixture?.date || 0).getTime();
+            const timeB = b.fixture?.timestamp ? b.fixture.timestamp * 1000 : new Date(b.fixture?.date || 0).getTime();
+            return timeB - timeA;
+          });
 
-        // Ordenar por data decrescente (mais recentes primeiro) antes de limitar
-        const sortedConfrontos = [...rawConfrontos].sort((a: any, b: any) => {
-          const timeA = a.fixture?.timestamp 
-            ? a.fixture.timestamp * 1000 
-            : new Date(a.fixture?.date || 0).getTime();
-          const timeB = b.fixture?.timestamp 
-            ? b.fixture.timestamp * 1000 
-            : new Date(b.fixture?.date || 0).getTime();
-          return timeB - timeA;
-        });
+          const confrontosEncontrados = sortedConfrontos.slice(0, 10);
 
-        const confrontosEncontrados = sortedConfrontos.slice(0, 10);
-        console.log('Confrontos via fixtures (recentes):', confrontosEncontrados.length);
-
-        if (confrontosEncontrados.length > 0) {
-          if (!validarLoteH2H(confrontosEncontrados, homeTeam, awayTeam)) {
-            console.warn(`[H2H Validation Fallback] Lote H2H via Fixtures rejeitado por inconsistência de times. Esperado: ${homeTeam} vs ${awayTeam}. Retornado: ${confrontosEncontrados[0]?.teams?.home?.name} vs ${confrontosEncontrados[0]?.teams?.away?.name}`);
-            return null;
+          if (confrontosEncontrados.length > 0) {
+            if (!validarLoteH2H(confrontosEncontrados, homeTeam, awayTeam)) {
+              console.warn(`[H2H Validation Fallback] Lote rejeitado. Esperado: ${homeTeam} vs ${awayTeam}.`);
+              return null;
+            }
+            return mapearConfrontos(confrontosEncontrados, homeTeam, awayTeam);
           }
-          return mapearConfrontos(
-            confrontosEncontrados,
-            homeTeam,
-            awayTeam
-          );
         }
       } catch (e) {
         console.warn('Fixtures fallback falhou:', e);
       }
-      
-      console.warn(
-        'API-Football sem dados H2H para:',
-        homeTeam, 'vs', awayTeam,
-        '— usando Gemini como fallback'
-      );
+
+      console.warn('API-Football sem dados H2H para:', homeTeam, 'vs', awayTeam);
       return null;
     }
 
     if (!validarLoteH2H(fixtures, homeTeam, awayTeam)) {
-      console.warn(`[H2H Validation] Lote H2H da API-Football rejeitado por inconsistência de times. Esperado: ${homeTeam} vs ${awayTeam}. Retornado: ${fixtures[0]?.teams?.home?.name} vs ${fixtures[0]?.teams?.away?.name}`);
+      console.warn(`[H2H Validation] Lote rejeitado. Esperado: ${homeTeam} vs ${awayTeam}.`);
       return null;
     }
 
@@ -850,17 +810,13 @@ async function buscarH2HviaAPIFootball(
   }
 }
 
-async function buscarH2HviaGemini(
-  homeTeam: string,
-  awayTeam: string,
-  liga: string
-): Promise<any> {
+async function buscarH2HviaGemini(homeTeam: string, awayTeam: string, liga: string): Promise<any> {
   try {
     if (!genAI) throw new Error('API key not initialized');
     const now = new Date();
     const mesAno = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
     const prompt = `Você é um banco de dados de futebol. Considere a data atual de hoje como ${mesAno}.
-    
+
 Liste os últimos 5 confrontos diretos mais recentes e atualizados (até Maio de 2026) entre
 ${homeTeam} e ${awayTeam} e retorne APENAS este JSON:
 
@@ -890,7 +846,6 @@ Retorne APENAS o JSON, sem markdown.`;
     const response = await genAI.models.generateContent({
       model: GEMINI_MODEL,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-
       config: {
         systemInstruction: 'Responda APENAS com JSON válido. Sem markdown.',
         responseMimeType: 'application/json'
@@ -899,21 +854,14 @@ Retorne APENAS o JSON, sem markdown.`;
 
     const text = response.text || '';
     const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
     return JSON.parse(cleaned);
   } catch {
     return null;
   }
 }
 
-export async function buscarH2H(
-  homeTeam: string,
-  awayTeam: string,
-  liga: string
-): Promise<any> {
-  const apiFootballData = await buscarH2HviaAPIFootball(
-    homeTeam, awayTeam
-  ).catch(() => null);
+export async function buscarH2H(homeTeam: string, awayTeam: string, liga: string): Promise<any> {
+  const apiFootballData = await buscarH2HviaAPIFootball(homeTeam, awayTeam).catch(() => null);
 
   if (apiFootballData?.confrontos?.length >= 2) {
     return { ...apiFootballData, confiavel: true, fonte: 'api_football' };
@@ -921,32 +869,16 @@ export async function buscarH2H(
 
   try {
     const h2hGemini = await buscarH2HviaGemini(homeTeam, awayTeam, liga);
-
     if (h2hGemini && h2hGemini.confrontos && h2hGemini.confrontos.length > 0) {
-      console.log('[H2H] ✅ Sucesso Gemini fallback:', {
-        confrontos: h2hGemini.confrontos.length,
-        fonte: 'gemini_factual'
-      });
-      return {
-        ...h2hGemini,
-        confiavel: false,
-        fonte: 'gemini_factual'
-      };
+      return { ...h2hGemini, confiavel: false, fonte: 'gemini_factual' };
     }
   } catch (geminiFallbackError: any) {
-    console.warn('[H2H] Gemini fallback falhou:', {
-      erro: geminiFallbackError?.message || String(geminiFallbackError),
-      teams: `${homeTeam} vs ${awayTeam}`
-    });
+    console.warn('[H2H] Gemini fallback falhou:', geminiFallbackError?.message || String(geminiFallbackError));
   }
 
   return {
     confrontos: [],
-    resumo: {
-      vitorias_home: 0, empates: 0, vitorias_away: 0,
-      media_gols_home: 0, media_gols_away: 0,
-      over25_percentual: 0
-    },
+    resumo: { vitorias_home: 0, empates: 0, vitorias_away: 0, media_gols_home: 0, media_gols_away: 0, over25_percentual: 0 },
     fonte: 'unavailable',
     confiavel: false
   };
@@ -973,21 +905,16 @@ export function clearStandingsCache() {
 
 async function fetchStandingsForSeason(leagueId: number, season: number): Promise<{ data: any[] | null; isRateLimited: boolean }> {
   if (!hasQuota(1)) return { data: null, isRateLimited: false };
-  trackRequest();
   try {
     const res = await fetch(`${API_BASE_URL}/standings?league=${leagueId}&season=${season}`, {
       signal: AbortSignal.timeout(4500)
     });
-    
-    if (res.status === 429) {
-      return { data: null, isRateLimited: true };
-    }
 
+    if (res.status === 429) return { data: null, isRateLimited: true };
     if (!res.ok) return { data: null, isRateLimited: false };
-    
+    trackRequest();
+
     const data = await res.json();
-    
-    // API-Football retorna erros no corpo com status 200
     if (data?.errors && (data.errors.rateLimit || data.errors.token || data.errors.plan)) {
       console.warn(`[Standings] Erro da API-Football (season ${season}):`, data.errors);
       const isLimit = !!(data.errors.rateLimit || data.errors.token);
@@ -995,9 +922,7 @@ async function fetchStandingsForSeason(leagueId: number, season: number): Promis
     }
 
     const standings = data?.response?.[0]?.league?.standings;
-    if (standings && standings.length > 0) {
-      return { data: standings, isRateLimited: false };
-    }
+    if (standings && standings.length > 0) return { data: standings, isRateLimited: false };
     return { data: null, isRateLimited: false };
   } catch (e) {
     console.error(`Erro ao buscar classificação para liga ${leagueId} e temporada ${season}:`, e);
@@ -1006,20 +931,18 @@ async function fetchStandingsForSeason(leagueId: number, season: number): Promis
 }
 
 export async function fetchLeagueStandings(leagueId: number): Promise<any[] | null> {
-  const currentYear = new Date().getFullYear();
+  const now = new Date();
+  const currentYear = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
   const cacheKey = `standings_${leagueId}`;
   const errorCacheKey = `standings_error_${leagueId}`;
-  
-  if (STANDINGS_CACHE.has(cacheKey)) {
-    return STANDINGS_CACHE.get(cacheKey);
-  }
 
-  // Verificar se há cache negativo (falha recente de rate limit / quota) para evitar spam
+  if (STANDINGS_CACHE.has(cacheKey)) return STANDINGS_CACHE.get(cacheKey);
+
   const lastError = sessionStorage.getItem(errorCacheKey);
   if (lastError) {
     const timestamp = parseInt(lastError, 10);
-    if (Date.now() - timestamp < 5 * 60 * 1000) { // 5 minutos de cooldown
-      console.log(`[Standings] Ignorando busca para liga ${leagueId} devido a falha ou limite recente (Negative Cache).`);
+    if (Date.now() - timestamp < 5 * 60 * 1000) {
+      console.log(`[Standings] Ignorando busca para liga ${leagueId} (Negative Cache).`);
       return null;
     } else {
       sessionStorage.removeItem(errorCacheKey);
@@ -1040,24 +963,22 @@ export async function fetchLeagueStandings(leagueId: number): Promise<any[] | nu
   }
 
   let standings = null;
-  for (let offset = 0; offset <= 4; offset++) {
+  for (let offset = 0; offset <= 1; offset++) {
     const targetSeason = currentYear - offset;
-    
     const result = await fetchStandingsForSeason(leagueId, targetSeason);
-    
+
     if (result.isRateLimited) {
-      console.warn(`[Standings] Rate limit atingido na API-Football. Interrompendo loop retroativo.`);
+      console.warn(`[Standings] Rate limit atingido. Interrompendo loop retroativo.`);
       sessionStorage.setItem(errorCacheKey, String(Date.now()));
       break;
     }
 
     if (result.data) {
       standings = result.data;
-      console.log(`[Standings] Classificação carregada com sucesso para liga ${leagueId} e temporada ${targetSeason}`);
+      console.log(`[Standings] Classificação carregada para liga ${leagueId} temporada ${targetSeason}`);
       break;
     }
-    
-    // Throttle de 400ms para evitar estourar o rate limit de requisições por minuto da API-Football
+
     await new Promise(resolve => setTimeout(resolve, 400));
   }
 
@@ -1066,12 +987,10 @@ export async function fetchLeagueStandings(leagueId: number): Promise<any[] | nu
       STANDINGS_CACHE.set(cacheKey, standings);
       sessionStorage.setItem(cacheKey, JSON.stringify({ data: standings, timestamp: Date.now() }));
     } catch (e) {
-      console.warn('Erro ao salvar standings cache no sessionStorage:', e);
+      console.warn('Erro ao salvar standings cache:', e);
     }
     return standings;
   } else {
-    // Se falhou em todas as tentativas, ativa cache negativo curto de 5 minutos
-    // Cache negativo de 5 minutos: armazena timestamp atual, lido com cooldown de 15min no início da função
     sessionStorage.setItem(errorCacheKey, String(Date.now()));
   }
 
@@ -1086,11 +1005,9 @@ export async function getTeamPositionInLeague(teamName: string, sportKey: string
   }
 
   const standings = await fetchLeagueStandings(leagueId);
-  if (!standings || standings.length === 0) {
-    return null;
-  }
+  if (!standings || standings.length === 0) return null;
 
-  const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const normalize = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   const normalizedTeamName = normalizarNomeTime(teamName);
 
   for (const group of standings) {
@@ -1100,21 +1017,13 @@ export async function getTeamPositionInLeague(teamName: string, sportKey: string
       if (!rowTeamName) continue;
 
       const normalizedRowTeam = normalizarNomeTime(rowTeamName);
-
-      if (normalizedRowTeam === normalizedTeamName) {
-        return row.rank;
-      }
-      
-      if (normalizedRowTeam.includes(normalizedTeamName) || normalizedTeamName.includes(normalizedRowTeam)) {
-        return row.rank;
-      }
+      if (normalizedRowTeam === normalizedTeamName) return row.rank;
+      if (normalizedRowTeam.includes(normalizedTeamName) || normalizedTeamName.includes(normalizedRowTeam)) return row.rank;
 
       for (const [realName, aliases] of Object.entries(ALIAS_TIMES_HOLANDESES)) {
         const normalizedReal = normalize(realName);
-        if (normalizedReal === normalizedTeamName || aliases.some(alias => normalize(alias) === normalizedTeamName)) {
-          if (normalize(rowTeamName) === normalizedReal || normalize(realName) === normalizedRowTeam) {
-            return row.rank;
-          }
+        if (normalizedReal === normalizedTeamName || (aliases as string[]).some(alias => normalize(alias) === normalizedTeamName)) {
+          if (normalize(rowTeamName) === normalizedReal || normalize(realName) === normalizedRowTeam) return row.rank;
         }
       }
     }
@@ -1123,4 +1032,3 @@ export async function getTeamPositionInLeague(teamName: string, sportKey: string
   console.warn(`[Standings] Posição não encontrada para time: ${teamName} na liga: ${sportKey}`);
   return null;
 }
-

@@ -4,6 +4,8 @@
  */
 
 import { registrarResultadoDiario, registrarResultado } from './bancaService';
+import { supabase } from './supabaseClient';
+import { getCachedProfile } from './planService';
 
 interface BetResult {
   id: string;
@@ -18,9 +20,36 @@ interface BetResult {
 
 const STORAGE_KEY = 'evengine_clv_results';
 
-export function registerResult(result: Omit<BetResult, 'id' | 'timestamp'>) {
+export async function getHistory(): Promise<BetResult[]> {
+  const profile = getCachedProfile();
+  const isSharp = profile?.plan === 'sharp';
+
+  if (supabase && isSharp) {
+    try {
+      const { data, error } = await supabase
+        .from('clv_history')
+        .select('*')
+        .order('timestamp', { ascending: false });
+      
+      if (!error && data) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        return data as BetResult[];
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar clv_history do Supabase, usando localStorage:', e);
+    }
+  }
+
+  const stored = localStorage.getItem(STORAGE_KEY);
+  return stored ? JSON.parse(stored) : [];
+}
+
+export async function registerResult(result: Omit<BetResult, 'id' | 'timestamp'>) {
   const stored = localStorage.getItem(STORAGE_KEY);
   const history: BetResult[] = stored ? JSON.parse(stored) : [];
+  
+  const existing = history.find(r => r.matchId === result.matchId);
+  if (existing) return;
   
   const newResult: BetResult = {
     ...result,
@@ -30,6 +59,19 @@ export function registerResult(result: Omit<BetResult, 'id' | 'timestamp'>) {
   
   history.push(newResult);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+
+  const profile = getCachedProfile();
+  const isSharp = profile?.plan === 'sharp';
+
+  if (supabase && isSharp) {
+    try {
+      await supabase
+        .from('clv_history')
+        .insert([newResult]);
+    } catch (e) {
+      console.warn('Erro ao salvar clv_history no Supabase:', e);
+    }
+  }
   
   if (result.result === 'win') {
     registrarResultadoDiario(result.amount * (result.odd_bet - 1));
@@ -47,7 +89,8 @@ export function getCLVSummary() {
   if (history.length === 0) return null;
   
   const wins = history.filter(r => r.result === 'win').length;
-  const hit_rate = (wins / history.length) * 100;
+  const decided = history.filter(r => r.result !== 'void').length;
+  const hit_rate = decided > 0 ? (wins / decided) * 100 : 0;
   
   const totalBet = history.reduce((acc, r) => acc + r.amount, 0);
   const totalReturn = history.reduce((acc, r) => {

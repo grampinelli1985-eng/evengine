@@ -46,24 +46,25 @@ function buildScoreMatrix(lambdaH: number, lambdaA: number, maxGoals = 7): numbe
   return matrix;
 }
 
-function lambdaFromElo(rating: number, _isHome: boolean, phase?: WCMatch['phase']): number {
-  const baseRating = 1500;
-  const ratingDiff = rating - baseRating;
-  // Cada 100 pontos de ELO acima da média equivale a +0.08 λ de ataque
-  const eloBoost = (ratingDiff / 100) * 0.08;
+const WC_AVG_ELO = 1620; // média estimada dos 32 classificados
+
+function lambdaFromElo(ownRating: number, oppRating: number, phase?: WCMatch['phase']): number {
   const base = phase === 'grupos' ? WC_LAMBDA_BASE :
                phase === 'eliminatorias' ? WC_LAMBDA_QUALIFIER :
                WC_LAMBDA_EURO;
-  // Em campo neutro sem home advantage
-  return Math.max(0.4, Math.min(2.8, base + eloBoost));
+  // Ataque próprio: cada 100pts acima da média WC = +0.07λ
+  const attackBoost  = (ownRating - WC_AVG_ELO) / 100 * 0.14;
+  // Bônus de defesa adversária fraca: adversário 100pts abaixo da média = +0.14λ
+  const defenseBoost = (WC_AVG_ELO - oppRating) / 100 * 0.14;
+  return Math.max(0.4, Math.min(3.2, base + attackBoost + defenseBoost));
 }
 
 export function calculateWCPoisson(match: WCMatch, phase?: WCMatch['phase']): WCPoissonResult {
   const homeRating = getWCTeamRating(match.home_team);
   const awayRating = getWCTeamRating(match.away_team);
 
-  const lambdaHome = lambdaFromElo(homeRating, true, phase);
-  const lambdaAway = lambdaFromElo(awayRating, false, phase);
+  const lambdaHome = lambdaFromElo(homeRating, awayRating, phase);
+  const lambdaAway = lambdaFromElo(awayRating, homeRating, phase);
 
   const matrix = buildScoreMatrix(lambdaHome, lambdaAway);
   const maxGoals = matrix.length - 1;
@@ -73,9 +74,8 @@ export function calculateWCPoisson(match: WCMatch, phase?: WCMatch['phase']): WC
   let probOver35 = 0;
   let probBTTS = 0;
 
-  let bestHomeWinScore = ''; let bestHomeWinProb = 0;
-  let bestAwayWinScore = ''; let bestAwayWinProb = 0;
-  let bestDrawScore = '';    let bestDrawProb = 0;
+  let bestScore = '0-0';
+  let bestProb = 0;
 
   for (let h = 0; h <= maxGoals; h++) {
     for (let a = 0; a <= maxGoals; a++) {
@@ -87,28 +87,8 @@ export function calculateWCPoisson(match: WCMatch, phase?: WCMatch['phase']): WC
       if (totalGoals > 3.5) probOver35 += p;
       if (h > 0 && a > 0) probBTTS += p;
 
-      if (h > a && p > bestHomeWinProb) { bestHomeWinProb = p; bestHomeWinScore = `${h}-${a}`; }
-      else if (h < a && p > bestAwayWinProb) { bestAwayWinProb = p; bestAwayWinScore = `${h}-${a}`; }
-      else if (h === a && p > bestDrawProb) { bestDrawProb = p; bestDrawScore = `${h}-${a}`; }
+      if (p > bestProb) { bestProb = p; bestScore = `${h}-${a}`; }
     }
-  }
-
-  // Placar mais provável: segue a equipe com maior λ para evitar contradição com ELO
-  let bestScore: string;
-  let bestProb: number;
-  if (lambdaHome > lambdaAway + 0.05) {
-    bestScore = bestHomeWinScore || bestDrawScore;
-    bestProb  = bestHomeWinScore ? bestHomeWinProb : bestDrawProb;
-  } else if (lambdaAway > lambdaHome + 0.05) {
-    bestScore = bestAwayWinScore || bestDrawScore;
-    bestProb  = bestAwayWinScore ? bestAwayWinProb : bestDrawProb;
-  } else {
-    // Times próximos — mostra placar global mais provável
-    const globalMax = Math.max(bestHomeWinProb, bestDrawProb, bestAwayWinProb);
-    bestScore = globalMax === bestHomeWinProb ? bestHomeWinScore
-              : globalMax === bestDrawProb    ? bestDrawScore
-              : bestAwayWinScore;
-    bestProb = globalMax;
   }
 
   // Normalizar (sum pode ser ligeiramente < 1 por truncamento em maxGoals=7)

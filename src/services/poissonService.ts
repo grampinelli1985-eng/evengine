@@ -18,36 +18,78 @@ const MEDIAS_XG_LIGA: Record<string, { home: number; away: number }> = {
   'Primeira Liga': { home: 1.50, away: 1.20 },
 };
 
-export function calculatePoisson(homeExpected: number, awayExpected: number, league?: string): PoissonData {
+export function calculatePoisson(
+  homeExpected: number,
+  awayExpected: number,
+  league?: string,
+  xgData?: { home_xg: number | null; away_xg: number | null }
+): PoissonData {
 
-
-  // Fallback de xG caso os valores sejam inválidos ou ausentes
   let homeXg = homeExpected;
   let awayXg = awayExpected;
   let fonte = 'ia_gemini';
 
-
   if (!homeXg || homeXg <= 0 || !awayXg || awayXg <= 0) {
-    // Tentativa 2: fallback por liga
     const leagueKey = Object.keys(MEDIAS_XG_LIGA).find(k => league?.includes(k));
     const media = MEDIAS_XG_LIGA[leagueKey || ''] || { home: 1.40, away: 1.15 };
-    
     homeXg = media.home;
     awayXg = media.away;
     fonte = leagueKey ? 'media_liga' : 'media_global';
   }
 
+  let lambdaHome = homeXg;
+  let lambdaAway = awayXg;
 
-  const lambdaHome = homeXg;
-  const lambdaAway = awayXg;
+  // [BUG-PSN-XG FIX] fonte atualizado para 'sportmonks_blend' quando xG real é aplicado
+  // Blending aplicado ANTES da correção Dixon-Coles (PSN-05)
+  const ALPHA_XG = 0.35;
+  if (xgData?.home_xg !== null && xgData?.home_xg !== undefined) {
+    lambdaHome = (1 - ALPHA_XG) * lambdaHome + ALPHA_XG * xgData.home_xg;
+    homeXg = lambdaHome;
+    fonte = 'sportmonks_blend';
+  }
+  if (xgData?.away_xg !== null && xgData?.away_xg !== undefined) {
+    lambdaAway = (1 - ALPHA_XG) * lambdaAway + ALPHA_XG * xgData.away_xg;
+    awayXg = lambdaAway;
+    fonte = 'sportmonks_blend';
+  }
 
+  // PSN-04: Log-space Poisson calculation to avoid underflow for large k/lambda
+  function poissonLogPMF(k: number, lambda: number): number {
+    if (lambda <= 0) return k === 0 ? 0 : -Infinity;
+    let logFactorial = 0;
+    for (let i = 2; i <= k; i++) logFactorial += Math.log(i);
+    return k * Math.log(lambda) - lambda - logFactorial;
+  }
+  const poisson = (k: number, lambda: number) => Math.exp(poissonLogPMF(k, lambda));
 
-  const poisson = (k: number, lambda: number) => {
-    const factorial = (n: number): number => (n <= 1 ? 1 : n * factorial(n - 1));
-    return (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial(k);
-  };
+  // PSN-05: Build raw matrix first, then renormalize BEFORE applying cap
+  // XMD-04 (clubs): Fixed swapped lambdas in Dixon-Coles tau(1,0) and tau(0,1)
+  //   tau(1,0): home=1, away=0 → correction uses lambdaHome (home team scored)
+  //   tau(0,1): home=0, away=1 → correction uses lambdaAway (away team scored)
+  const rho = -0.12;
+  const rawMatrix: number[][] = [];
+  let matrixSum = 0;
+
+  for (let h = 0; h <= 8; h++) {
+    rawMatrix[h] = [];
+    for (let a = 0; a <= 8; a++) {
+      let tau = 1.0;
+      if (h === 0 && a === 0) tau = 1 - lambdaHome * lambdaAway * rho;
+      else if (h === 1 && a === 0) tau = 1 + lambdaHome * rho;
+      else if (h === 0 && a === 1) tau = 1 + lambdaAway * rho;
+      else if (h === 1 && a === 1) tau = 1 - rho;
+
+      rawMatrix[h][a] = poisson(h, lambdaHome) * poisson(a, lambdaAway) * Math.max(0, tau);
+      matrixSum += rawMatrix[h][a];
+    }
+  }
+
+  // PSN-05: Renormalize matrix so all cells sum to 1 before deriving cumulative probabilities
+  const normFactor = matrixSum > 0 ? 1 / matrixSum : 1;
 
   const scores: Array<{ score: string; prob: number }> = [];
+  let over05 = 0;
   let over15 = 0;
   let over25 = 0;
   let over35 = 0;
@@ -58,23 +100,9 @@ export function calculatePoisson(homeExpected: number, awayExpected: number, lea
 
   for (let h = 0; h <= 8; h++) {
     for (let a = 0; a <= 8; a++) {
-      let prob = poisson(h, lambdaHome) * poisson(a, lambdaAway) * 100;
-      
-      // Dixon-Coles simplified bivariate adjustment (rho = -0.12)
-      const rho = -0.12;
-      let tau = 1.0;
-      if (h === 0 && a === 0) {
-        tau = 1 - lambdaHome * lambdaAway * rho;
-      } else if (h === 1 && a === 0) {
-        tau = 1 + lambdaAway * rho;
-      } else if (h === 0 && a === 1) {
-        tau = 1 + lambdaHome * rho;
-      } else if (h === 1 && a === 1) {
-        tau = 1 - rho;
-      }
-      
-      prob = prob * Math.max(0, tau);
-      
+      const prob = rawMatrix[h][a] * normFactor * 100;
+
+      if (h + a > 0.5) over05 += prob;
       if (h + a > 1.5) over15 += prob;
       if (h + a > 2.5) over25 += prob;
       if (h + a > 3.5) over35 += prob;
@@ -90,7 +118,6 @@ export function calculatePoisson(homeExpected: number, awayExpected: number, lea
     }
   }
 
-  // Obter top 5 placares matemáticos reais sem deflação artificial
   const topScores = scores
     .sort((a, b) => b.prob - a.prob)
     .slice(0, 5);
@@ -99,24 +126,27 @@ export function calculatePoisson(homeExpected: number, awayExpected: number, lea
     s.prob = parseFloat(s.prob.toFixed(1));
   });
 
-  // Normalizar probs_1x2 para evitar drift de arredondamento (soma ≠ 100)
-  const rawCasa = Math.round(probCasa);
-  const rawEmpate = Math.round(probEmpate);
-  const rawFora = Math.round(probFora);
-  const drift = rawCasa + rawEmpate + rawFora - 100;
+  // PSN-03: Proportional float normalization for 1x2
+  const total1x2 = probCasa + probEmpate + probFora;
 
+  // PSN-05: Cap at 95% applied AFTER renormalization — values now reflect true normalized probs
   return {
+    homeXg,
+    awayXg,
+    homeExpected,
+    awayExpected,
     home_expected: homeExpected,
     away_expected: awayExpected,
     top_scores: topScores,
     btts_prob: parseFloat(Math.min(btts, 95).toFixed(1)),
+    over_0_5: parseFloat(Math.min(over05, 95).toFixed(1)),
     over_1_5: parseFloat(Math.min(over15, 95).toFixed(1)),
     over_2_5: parseFloat(Math.min(over25, 95).toFixed(1)),
     over_3_5: parseFloat(Math.min(over35, 95).toFixed(1)),
     probs_1x2: {
-      casa: rawCasa - (drift > 0 ? drift : 0),
-      empate: rawEmpate + (drift < 0 ? Math.abs(drift) : 0),
-      fora: rawFora
+      casa: parseFloat((probCasa / total1x2 * 100).toFixed(2)),
+      empate: parseFloat((probEmpate / total1x2 * 100).toFixed(2)),
+      fora: parseFloat((probFora / total1x2 * 100).toFixed(2)),
     },
     fonteXg: fonte
   };

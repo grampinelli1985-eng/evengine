@@ -14,7 +14,7 @@ import { TipsterAnalysisService } from "./tipsterAnalysisService";
 import { removeOverround, extractMarketReference } from "./valueBetService";
 import { detectLineMovement } from "./lineMovementService";
 import { GEMINI_MODEL } from "../config/ai";
-import { getCachedAnalysis, setCachedAnalysis } from "./analysisCacheService";
+import { getCachedAnalysis, setCachedAnalysis, buildFixtureKey } from "./analysisCacheService";
 
 
 const tipsterService = new TipsterAnalysisService();
@@ -206,9 +206,19 @@ export async function callGeminiAPI(
 }
 
 export async function analyzeMatch(match: Match): Promise<AnalysisResponse> {
+  const fixtureKey = buildFixtureKey(match.home_team, match.away_team, match.commence_time);
+  
+  const h2hMarket = match.bookmakers?.[0]?.markets.find(m => m.key === 'h2h');
+  const oddsRecord: Record<string, number> = {};
+  if (h2hMarket) {
+    h2hMarket.outcomes.forEach(o => {
+      oddsRecord[o.name] = o.price;
+    });
+  }
+
   // CACHE COMPARTILHADO (Supabase): a mesma partida não é mais reanalisada
   // por cada navegador/usuário — todos consultam e gravam na mesma tabela.
-  const cached = await getCachedAnalysis(match.id);
+  const cached = await getCachedAnalysis(fixtureKey, oddsRecord);
   if (cached) {
     return cached;
   }
@@ -356,9 +366,7 @@ ${lineMovementText}
 
   analysis.marketReference = marketRef;
 
-  // CACHE COMPARTILHADO: grava no Supabase em vez de localStorage.
-  // Não bloqueia o retorno — se a gravação falhar, o usuário ainda recebe a análise.
-  void setCachedAnalysis(match, analysis);
+  void setCachedAnalysis(fixtureKey, analysis, oddsRecord, match.commence_time);
 
   return analysis;
 }

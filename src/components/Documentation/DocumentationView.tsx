@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  getSections, 
-  getGlossary, 
-  searchDocumentation, 
-  getSectionById 
+import {
+  getSections,
+  getGlossary,
+  getDocumentation,
+  searchDocumentation,
+  getSectionById
 } from '../../services/documentationService';
 import { DocSection, GlossaryTerm, SearchResult } from '../../types/documentation';
 import {
@@ -20,6 +21,11 @@ interface DocumentationViewProps {
 export default function DocumentationView({ onBack }: DocumentationViewProps) {
   const sections = useMemo(() => getSections(), []);
   const glossary = useMemo(() => getGlossary(), []);
+  const docMeta = useMemo(() => {
+    const d = getDocumentation();
+    const [year, month, day] = d.lastUpdated.split('-');
+    return { version: d.version, formattedDate: `${day}/${month}/${year}` };
+  }, []);
 
   const [activeSectionId, setActiveSectionId] = useState<string>('visao-geral');
   const [activeSubsectionId, setActiveSubsectionId] = useState<string | null>(null);
@@ -176,7 +182,7 @@ export default function DocumentationView({ onBack }: DocumentationViewProps) {
               <h1 className="text-base font-black text-white uppercase tracking-wider">Central de Ajuda</h1>
             </div>
             <span className="text-[9px] font-mono text-white/30 uppercase tracking-widest block mt-0.5">
-              EVENGINE Engine Documentation v1.0
+              EVENGINE Engine Documentation v{docMeta.version}
             </span>
           </div>
         </div>
@@ -387,7 +393,7 @@ export default function DocumentationView({ onBack }: DocumentationViewProps) {
                 
                 <div className="flex items-center gap-1.5 text-[8px] font-mono text-white/30 font-bold uppercase tracking-wider">
                   <Calendar size={10} />
-                  <span>Atualizado: 22/05/2026</span>
+                  <span>Atualizado: {docMeta.formattedDate}</span>
                 </div>
               </div>
 

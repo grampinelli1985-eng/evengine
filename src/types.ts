@@ -67,15 +67,28 @@ export interface EloData {
   confianca_home: string;
   confianca_away: string;
   jogos_minimos_atingidos: boolean;
+  probabilidades?: {
+    casa: number;
+    empate: number;
+    fora: number;
+  };
 }
 
 export interface PoissonData {
   home_expected: number;
   away_expected: number;
+  homeXg?: number;
+  awayXg?: number;
+  homeExpected?: number;
+  awayExpected?: number;
   top_scores: Array<{ score: string; prob: number }>;
   btts_prob: number;
   probs_1x2?: { casa: number; empate: number; fora: number };
   fonteXg?: string;
+  over_0_5?: number;
+  over_1_5?: number;
+  over_2_5?: number;
+  over_3_5?: number;
 }
 
 
@@ -91,6 +104,9 @@ export interface ScoutingReport {
   scout_summary: string;
   data_source?: 'real' | 'unavailable' | 'gemini_inferido';
   confiavel?: boolean;
+  forma?: number;
+  motivacao?: number;
+  desfalques?: number;
 }
 
 
@@ -169,6 +185,7 @@ export interface AnalysisResponse {
   };
   quality?: number; // Quality/Confidence score
   qualidade?: number; // Portuguese alias
+  qualidade_score?: number;
   poisson?: PoissonData;
   elo?: EloData;
   dica_principal: string | null;
@@ -251,3 +268,16 @@ export const LEAGUES: League[] = [
   { key: 'soccer_conmebol_copa_libertadores', name: 'Copa Libertadores', symbol: 'compass', imprevisibilidade: 'muito_alta' },
   { key: 'soccer_conmebol_copa_sudamericana', name: 'Copa Sul-Americana', symbol: 'globe', imprevisibilidade: 'muito_alta' }
 ];
+
+export interface SportmonksXGData {
+  home: number | null;
+  away: number | null;
+  home_last5: number | null;
+  away_last5: number | null;
+  ppda_home: number | null;
+  ppda_away: number | null;
+  pressao_alta_home: boolean;
+  pressao_alta_away: boolean;
+  fonte: 'sportmonks' | 'estimado';
+}
+

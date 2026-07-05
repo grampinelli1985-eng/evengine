@@ -42,6 +42,7 @@ export interface MatchCardTipsterProps {
   isSelected?: boolean;
   className?: string;
   onRegisterResult?: (match: Match) => void;
+  deepAnalysis?: any; // análise completa do Gemini/TipsterEngine (opcional)
 }
 
 
@@ -90,7 +91,8 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
   onToggleSelection,
   isSelected: isSelectedProp = false,
   className = '',
-  onRegisterResult
+  onRegisterResult,
+  deepAnalysis,
 }) => {
   const [analysis, setAnalysis] = useState<PickAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
@@ -331,6 +333,32 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
         ))}
 
       </div>
+
+      {/* Mercado Recomendado — só renderiza quando deepAnalysis com tipsterEngine estiver disponível */}
+      {(() => {
+        const te = deepAnalysis?.tipsterEngine;
+        const mercadoNome = te?.mercado?.nome ?? te?.mercado_selecionado?.nome;
+        // odd_referencia é exclusivamente Pinnacle; odd_api/odd são fallbacks de outros bookmakers
+        const oddPinnacle: number | undefined = te?.mercado?.odd_referencia ?? te?.mercado_selecionado?.odd_referencia;
+        const oddFallback: number | undefined = te?.mercado?.odd_api ?? te?.mercado?.odd;
+        const odd = oddPinnacle ?? oddFallback;
+        const isPinnacle = oddPinnacle !== undefined;
+        if (!mercadoNome || !odd) return null;
+        return (
+          <div className="relative p-3 bg-white/[0.02] border border-white/[0.05] rounded-2xl mb-3">
+            <div className="text-[7px] font-black text-white/20 uppercase tracking-widest mb-1.5">Mercado Recomendado</div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black text-white uppercase truncate pr-2">{mercadoNome}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[10px] font-mono font-black text-emerald-400">Odd {odd.toFixed(2)}</span>
+                {isPinnacle && (
+                  <span className="text-[7px] font-black text-white/20 uppercase tracking-widest bg-white/[0.04] border border-white/[0.08] rounded px-1 py-0.5">Pinnacle</span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Bankroll Mini */}
       <div className="relative flex items-center justify-between p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl mb-6 group-hover:bg-emerald-500/10 transition-colors">

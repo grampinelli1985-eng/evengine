@@ -220,7 +220,6 @@ export async function resolveBet(
     }
 
     // 2. Atualizar a banca local e persistente
-    registrarResultadoDiario(Number(netPnL.toFixed(2)));
     registrarResultado({ resultado: params.status });
 
     return data as Bet;

@@ -12,7 +12,7 @@ interface PrevisaoRegistrada {
   scoreGate: number;             // score do Gate v2.0
   status: 'PENDENTE' | 'WIN' | 'RED' | 'VOID';
   resultadoReal?: string;        // preenchido após o jogo
-  acertou?: boolean;
+  acertou?: boolean | null;
   registradoEm: string;          // ISO date do registro
   resolvidoEm?: string;          // ISO date da resolução
   sportKey?: string;             // Opcional para otimização de cota
@@ -34,7 +34,6 @@ interface CalibracaoState {
 }
 
 const STORAGE_KEY = 'evengine_calibracao';
-const ODDS_API_KEY = import.meta.env.VITE_ODDS_API_KEY;
 let isOddsApiUnauthorized = false;
 
 // ── FUNÇÕES PRINCIPAIS ────────────────────────────────
@@ -74,35 +73,58 @@ export async function resolverPrevisoesPendentes(): Promise<void> {
   const pendentes = state.previsoes.filter(p => {
     if (p.status !== 'PENDENTE') return false;
     const jogoTime = new Date(p.commenceTime);
-    // Aguarda 3h: 90min de jogo + prorrogação/pênaltis + margem de segurança.
-    // 2h era insuficiente para jogos com tempo extra.
-    const tresHorasDepois = new Date(
-      jogoTime.getTime() + 3 * 60 * 60 * 1000
-    );
+    // Verificar apenas jogos que começaram há pelo menos 3 horas (180 min)
+    const tresHorasDepois = new Date(jogoTime.getTime() + 3 * 60 * 60 * 1000);
     return agora > tresHorasDepois;
   });
 
-  for (const previsao of pendentes) {
-    try {
-      const resultado = await buscarResultadoAPI(
-        previsao.homeTeam,
-        previsao.awayTeam,
-        previsao.commenceTime,
-        previsao.sportKey
+  if (pendentes.length === 0) return;
+
+  const porLiga: Record<string, PrevisaoRegistrada[]> = {};
+  for (const p of pendentes) {
+    const liga = p.sportKey || 'unknown';
+    if (!porLiga[liga]) porLiga[liga] = [];
+    porLiga[liga].push(p);
+  }
+
+  for (const [liga, prevs] of Object.entries(porLiga)) {
+    if (liga === 'unknown') continue;
+    const jogos = await fetchScoresForLeague(liga);
+    if (!jogos || jogos.length === 0) continue;
+
+    for (const previsao of prevs) {
+      const jogo = jogos.find((j: any) =>
+        j.home_team === previsao.homeTeam &&
+        j.away_team === previsao.awayTeam &&
+        j.completed === true
       );
-      
-      if (resultado) {
+
+      if (jogo?.scores) {
+        const scoreCasa = jogo.scores.find((s: any) => s.name === previsao.homeTeam)?.score ?? 0;
+        const scoreFora = jogo.scores.find((s: any) => s.name === previsao.awayTeam)?.score ?? 0;
+        
+        const vencedor = parseInt(scoreCasa, 10) > parseInt(scoreFora, 10)
+          ? 'Home'
+          : parseInt(scoreFora, 10) > parseInt(scoreCasa, 10)
+          ? 'Away'
+          : 'Draw';
+
+        const resultado = {
+          vencedor,
+          placarCasa: parseInt(scoreCasa, 10),
+          placarFora: parseInt(scoreFora, 10)
+        };
+
         previsao.resultadoReal = resultado.vencedor;
-        previsao.acertou = avaliarAcerto(
+        const acerto = avaliarAcerto(
           previsao.resultadoPrevisto,
           resultado,
           previsao.mercadoPrevisto
         );
-        previsao.status = previsao.acertou ? 'WIN' : 'RED';
+        previsao.acertou = acerto;
+        previsao.status = acerto === null ? 'VOID' : (acerto ? 'WIN' : 'RED');
         previsao.resolvidoEm = new Date().toISOString();
       }
-    } catch (e) {
-      console.error('Erro ao resolver previsão:', previsao.id, e);
     }
   }
 
@@ -111,21 +133,15 @@ export async function resolverPrevisoesPendentes(): Promise<void> {
 }
 
 // Buscar resultado na The Odds API (scores endpoint)
-async function buscarResultadoAPI(
-  homeTeam: string,
-  awayTeam: string,
-  commenceTime: string,
-  sportKey?: string
-): Promise<{ vencedor: string; placarCasa: number; placarFora: number } | null> {
-  
+async function fetchScoresForLeague(liga: string): Promise<any[]> {
   if (isOddsApiUnauthorized) {
-    return null;
+    return [];
   }
 
-  if (!ODDS_API_KEY || ODDS_API_KEY.trim() === '' || ODDS_API_KEY === 'YOUR_ODDS_API_KEY') {
+  const oddsApiKey = import.meta.env.VITE_ODDS_API_KEY || (typeof process !== 'undefined' ? process.env.VITE_ODDS_API_KEY : '');
+  if (!oddsApiKey || oddsApiKey.trim() === '' || oddsApiKey === 'YOUR_ODDS_API_KEY') {
     console.warn('Odds API Key não configurada ou vazia. Ignorando consulta automática.');
-    isOddsApiUnauthorized = true;
-    return null;
+    return [];
   }
 
   // Gate 1: Obter ligas monitoradas do localStorage
@@ -139,98 +155,64 @@ async function buscarResultadoAPI(
     console.error('Erro ao ler evengine_selected_leagues:', e);
   }
 
-  // Se sportKey for fornecido, limitamos a busca apenas a essa liga para economizar quota
-  const defaultLigas = sportKey ? [sportKey] : [
-    'soccer_epl', 'soccer_italy_serie_a', 'soccer_spain_la_liga',
-    'soccer_germany_bundesliga', 'soccer_france_ligue_one',
-    'soccer_brazil_campeonato', 'soccer_uefa_champs_league',
-    'soccer_conmebol_copa_sudamericana'
-  ];
-
   // Filtrar apenas ligas monitoradas (Gate 1)
-  const ligas = defaultLigas.filter(l => selectedLeagues.includes(l));
-  if (ligas.length === 0) {
-    return null; // Skip total (zero req)
+  if (liga !== 'unknown' && !selectedLeagues.includes(liga)) {
+    return []; // Skip total (zero req)
   }
 
   const SCORES_CACHE_TTL = 30 * 60 * 1000; // 30 minutos
-
-  for (const liga of ligas) {
+  const cacheKey = `scores_cache_${liga}`;
+  const cached = sessionStorage.getItem(cacheKey);
+  
+  // Gate 2: Usar cache válido se disponível (zero req)
+  if (cached) {
     try {
-      const cacheKey = `scores_cache_${liga}`;
-      const cached = sessionStorage.getItem(cacheKey);
-      let jogos = [];
-      
-      // Gate 2: Usar cache válido se disponível (zero req)
-      if (cached) {
-        try {
-          const { data, timestamp } = JSON.parse(cached);
-          if (Date.now() - timestamp < SCORES_CACHE_TTL) {
-            jogos = data;
-          }
-        } catch {}
+      const { data, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < SCORES_CACHE_TTL) {
+        return data;
       }
-
-      // Gate 3: Consumir cota da API apenas se não houver cache
-      if (jogos.length === 0) {
-        const url = `https://api.the-odds-api.com/v4/sports/${liga}/scores/?apiKey=${ODDS_API_KEY}&daysFrom=3`;
-        const res = await fetch(url);
-        
-        if (res.status === 401 || res.status === 429) {
-          console.warn(`Chave do Odds API não autorizada ou sem cota (${res.status}). Interrompendo chamadas subsequentes.`);
-          isOddsApiUnauthorized = true;
-          break;
-        }
-
-        if (!res.ok) continue;
-        
-        jogos = await res.json();
-        
-        if (Array.isArray(jogos) && jogos.length > 0) {
-          sessionStorage.setItem(cacheKey, JSON.stringify({
-            data: jogos,
-            timestamp: Date.now()
-          }));
-        }
-      }
-      
-      const jogo = jogos.find((j: any) =>
-        j.home_team === homeTeam &&
-        j.away_team === awayTeam &&
-        j.completed === true
-      );
-
-      if (jogo?.scores) {
-        const scoreCasa = jogo.scores.find(
-          (s: any) => s.name === homeTeam
-        )?.score ?? 0;
-        const scoreFora = jogo.scores.find(
-          (s: any) => s.name === awayTeam
-        )?.score ?? 0;
-        
-        const vencedor = parseInt(scoreCasa, 10) > parseInt(scoreFora, 10)
-          ? 'Home'
-          : parseInt(scoreFora, 10) > parseInt(scoreCasa, 10)
-          ? 'Away'
-          : 'Draw';
-
-        return {
-          vencedor,
-          placarCasa: parseInt(scoreCasa, 10),
-          placarFora: parseInt(scoreFora, 10)
-        };
-      }
-    } catch { continue; }
+    } catch {}
   }
-  return null;
+
+  // Gate 3: Consumir cota da API apenas se não houver cache
+  try {
+    const url = `https://api.the-odds-api.com/v4/sports/${liga}/scores/?apiKey=${oddsApiKey}&daysFrom=3`;
+    const res = await fetch(url);
+    
+    if (res.status === 401) {
+      console.warn(`Chave do Odds API não autorizada (${res.status}). Interrompendo chamadas subsequentes.`);
+      isOddsApiUnauthorized = true;
+      return [];
+    }
+    if (res.status === 429) {
+      console.warn(`Limite de requisições atingido na Odds API (429). Interrompendo consulta.`);
+      return [];
+    }
+
+    if (!res.ok) return [];
+    
+    const jogos = await res.json();
+    
+    if (Array.isArray(jogos) && jogos.length > 0) {
+      sessionStorage.setItem(cacheKey, JSON.stringify({
+        data: jogos,
+        timestamp: Date.now()
+      }));
+    }
+    return jogos;
+  } catch (e) {
+    console.error('Erro ao buscar scores para liga:', liga, e);
+    return [];
+  }
 }
 
 // Avaliar se previsão acertou baseado no mercado
 function avaliarAcerto(
   resultadoPrevisto: string,
-  resultado: { vencedor: string; placarCasa: number; placarFora: number },
+  resultado: { vencedor: string; placarCasa: number; placarFora: number; status?: string },
   mercado: string
-): boolean {
+): boolean | null {
+  if (resultado.status === 'VOID') return null;
   const totalGols = resultado.placarCasa + resultado.placarFora;
   
   switch (mercado) {
@@ -252,6 +234,9 @@ function avaliarAcerto(
       return totalGols > 2;
     case 'Mais de 3.5 Gols':
       return totalGols > 3;
+    case 'BTTS':
+    case 'Ambas Marcam':
+      return resultado.placarCasa > 0 && resultado.placarFora > 0;
     default:
       return false;
   }
@@ -260,19 +245,21 @@ function avaliarAcerto(
 // Recalibrar limiares baseado no histórico real
 function recalibrarLimiares(state: CalibracaoState): void {
   const resolvidos = state.previsoes
-    .filter(p => p.status === 'WIN' || p.status === 'RED');
+    .filter(p => p.status === 'WIN' || p.status === 'RED' || p.status === 'VOID');
 
   if (resolvidos.length === 0) return;
 
+  const resolvidos_validos = resolvidos.filter(p => p.status !== 'VOID');
+
   // Calcular taxa por faixa de confiança
   const faixas = {
-    faixa60a70: resolvidos.filter(p =>
+    faixa60a70: resolvidos_validos.filter(p =>
       p.confiancaEstimada >= 60 && p.confiancaEstimada < 70),
-    faixa70a80: resolvidos.filter(p =>
+    faixa70a80: resolvidos_validos.filter(p =>
       p.confiancaEstimada >= 70 && p.confiancaEstimada < 80),
-    faixa80a90: resolvidos.filter(p =>
+    faixa80a90: resolvidos_validos.filter(p =>
       p.confiancaEstimada >= 80 && p.confiancaEstimada < 90),
-    faixa90mais: resolvidos.filter(p =>
+    faixa90mais: resolvidos_validos.filter(p =>
       p.confiancaEstimada >= 90),
   };
 
@@ -284,10 +271,10 @@ function recalibrarLimiares(state: CalibracaoState): void {
   };
 
   // Taxa geral
-  const totalAcertos = resolvidos.filter(p => p.acertou).length;
-  state.taxaAcerto = parseFloat(
-    ((totalAcertos / resolvidos.length) * 100).toFixed(1)
-  );
+  const totalAcertos = resolvidos_validos.filter(p => p.acertou).length;
+  state.taxaAcerto = resolvidos_validos.length > 0 ? parseFloat(
+    ((totalAcertos / resolvidos_validos.length) * 100).toFixed(1)
+  ) : 0;
   state.totalResolvidos = resolvidos.length;
 
   // Yield calculado com stake uniforme de 1 unidade por aposta.
@@ -395,7 +382,7 @@ export function registrarResultadoManual(dados: {
   if (existente) {
     // Atualizar existente
     existente.status = dados.resultado;
-    existente.acertou = dados.resultado === 'WIN';
+    existente.acertou = dados.resultado === 'WIN' ? true : (dados.resultado === 'RED' ? false : null);
     existente.resolvidoEm = new Date().toISOString();
     existente.resultadoReal = `${dados.placarCasa}-${dados.placarFora}`;
   } else {
@@ -412,7 +399,7 @@ export function registrarResultadoManual(dados: {
       oddUtilizada: dados.oddUtilizada,
       scoreGate: dados.scoreGate,
       status: dados.resultado,
-      acertou: dados.resultado === 'WIN',
+      acertou: dados.resultado === 'WIN' ? true : (dados.resultado === 'RED' ? false : null),
       registradoEm: new Date().toISOString(),
       resolvidoEm: new Date().toISOString(),
       resultadoReal: `${dados.placarCasa}-${dados.placarFora}`

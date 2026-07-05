@@ -241,8 +241,8 @@ export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Pr
       try {
         const { data, timestamp } = JSON.parse(cached);
         
-        // TTL Dinâmico: 15 minutos padrão, reduzindo para 5 minutos se faltar < 2 horas para o kickoff (ou < 2 horas pós-kickoff)
-        let currentTTL = 15 * 60 * 1000; // 15 minutos padrão
+        // TTL Dinâmico: 30 minutos padrão, reduzindo para 5 minutos se faltar < 2 horas para o kickoff (ou < 2 horas pós-kickoff)
+        let currentTTL = 30 * 60 * 1000; // 30 minutos padrão
         if (Array.isArray(data) && data.length > 0) {
           const now = Date.now();
           const twoHoursMs = 2 * 60 * 60 * 1000;
@@ -270,13 +270,18 @@ export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Pr
 
     try {
       const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu';
-      const url = `${ODDS_API_BASE_URL}/${league.key}/odds/?apiKey=${apiKey}&bookmakers=${SHARP_BOOKMAKERS}&markets=h2h,totals&oddsFormat=decimal&daysFrom=3`;
+      const url = `${ODDS_API_BASE_URL}/${league.key}/odds/?apiKey=${apiKey}&bookmakers=${SHARP_BOOKMAKERS}&markets=h2h,totals&oddsFormat=decimal&daysFrom=7`;
       const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
       
       if (!response.ok) {
-        if (response.status === 429 || response.status === 401) {
-          sessionStorage.setItem('odds_api_error_status', String(response.status));
-          throw new Error('QUOTA_EXCEEDED');
+        // API-01: Differentiate permanent (401) vs temporary (429) errors
+        if (response.status === 401) {
+          sessionStorage.setItem('odds_api_error_status', '401');
+          throw new Error('API_KEY_INVALID'); // permanent error — stop all requests
+        }
+        if (response.status === 429) {
+          sessionStorage.setItem('odds_api_error_status', '429');
+          throw new Error('RATE_LIMITED'); // temporary — retry later
         }
         console.error(`[OddsAPI] HTTP ${response.status} for league ${league.key}`);
         results.push({ status: 'fulfilled', value: [] });
@@ -291,19 +296,33 @@ export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Pr
           sessionStorage.setItem('odds_api_used', used);
         }
 
-        const data = await response.json();
-        
-        if (Array.isArray(data) && data.length > 0) {
-          sessionStorage.setItem(cacheKey, JSON.stringify({
-            data,
-            timestamp: Date.now()
-          }));
+        // API-02: Check abort signal before JSON.parse — AbortSignal.timeout() cancels
+        // the fetch but does NOT cancel the pending response.json() microtask, which
+        // can throw an unhandled DOMException or block the event loop on large payloads.
+        if (response.bodyUsed === false) {
+          const contentLength = response.headers.get('content-length');
+          if (contentLength && parseInt(contentLength, 10) > 5 * 1024 * 1024) {
+            console.warn(`[OddsAPI] Large response for ${league.key}: ${contentLength} bytes — skipping parse`);
+            results.push({ status: 'fulfilled', value: [] });
+            continue;
+          }
         }
-        
+
+        const data = await response.json();
+
+        // API-03: Cache even empty results (with shorter TTL) to avoid repeated API calls consuming quota
+        if (Array.isArray(data) && data.length === 0) {
+          sessionStorage.setItem(cacheKey, JSON.stringify({ data: [], ts: Date.now(), empty: true, timestamp: Date.now() }));
+        } else if (Array.isArray(data) && data.length > 0) {
+          sessionStorage.setItem(cacheKey, JSON.stringify({ data, timestamp: Date.now() }));
+        }
+
         results.push({ status: 'fulfilled', value: data as Match[] });
       }
     } catch (err: any) {
-      if (err.message === 'QUOTA_EXCEEDED') {
+      // API-01: API_KEY_INVALID is permanent — propagate to stop all requests
+      // RATE_LIMITED is temporary — propagate to fall back to mock data
+      if (err.message === 'API_KEY_INVALID' || err.message === 'RATE_LIMITED' || err.message === 'QUOTA_EXCEEDED') {
         results.push({ status: 'rejected', reason: err });
       } else {
         results.push({ status: 'fulfilled', value: [] });
@@ -314,7 +333,7 @@ export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Pr
     await new Promise(resolve => setTimeout(resolve, 350));
   }
 
-  const hasQuotaIssue = results.some(r => r.status === 'rejected' && r.reason.message === 'QUOTA_EXCEEDED');
+  const hasQuotaIssue = results.some(r => r.status === 'rejected' && (r.reason.message === 'QUOTA_EXCEEDED' || r.reason.message === 'RATE_LIMITED' || r.reason.message === 'API_KEY_INVALID'));
   if (hasQuotaIssue) {
     return MOCK_MATCHES;
   }

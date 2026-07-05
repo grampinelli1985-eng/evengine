@@ -6,66 +6,106 @@
  *  - K-factor 40 para WC, 30 para eliminatórias (menos dados, maior peso)
  *  - Base de ratings separada no localStorage: evengine_wc_elo_v1
  *  - Seeding inicial baseado em rankings FIFA 2026
- *  - Modelo de empate Davidson adaptado para torneios
+ *  - Modelo de empate Davidson (θ=0.18) — mesmo framework do eloService de clubes
  */
 
 import { WCMatch, WCEloData, WCNationalTeam } from './wcTypes';
+import { removeOverround } from '../valueBetService';
 
 const WC_ELO_KEY = 'evengine_wc_elo_v1';
 const BASE_RATING = 1500;
 const K_FACTOR_WC = 40;
 const K_FACTOR_QUALIFIER = 30;
 const K_FACTOR_FRIENDLY = 15;
-const DRAW_TENDENCY = 0.18; // torneios internacionais têm mais empates que ligas
+// XMD-03: Davidson theta calibrated for international tournaments (more draws than club football)
+const DAVIDSON_THETA = 0.18;
 
 // Ratings base derivados de FIFA Ranking jun/2026 + histórico ELO WC
+// Nomes em inglês E português para cobrir qualquer variante retornada pela API
 const WC_SEED_RATINGS: Record<string, number> = {
   // Top tier — S (1750+)
   'Argentina': 1850,
-  'France': 1820,
-  'England': 1790,
-  'Brazil': 1780,
-  'Spain': 1770,
+  'France': 1820,    'França': 1820,
+  'England': 1790,   'Inglaterra': 1790,
+  'Brazil': 1780,    'Brasil': 1780,
+  'Spain': 1770,     'Espanha': 1770,
   'Portugal': 1760,
-  'Germany': 1745,
-  'Netherlands': 1740,
-  'Belgium': 1720,
-  'Italy': 1710,
+  'Germany': 1745,   'Alemanha': 1745,
+  'Netherlands': 1740, 'Holanda': 1740, 'Países Baixos': 1740,
+  'Belgium': 1720,   'Bélgica': 1720,
+  'Italy': 1710,     'Itália': 1710,
   // A tier (1650-1720)
-  'Uruguay': 1700,
-  'Colombia': 1690,
-  'Croatia': 1685,
-  'Denmark': 1680,
-  'Switzerland': 1670,
-  'United States': 1660,
-  'Mexico': 1655,
+  'Uruguay': 1700,   'Uruguai': 1700,
+  'Colombia': 1690,  'Colômbia': 1690,
+  'Croatia': 1685,   'Croácia': 1685,
+  'Denmark': 1680,   'Dinamarca': 1680,
+  'Switzerland': 1670, 'Suíça': 1670,
+  'United States': 1660, 'Estados Unidos': 1660, 'USA': 1660,
+  'Mexico': 1655,    'México': 1655,
   'Senegal': 1650,
-  'Morocco': 1648,
-  'Japan': 1645,
+  'Morocco': 1648,   'Marrocos': 1648,
+  'Japan': 1645,     'Japão': 1645,
   // B tier (1580-1650)
-  'Poland': 1635,
-  'Sweden': 1625,
-  'Austria': 1620,
-  'Australia': 1615,
-  'South Korea': 1610,
-  'Ecuador': 1605,
-  'Cameroon': 1595,
-  'Serbia': 1590,
+  'Norway': 1650,    'Noruega': 1650,
+  'Poland': 1635,    'Polônia': 1635,
+  'Wales': 1615,     'País de Gales': 1615,
+  'Sweden': 1625,    'Suécia': 1625,
+  'Austria': 1620,   'Áustria': 1620,
+  'Australia': 1615, 'Austrália': 1615,
+  'South Korea': 1610, 'Coreia do Sul': 1610,
+  'Ecuador': 1605,   'Equador': 1605,
+  'Canada': 1600,    'Canadá': 1600,
+  'Cameroon': 1595,  'Camarões': 1595,
+  'Scotland': 1590,  'Escócia': 1590,
+  'Serbia': 1590,    'Sérvia': 1590,
+  'Venezuela': 1590,
   'Chile': 1585,
-  'Nigeria': 1580,
+  'Nigeria': 1580,   'Nigéria': 1580,
   // C tier (1500-1580)
+  'Bosnia & Herzegovina': 1570, 'Bósnia e Herzegovina': 1570,
   'Ghana': 1570,
-  'Ivory Coast': 1560,
-  'Turkey': 1555,
-  'Ukraine': 1545,
-  'Czech Republic': 1540,
-  'Hungary': 1530,
+  'Costa Rica': 1570,
+  'Ivory Coast': 1560, 'Costa do Marfim': 1560,
+  'Greece': 1555,    'Grécia': 1555,
+  'Turkey': 1555,    'Turquia': 1555,
+  'Ukraine': 1545,   'Ucrânia': 1545,
+  'Saudi Arabia': 1540, 'Arábia Saudita': 1540,
+  'Czech Republic': 1540, 'República Tcheca': 1540,
+  'Iraq': 1530,      'Iraque': 1530,
+  'Panama': 1530,    'Panamá': 1530,
+  'Hungary': 1530,   'Hungria': 1530,
+  'Slovakia': 1535,  'Eslováquia': 1535,
+  'Uzbekistan': 1520, 'Uzbequistão': 1520,
   'Peru': 1525,
-  'Paraguay': 1520,
-  'Iran': 1515,
-  'Algeria': 1510,
-  'Egypt': 1505,
-  'Tunisia': 1500,
+  'Paraguay': 1520,  'Paraguai': 1520,
+  'Honduras': 1520,
+  'Slovenia': 1520,  'Eslovênia': 1520,
+  'Iran': 1515,      'Irã': 1515,
+  'Jordan': 1510,    'Jordânia': 1510,
+  'Algeria': 1510,   'Argélia': 1510,
+  'El Salvador': 1510,
+  'Egypt': 1505,     'Egito': 1505,
+  'Romania': 1530,   'Romênia': 1530,
+  'Tunisia': 1500,   'Tunísia': 1500,
+  'DR Congo': 1480,  'República Democrática do Congo': 1480,
+  'South Africa': 1475, 'África do Sul': 1475,
+  'Oman': 1480,      'Omã': 1480,
+  'New Zealand': 1490, 'Nova Zelândia': 1490,
+  'Qatar': 1480,
+  'Jamaica': 1490,
+  'Cabo Verde': 1465,
+  'Albania': 1480,   'Albânia': 1480,
+  'Angola': 1455,
+  'Mali': 1470,
+  'Haiti': 1460,
+  'Bolivia': 1440,   'Bolívia': 1440,
+  'Mozambique': 1445, 'Moçambique': 1445,
+  'Trinidad and Tobago': 1450, 'Trinidad e Tobago': 1450,
+  'Guatemala': 1480,
+  'Suriname': 1440,
+  'Tanzania': 1440,  'Tanzânia': 1440,
+  'Zimbabwe': 1435,  'Zimbábue': 1435,
+  'Sudan': 1430,     'Sudão': 1430,
 };
 
 interface WCEloRecord {
@@ -88,11 +128,23 @@ function saveRatings(ratings: Record<string, WCEloRecord>): void {
   localStorage.setItem(WC_ELO_KEY, JSON.stringify(ratings));
 }
 
+// XMD-03: Davidson draw model — consistent with eloService.ts
+// θ=0.18 calibrated for international tournaments (more draws than club football)
+function calcDavidsonProbs(delta: number): { probCasa: number; probEmpate: number; probFora: number } {
+  const expDelta = Math.pow(10, delta / 400);
+  const denominator = expDelta + DAVIDSON_THETA + 1;
+  return {
+    probCasa: expDelta / denominator,
+    probEmpate: DAVIDSON_THETA / denominator,
+    probFora: 1 / denominator,
+  };
+}
+
 export function getWCTeamRating(team: string): number {
   const ratings = getStoredRatings();
-  if (ratings[team]) return ratings[team].rating;
+  if (ratings[team]) return Math.round(ratings[team].rating);
   // Seeding: se não houver histórico, usar seed FIFA ou base
-  return WC_SEED_RATINGS[team] ?? BASE_RATING;
+  return Math.round(WC_SEED_RATINGS[team] ?? BASE_RATING);
 }
 
 export function seedWCEloFromOdds(match: WCMatch): void {
@@ -109,28 +161,43 @@ export function seedWCEloFromOdds(match: WCMatch): void {
 
   const homeOut = h2h.outcomes.find(o => o.name === match.home_team);
   const awayOut = h2h.outcomes.find(o => o.name === match.away_team);
+  const drawOut = h2h.outcomes.find(o => o.name === 'Draw');
   if (!homeOut || !awayOut) return;
 
-  const rawHome = 1 / homeOut.price;
-  const rawAway = 1 / awayOut.price;
-  const total = rawHome + rawAway + (h2h.outcomes.find(o => o.name === 'Draw') ? 1 / (h2h.outcomes.find(o => o.name === 'Draw')!.price) : 0);
-  const probHome = rawHome / total;
+  // XMD-03: Use removeOverround for consistent normalization (same as eloService and valueBetService)
+  let probHome: number;
+  let probAway: number;
+  try {
+    const odds = drawOut
+      ? [homeOut.price, drawOut.price, awayOut.price]
+      : [homeOut.price, awayOut.price];
+    const fairProbs = removeOverround(odds);
+    probHome = fairProbs[0];
+    probAway = drawOut ? fairProbs[2] : fairProbs[1];
+  } catch {
+    // Fallback to simple proportional normalization
+    const rawHome = 1 / homeOut.price;
+    const rawAway = 1 / awayOut.price;
+    const rawDraw = drawOut ? 1 / drawOut.price : 0;
+    const total = rawHome + rawAway + rawDraw;
+    probHome = rawHome / total;
+    probAway = rawAway / total;
+  }
 
   if (!ratings[match.home_team]) {
     // Sem home advantage em campo neutro
     const impliedRating = 1500 + 400 * Math.log10(Math.max(0.01, probHome / Math.max(0.01, 1 - probHome)));
     ratings[match.home_team] = {
-      rating: Math.min(Math.max(WC_SEED_RATINGS[match.home_team] ?? impliedRating, 1200), 2000),
+      rating: Math.round(Math.min(Math.max(WC_SEED_RATINGS[match.home_team] ?? impliedRating, 1200), 2000)),
       matches: 5,
       lastUpdated: Date.now()
     };
     changed = true;
   }
   if (!ratings[match.away_team]) {
-    const probAway = rawAway / total;
-    const impliedRating = 1500 + 400 * Math.log10(Math.max(0.01, probAway / Math.max(0.01, 1 - probAway)));
+    const impliedRatingAway = 1500 + 400 * Math.log10(Math.max(0.01, probAway / Math.max(0.01, 1 - probAway)));
     ratings[match.away_team] = {
-      rating: Math.min(Math.max(WC_SEED_RATINGS[match.away_team] ?? impliedRating, 1200), 2000),
+      rating: Math.round(Math.min(Math.max(WC_SEED_RATINGS[match.away_team] ?? impliedRatingAway, 1200), 2000)),
       matches: 5,
       lastUpdated: Date.now()
     };
@@ -142,23 +209,14 @@ export function seedWCEloFromOdds(match: WCMatch): void {
 export function calculateWCElo(match: WCMatch, phase?: WCMatch['phase']): WCEloData {
   const ratings = getStoredRatings();
 
-  const homeRating = ratings[match.home_team]?.rating ?? WC_SEED_RATINGS[match.home_team] ?? BASE_RATING;
-  const awayRating = ratings[match.away_team]?.rating ?? WC_SEED_RATINGS[match.away_team] ?? BASE_RATING;
-
-  const delta = homeRating - awayRating;
+  const homeRating = Math.round(ratings[match.home_team]?.rating ?? WC_SEED_RATINGS[match.home_team] ?? BASE_RATING);
+  const awayRating = Math.round(ratings[match.away_team]?.rating ?? WC_SEED_RATINGS[match.away_team] ?? BASE_RATING);
 
   // Sem home advantage em campo neutro (Copa do Mundo)
-  const probHomeWin = 1 / (1 + Math.pow(10, -delta / 400));
-  const probAwayWin = 1 / (1 + Math.pow(10, delta / 400));
+  const delta = homeRating - awayRating;
 
-  // Modelo de empate: Davidson adaptado
-  // P(draw) proporcional à proximidade de ratings e tendência de torneio
-  const proximidade = 1 - Math.abs(delta) / 800;
-  const probDraw = Math.min(0.35, Math.max(0.10, DRAW_TENDENCY * (1 + proximidade * 0.4)));
-
-  const adjustment = 1 - probDraw;
-  const probCasa = probHomeWin * adjustment;
-  const probFora = probAwayWin * adjustment;
+  // XMD-03: Real Davidson draw model — replaces ad-hoc draw probability formula
+  const { probCasa, probEmpate, probFora } = calcDavidsonProbs(delta);
 
   const favorito = probCasa > probFora ? match.home_team : match.away_team;
 
@@ -171,7 +229,7 @@ export function calculateWCElo(match: WCMatch, phase?: WCMatch['phase']): WCEloD
     delta: Math.round(delta),
     probabilidades: {
       casa: Math.round(probCasa * 100),
-      empate: Math.round(probDraw * 100),
+      empate: Math.round(probEmpate * 100),
       fora: Math.round(probFora * 100),
     },
     favorito,
@@ -187,12 +245,13 @@ export function updateWCEloAfterResult(
 ): void {
   const ratings = getStoredRatings();
 
-  const homeRating = ratings[homeTeam]?.rating ?? WC_SEED_RATINGS[homeTeam] ?? BASE_RATING;
-  const awayRating = ratings[awayTeam]?.rating ?? WC_SEED_RATINGS[awayTeam] ?? BASE_RATING;
+  const homeRating = Math.round(ratings[homeTeam]?.rating ?? WC_SEED_RATINGS[homeTeam] ?? BASE_RATING);
+  const awayRating = Math.round(ratings[awayTeam]?.rating ?? WC_SEED_RATINGS[awayTeam] ?? BASE_RATING);
 
   const delta = homeRating - awayRating;
-  const expectedHome = 1 / (1 + Math.pow(10, -delta / 400));
-  const expectedAway = 1 - expectedHome;
+
+  // XMD-03: Use Davidson expected scores (consistent with calculateWCElo)
+  const { probCasa: expectedHome, probFora: expectedAway } = calcDavidsonProbs(delta);
 
   const actualHome = result === 'home' ? 1 : result === 'draw' ? 0.5 : 0;
   const actualAway = 1 - actualHome;
@@ -224,7 +283,7 @@ export function getAllWCRatings(): WCNationalTeam[] {
   return Array.from(all).map(team => ({
     name: team,
     fifaRank: 0,
-    eloRating: stored[team]?.rating ?? WC_SEED_RATINGS[team] ?? BASE_RATING,
+    eloRating: Math.round(stored[team]?.rating ?? WC_SEED_RATINGS[team] ?? BASE_RATING),
     confederation: getConfederation(team),
     recentForm: [],
     avgGoalsScored: 1.2,

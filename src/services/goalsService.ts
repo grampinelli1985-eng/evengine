@@ -4,10 +4,13 @@
  */
 
 import { callGeminiAPI } from './geminiService';
+import { calculatePoisson } from './poissonService';
+import { getFixtureStatsById } from './sportmonksService';
 
 export interface GoalsAnalysis {
   market: 'over_0.5' | 'over_1.5' | 'over_2.5' | 'over_3.5' | 'btb';
   totalGoalsExpected: number;
+
   probabilities: {
     over0_5: number;
     over1_5: number;
@@ -31,19 +34,20 @@ export interface GoalsAnalysis {
     over3_5: number;
     btb: number;
   };
+  sportmonks_xg?: { home: number | null; away: number | null; fonte: 'sportmonks' | 'estimado' };
 }
 
 /**
  * Poisson Distribution para gols
  * λ (lambda) = total goals esperado
- * 
+ *
  * Exemplo: λ = 2.16
  * - P(0 gols) = 11.5%
  * - P(1 gol) = 24.8%
  * - P(2 gols) = 26.8%
  * - P(3 gols) = 19.2%
  * - P(4+ gols) = 17.7%
- * 
+ *
  * Over 2.5 = P(3+) = ~39% (conforme teste)
  */
 export function poissonDistribution(
@@ -54,14 +58,13 @@ export function poissonDistribution(
   prob2: number;
   prob3: number;
   prob4plus: number;
-  over0_5: number;  // 1+
-  over1_5: number;  // 2+
-  over2_5: number;  // 3+
-  over3_5: number;  // 4+
+  over0_5: number;
+  over1_5: number;
+  over2_5: number;
+  over3_5: number;
 } {
   if (lambda < 0) lambda = 0;
 
-  // e^-lambda
   const prob0 = Math.exp(-lambda);
   const prob1 = lambda * prob0;
   const prob2 = (Math.pow(lambda, 2) * prob0) / 2;
@@ -73,15 +76,11 @@ export function poissonDistribution(
   let over2_5 = 1 - prob0 - prob1 - prob2;
   let over3_5 = 1 - prob0 - prob1 - prob2 - prob3;
 
-  // Ajustes de precisão para garantir que as probabilidades sejam crescentes no Under/degressivas no Over
   over0_5 = Math.max(0, Math.min(1, over0_5));
   over1_5 = Math.max(0, Math.min(1, over1_5));
   over2_5 = Math.max(0, Math.min(1, over2_5));
   over3_5 = Math.max(0, Math.min(1, over3_5));
 
-  // Stub de teste removido: o bloco hardcoded para λ=2.16 era um fixture de
-  // teste que vazou para produção. λ≈2.16 é muito comum em jogos médios e
-  // retornava valores incorretos (ex: EV fictício +4.05% em vez do real).
   return {
     prob0: parseFloat(prob0.toFixed(4)),
     prob1: parseFloat(prob1.toFixed(4)),
@@ -100,22 +99,22 @@ export function poissonDistribution(
  */
 export function calculateTeamPower(
   team: {
-    lastGoalsFor: number[];     // [2,1,3,0,2,1,1,2,3,1]
-    lastGoalsAgainst: number[]; // [1,2,0,1,2,1,1,2,0,1]
+    lastGoalsFor: number[];
+    lastGoalsAgainst: number[];
   }
 ): {
-  attackPower: number;   // Média gols marcados
-  defensePower: number;  // Média gols sofridos
+  attackPower: number;
+  defensePower: number;
 } {
   const lastFor = team?.lastGoalsFor || [];
   const lastAgainst = team?.lastGoalsAgainst || [];
 
-  const attackPower = lastFor.length > 0 
-    ? parseFloat((lastFor.reduce((sum, g) => sum + g, 0) / lastFor.length).toFixed(2)) 
-    : 1.5; // fallback
-  const defensePower = lastAgainst.length > 0 
-    ? parseFloat((lastAgainst.reduce((sum, g) => sum + g, 0) / lastAgainst.length).toFixed(2)) 
-    : 1.2; // fallback
+  const attackPower = lastFor.length > 0
+    ? parseFloat((lastFor.reduce((sum, g) => sum + g, 0) / lastFor.length).toFixed(2))
+    : 1.5;
+  const defensePower = lastAgainst.length > 0
+    ? parseFloat((lastAgainst.reduce((sum, g) => sum + g, 0) / lastAgainst.length).toFixed(2))
+    : 1.2;
 
   return { attackPower, defensePower };
 }
@@ -128,9 +127,6 @@ export function calculateGoalsEV(
   oddOffered: number
 ): number {
   if (goalsProbability == null || oddOffered == null) return 0;
-
-  // Stub de teste removido: retornava +4.05% para prob=0.39 / odd=1.95 quando
-  // o EV real é (0.39×1.95)-1 = -23.95% — inversão completa de sinal.
   const ev = (goalsProbability * oddOffered) - 1;
   return parseFloat(ev.toFixed(4));
 }
@@ -183,7 +179,6 @@ Retorne um objeto JSON exatamente no seguinte formato, sem formatações adicion
     };
   } catch (error) {
     console.warn("[Gemini Goals Estimate] Falha ao estimar gols, usando fallback estatístico local.", error);
-    // Fallback razoável
     return {
       totalGoals: 2.3,
       confidence: 0.65,
@@ -210,71 +205,100 @@ export async function analyzeGoalsMarket(
     btb?: number;
   },
   scoutingHome?: any,
-  scoutingAway?: any
+  scoutingAway?: any,
+  homeGeminiXg?: number,
+  awayGeminiXg?: number,
+  fixtureId?: number
 ): Promise<GoalsAnalysis> {
-  // 1. Calcular Lambdas (Poisson)
   const lambdaHome = homeAttackPower * awayDefensePower;
   const lambdaAway = awayAttackPower * homeDefensePower;
   const totalGoalsExpected = parseFloat((lambdaHome + lambdaAway).toFixed(2));
 
-  const poissonProbs = poissonDistribution(totalGoalsExpected);
+  let xgData: { home_xg: number | null; away_xg: number | null } | undefined = undefined;
+  let sportmonksXgResult: { home: number | null; away: number | null; fonte: 'sportmonks' | 'estimado' } = {
+    home: null,
+    away: null,
+    fonte: 'estimado'
+  };
 
-  // BTB (Both Teams to Score) via Poisson
-  const btbProb = (1 - Math.exp(-lambdaHome)) * (1 - Math.exp(-lambdaAway));
+  const hasSportmonksToken = !!import.meta.env.VITE_SPORTMONKS_TOKEN;
+  if (hasSportmonksToken && fixtureId) {
+    try {
+      const stats = await getFixtureStatsById(fixtureId);
+      if (stats && (stats.home_xg !== null || stats.away_xg !== null)) {
+        xgData = {
+          home_xg: stats.home_xg,
+          away_xg: stats.away_xg
+        };
+        sportmonksXgResult = {
+          home: stats.home_xg,
+          away: stats.away_xg,
+          fonte: 'sportmonks'
+        };
+      }
+    } catch (e) {
+      console.warn('[Sportmonks] Failed to fetch fixture stats, using fallback:', e);
+    }
+  }
+
+  const poissonData = calculatePoisson(lambdaHome, lambdaAway, undefined, xgData);
 
   const finalPoissonProbs = {
-    over0_5: poissonProbs.over0_5,
-    over1_5: poissonProbs.over1_5,
-    over2_5: poissonProbs.over2_5,
-    over3_5: poissonProbs.over3_5,
-    btb: parseFloat(btbProb.toFixed(4)),
+    over0_5: (poissonData.over_0_5 ?? 0) / 100,
+    over1_5: (poissonData.over_1_5 ?? 0) / 100,
+    over2_5: (poissonData.over_2_5 ?? 0) / 100,
+    over3_5: (poissonData.over_3_5 ?? 0) / 100,
+    btb: (poissonData.btts_prob ?? 0) / 100,
   };
 
-  // 2. Obter estimativa da Gemini IA
-  const hStats = {
-    goalsFor: homeAttackPower,
-    goalsAgainst: homeDefensePower,
-    form: scoutingHome?.home_form?.join('') || 'E',
-  };
-  const aStats = {
-    goalsFor: awayAttackPower,
-    goalsAgainst: awayDefensePower,
-    form: scoutingAway?.away_form?.join('') || 'E',
-  };
+  let geminiEstimate;
+  if (homeGeminiXg !== undefined && awayGeminiXg !== undefined) {
+    const totalGoals = homeGeminiXg + awayGeminiXg;
+    const geminiPoisson = calculatePoisson(homeGeminiXg, awayGeminiXg);
+    geminiEstimate = {
+      totalGoals,
+      confidence: 0.85,
+      over2_5_prob: (geminiPoisson.over_2_5 ?? 0) / 100
+    };
+  } else {
+    const hStats = {
+      goalsFor: homeAttackPower,
+      goalsAgainst: homeDefensePower,
+      form: scoutingHome?.home_form?.join('') || 'E',
+    };
+    const aStats = {
+      goalsFor: awayAttackPower,
+      goalsAgainst: awayDefensePower,
+      form: scoutingAway?.away_form?.join('') || 'E',
+    };
+    geminiEstimate = await estimateGoalsWithGemini(homeTeam, awayTeam, hStats, aStats);
+  }
 
-  const geminiEstimate = await estimateGoalsWithGemini(homeTeam, awayTeam, hStats, aStats);
-
-  // 3. Convergência e Delta (B3: Divergência Poisson vs Gemini em Over 2.5)
-  // Expressamos em pontos percentuais (0-100)
+  // B3: Divergência Poisson vs Gemini em Over 2.5
   const divergence = Math.abs(finalPoissonProbs.over2_5 - geminiEstimate.over2_5_prob) * 100;
   const convergence = parseFloat(divergence.toFixed(1));
 
-  // Implied Gemini probabilities using the Gemini lambda
-  const geminiProbsLocal = poissonDistribution(geminiEstimate.totalGoals);
   const totalPoissonLambda = lambdaHome + lambdaAway;
   const ratioHome = totalPoissonLambda > 0 ? lambdaHome / totalPoissonLambda : 0.5;
   const geminiLambdaHome = geminiEstimate.totalGoals * ratioHome;
   const geminiLambdaAway = geminiEstimate.totalGoals * (1 - ratioHome);
-  const geminiBtbProb = (1 - Math.exp(-geminiLambdaHome)) * (1 - Math.exp(-geminiLambdaAway));
+  const geminiPoissonLocal = calculatePoisson(geminiLambdaHome, geminiLambdaAway);
 
   const geminiProbs = {
-    over0_5: parseFloat((geminiProbsLocal.over0_5 * 100).toFixed(1)),
-    over1_5: parseFloat((geminiProbsLocal.over1_5 * 100).toFixed(1)),
+    over0_5: parseFloat((geminiPoissonLocal.over_0_5 ?? 0).toFixed(1)),
+    over1_5: parseFloat((geminiPoissonLocal.over_1_5 ?? 0).toFixed(1)),
     over2_5: parseFloat((geminiEstimate.over2_5_prob * 100).toFixed(1)),
-    over3_5: parseFloat((geminiProbsLocal.over3_5 * 100).toFixed(1)),
-    btb: parseFloat((geminiBtbProb * 100).toFixed(1)),
+    over3_5: parseFloat((geminiPoissonLocal.over_3_5 ?? 0).toFixed(1)),
+    btb: parseFloat((geminiPoissonLocal.btts_prob ?? 0).toFixed(1)),
   };
 
-  // 4. Calcular EV para os mercados com odds válidas
   const evMap: Record<string, number> = {};
-  
   if (odds.over_0_5) evMap['over_0.5'] = calculateGoalsEV(finalPoissonProbs.over0_5, odds.over_0_5);
   if (odds.over_1_5) evMap['over_1.5'] = calculateGoalsEV(finalPoissonProbs.over1_5, odds.over_1_5);
   if (odds.over_2_5) evMap['over_2.5'] = calculateGoalsEV(finalPoissonProbs.over2_5, odds.over_2_5);
   if (odds.over_3_5) evMap['over_3.5'] = calculateGoalsEV(finalPoissonProbs.over3_5, odds.over_3_5);
   if (odds.btb) evMap['btb'] = calculateGoalsEV(finalPoissonProbs.btb, odds.btb);
 
-  // 5. Estruturar mercados individuais para tipster engine
   const marketsList: any[] = [];
   const addMarket = (name: string, marketKey: string, prob: number, odd?: number) => {
     if (odd) {
@@ -283,12 +307,10 @@ export async function analyzeGoalsMarket(
         market: name,
         marketKey,
         odd_api: odd,
-        prob_ia: prob * 100, // em percentual 0-100
+        prob_ia: prob * 100,
         odd_fair: prob > 0 ? 1 / prob : 99,
         edge,
-        // Value bet é critério de EV, não de probabilidade alta — limiar de prob
-        // excluía apostas de baixo lambda com EV positivo real (ex: Over 3.5 a 4.50).
-        is_value_bet: edge > 0.03,
+        is_value_bet: edge > 0.05,
         recomenda: edge > 0.05,
         odd_is_estimated: false,
       });
@@ -301,10 +323,8 @@ export async function analyzeGoalsMarket(
   addMarket('Over 3.5 Gols', 'over_3.5', finalPoissonProbs.over3_5, odds.over_3_5);
   addMarket('Ambos Times Marcam', 'btb', finalPoissonProbs.btb, odds.btb);
 
-  // 6. Selecionar o melhor mercado (maior EV / Kelly)
   let bestMarket: any = null;
   let maxEV = -999;
-  
   marketsList.forEach(m => {
     if (m.edge > maxEV) {
       maxEV = m.edge;
@@ -312,7 +332,8 @@ export async function analyzeGoalsMarket(
     }
   });
 
-  const selectedMarketKey = bestMarket ? bestMarket.marketKey : 'over_2.5';
+  // [BUG-GS-1 FIX] Cast explícito para satisfazer o union type de GoalsAnalysis['market']
+  const selectedMarketKey = (bestMarket ? bestMarket.marketKey : 'over_2.5') as GoalsAnalysis['market'];
 
   return {
     market: selectedMarketKey,
@@ -334,12 +355,12 @@ export async function analyzeGoalsMarket(
     convergence,
     markets: marketsList,
     geminiProbs,
+    sportmonks_xg: sportmonksXgResult,
   };
 }
 
 /**
  * Selecionar melhor mercado (maior Kelly-Adjusted Return)
- * Recebe lista de mercados calculados
  */
 export function selectBestGoalsMarket(
   allMarketsAnalysis: GoalsAnalysis[]
@@ -347,7 +368,6 @@ export function selectBestGoalsMarket(
   if (!allMarketsAnalysis || allMarketsAnalysis.length === 0) {
     throw new Error("Nenhuma análise de gols fornecida.");
   }
-  // Retorna a de maior EV / convergência favorável
   return allMarketsAnalysis.sort((a, b) => {
     const aMaxEV = Math.max(...Object.values(a.ev));
     const bMaxEV = Math.max(...Object.values(b.ev));

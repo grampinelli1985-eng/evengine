@@ -103,23 +103,24 @@ function recalcularStats(state: HistoricoState): void {
   const resolvidos = state.registros.filter(
     r => r.resultado !== 'PENDENTE'
   );
+  const resolvidos_validos = resolvidos.filter(r => r.resultado !== 'VOID');
   
-  state.totalApostas = resolvidos.length;
+  state.totalApostas = resolvidos_validos.length;
   state.totalWins = resolvidos.filter(r => r.resultado === 'WIN').length;
   state.totalReds = resolvidos.filter(r => r.resultado === 'RED').length;
   state.lucroTotal = parseFloat(
     resolvidos.reduce((a, r) => a + r.lucro, 0).toFixed(2)
   );
   
-  const totalInvestido = resolvidos.filter(r => r.resultado !== 'VOID').reduce((a, r) => a + r.stake, 0);
+  const totalInvestido = resolvidos_validos.reduce((a, r) => a + r.stake, 0);
   state.roiTotal = totalInvestido > 0
     ? parseFloat(((state.lucroTotal / totalInvestido) * 100).toFixed(1))
     : 0;
 
   // Maior série
-  let serieAtual = { tipo: resolvidos[0]?.resultado as 'WIN'|'RED', qtd: 0 };
+  let serieAtual = { tipo: resolvidos_validos[0]?.resultado as 'WIN'|'RED', qtd: 0 };
   let maiorSerie = { tipo: 'WIN' as 'WIN'|'RED', quantidade: 0 };
-  resolvidos.forEach(r => {
+  resolvidos_validos.forEach(r => {
     if (r.resultado === serieAtual.tipo) {
       serieAtual.qtd++;
       if (serieAtual.qtd > maiorSerie.quantidade) {

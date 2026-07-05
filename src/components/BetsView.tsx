@@ -6,15 +6,20 @@ import {
   TrendingUp, Award, DollarSign, Activity, AlertTriangle, 
   Check, X as CloseIcon, Filter, Calendar, BookOpen, 
   HelpCircle, CheckCircle2, AlertOctagon, RefreshCw, BarChart2,
-  Trash2
+  Trash2, Lock
 } from 'lucide-react';
 import { getBanca } from '../services/bancaService';
+import { useUserPlan } from '../hooks/useUserPlan';
+import { canViewHistory, canTrackCLV, canExportCSV } from '../services/planService';
+import { supabase } from '../services/supabaseClient';
+import { showToast } from './Toast';
 
 interface BetsViewProps {
   onBack: () => void;
 }
 
 export default function BetsView({ onBack }: BetsViewProps) {
+  const { plan } = useUserPlan();
   const banca = getBanca();
   const [bets, setBets] = useState<Bet[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +30,7 @@ export default function BetsView({ onBack }: BetsViewProps) {
   const [leagueFilter, setLeagueFilter] = useState('all');
   const [marketFilter, setMarketFilter] = useState('all');
   const [bookmakerFilter, setBookmakerFilter] = useState('all');
-  const [periodFilter, setPeriodFilter] = useState<string>('todas');
+  const [periodFilter, setPeriodFilter] = useState<'todas' | 'hoje' | '7d' | '30d'>('todas');
 
   // Modal de Resolução
   const [resolvingBet, setResolvingBet] = useState<Bet | null>(null);
@@ -42,13 +47,26 @@ export default function BetsView({ onBack }: BetsViewProps) {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      const data = await fetchBets({
+      let data = await fetchBets({
         status: statusFilter,
         league: leagueFilter === 'all' ? undefined : leagueFilter,
         market: marketFilter === 'all' ? undefined : marketFilter,
         bookmaker: bookmakerFilter,
         period: periodFilter
       });
+
+      // Filter by plan constraints
+      const now = Date.now();
+      let limitDays = 7;
+      if (plan === 'sharp') limitDays = 365;
+      else if (plan === 'pro') limitDays = 90;
+      
+      const limitMs = limitDays * 24 * 60 * 60 * 1000;
+      data = data.filter(bet => {
+        const betTime = new Date(bet.created_at).getTime();
+        return (now - betTime) <= limitMs;
+      });
+
       setBets(data);
     } catch (e) {
       console.warn('[BetsView] Erro ao carregar apostas:', e);
@@ -87,7 +105,23 @@ export default function BetsView({ onBack }: BetsViewProps) {
 
   // Calcular métricas agregadas da amostra atual de apostas (filtrada ou total)
   const metrics = useMemo(() => {
-    return calculatePerformanceMetrics(bets);
+    const baseMetrics = calculatePerformanceMetrics(bets);
+    
+    // Custom CLV calculation using closing_odd_pinnacle
+    const clvBets = bets.filter(b => b.status !== 'pending' && (b as any).closing_odd_pinnacle && (b as any).closing_odd_pinnacle > 0);
+    let clvSum = 0;
+    clvBets.forEach(b => {
+      const closingPinnacle = (b as any).closing_odd_pinnacle;
+      const clv = (b.odd_taken / closingPinnacle - 1) * 100;
+      clvSum += clv;
+    });
+    
+    const avgCLV = clvBets.length > 0 ? clvSum / clvBets.length : 0;
+    
+    return {
+      ...baseMetrics,
+      avgCLV
+    };
   }, [bets]);
 
   // Handler de Resolução
@@ -117,6 +151,12 @@ export default function BetsView({ onBack }: BetsViewProps) {
       });
 
       if (resolved) {
+        if (closingOddVal && supabase) {
+          await supabase
+            .from('bets')
+            .update({ closing_odd_pinnacle: closingOddVal })
+            .eq('id', resolvingBet.id);
+        }
         setResolvingBet(null);
         // Reset form
         setResCashoutAmount('');
@@ -135,6 +175,55 @@ export default function BetsView({ onBack }: BetsViewProps) {
     }
   };
 
+  const handleExportCSV = () => {
+    if (!canExportCSV()) {
+      window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal', { detail: { targetPlan: 'sharp' } }));
+      return;
+    }
+    
+    // Export resolved bets
+    const resolvedBets = bets.filter(b => b.status !== 'pending');
+    if (resolvedBets.length === 0) {
+      showToast.info('Nenhuma aposta resolvida para exportar.');
+      return;
+    }
+    
+    const headers = ['Data', 'Confronto', 'Mercado', 'Odd', 'Stake', 'Resultado', 'PnL', 'CLV (%)'];
+    const rows = resolvedBets.map(b => {
+      const pnl = b.status === 'green' ? (b.stake_amount * (b.odd_taken - 1)) : b.status === 'red' ? -b.stake_amount : 0;
+      
+      let clv = '0.00';
+      if ((b as any).closing_odd_pinnacle) {
+        clv = ((b.odd_taken / (b as any).closing_odd_pinnacle - 1) * 100).toFixed(2);
+      }
+      
+      const home = b.analyses?.home_team || '';
+      const away = b.analyses?.away_team || '';
+      const dateStr = new Date(b.created_at).toLocaleDateString('pt-BR');
+      
+      return [
+        dateStr,
+        `"${home} vs ${away}"`,
+        `"${b.market}"`,
+        b.odd_taken.toFixed(2),
+        b.stake_amount.toFixed(2),
+        b.status.toUpperCase(),
+        pnl.toFixed(2),
+        clv
+      ].join(',');
+    });
+    
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `evengine_apostas_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleResetBets = async () => {
     const confirmed = window.confirm("Tem certeza que deseja resetar TODAS as apostas registradas? Esta ação é irreversível!");
     if (!confirmed) return;
@@ -142,13 +231,13 @@ export default function BetsView({ onBack }: BetsViewProps) {
     try {
       const success = await resetBets();
       if (success) {
-        alert("Todos os registros de apostas foram excluídos com sucesso!");
+        showToast.success("Todos os registros de apostas foram excluídos com sucesso!");
         loadBetsData();
       } else {
-        alert("Houve uma falha ao resetar os dados de apostas.");
+        showToast.error("Houve uma falha ao resetar os dados de apostas.");
       }
     } catch (e) {
-      alert("Erro de conexão ao tentar resetar apostas.");
+      showToast.error("Erro de conexão ao tentar resetar apostas.");
     }
   };
 
@@ -165,6 +254,18 @@ export default function BetsView({ onBack }: BetsViewProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          <button 
+            onClick={handleExportCSV}
+            className={`flex items-center gap-2 px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+              canExportCSV()
+                ? 'bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 hover:border-emerald-500/30 text-emerald-500'
+                : 'bg-white/5 border border-white/10 text-white/40 hover:bg-white/10'
+            }`}
+          >
+            {!canExportCSV() && <Lock size={12} />}
+            <span>Exportar CSV</span>
+          </button>
+
           <button 
             onClick={handleResetBets}
             className="flex items-center gap-2 px-4 py-3 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 hover:border-rose-500/30 text-rose-500 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
@@ -241,14 +342,26 @@ export default function BetsView({ onBack }: BetsViewProps) {
             </div>
 
             {/* CLV Médio */}
-            <div className="space-y-1 col-span-2 md:col-span-1">
+            <div className="space-y-1 col-span-2 md:col-span-1 relative">
               <span className="text-[9px] font-black text-white/30 uppercase tracking-widest block">CLV Médio</span>
-              <div className={`text-lg font-mono font-black block ${metrics.avgCLV > 0 ? 'text-green-400' : metrics.avgCLV < 0 ? 'text-rose-500' : 'text-white/40'}`}>
-                {metrics.avgCLV >= 0 ? '+' : ''}{metrics.avgCLV.toFixed(1)}%
-              </div>
-              <span className="text-[8px] font-bold text-white/20 uppercase tracking-tighter block">
-                Desvio contra Linha Final
-              </span>
+              {!canTrackCLV() ? (
+                <div 
+                  onClick={() => window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'))}
+                  className="flex items-center gap-1.5 py-1 text-white/20 select-none cursor-pointer hover:text-white/40 transition-colors"
+                >
+                  <Lock size={12} className="text-blue-500" />
+                  <span className="text-[10px] font-black uppercase tracking-wider">UPGRADE PRO</span>
+                </div>
+              ) : (
+                <>
+                  <div className={`text-lg font-mono font-black block ${metrics.avgCLV > 0 ? 'text-green-400' : metrics.avgCLV < 0 ? 'text-rose-500' : 'text-white/40'}`}>
+                    {metrics.avgCLV >= 0 ? '+' : ''}{metrics.avgCLV.toFixed(1)}%
+                  </div>
+                  <span className="text-[8px] font-bold text-white/20 uppercase tracking-tighter block">
+                    Desvio contra Linha Final
+                  </span>
+                </>
+              )}
             </div>
 
           </div>
@@ -332,7 +445,7 @@ export default function BetsView({ onBack }: BetsViewProps) {
             <label className="text-[9px] font-bold text-white/30 uppercase tracking-wider block">Período</label>
             <select
               value={periodFilter}
-              onChange={(e) => setPeriodFilter(e.target.value)}
+              onChange={(e) => setPeriodFilter(e.target.value as "todas" | "hoje" | "7d" | "30d")}
               className="w-full bg-[#141416] border border-white/5 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-blue-500 transition-colors"
             >
               <option value="todas">Sempre</option>
@@ -443,8 +556,8 @@ export default function BetsView({ onBack }: BetsViewProps) {
                         {/* profit value tag */}
                         <div className="text-right">
                           <span className="text-[8px] text-white/20 uppercase font-black tracking-widest block">Retorno</span>
-                          <span className={`text-xs font-mono font-black ${profit && profit > 0 ? 'text-green-400' : profit && profit < 0 ? 'text-rose-500' : 'text-white/40'}`}>
-                            {profit && profit >= 0 ? '+' : ''}R$ {profit?.toFixed(2)}
+                          <span className={`text-xs font-mono font-black ${profit != null && profit > 0 ? 'text-green-400' : profit != null && profit < 0 ? 'text-rose-500' : 'text-white/40'}`}>
+                            {profit != null && profit >= 0 ? '+' : ''}R$ {profit != null ? profit.toFixed(2) : '—'}
                           </span>
                         </div>
 

@@ -758,7 +758,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                         <div>
                           <div className="flex flex-col gap-1 mb-3">
                              <div className="text-[11px] font-mono text-white/60">
-                               Pinnacle (Abertura): <span className="text-white font-bold">{teEngine?.linha?.odd_abertura ? teEngine.linha.odd_abertura.toFixed(2) : oddRef.toFixed(2)}</span>
+                               Pinnacle (Abertura): <span className="text-white font-bold">{teEngine?.linha?.odd_abertura ? teEngine.linha.odd_abertura.toFixed(2) : (oddRef != null ? oddRef.toFixed(2) : '—')}</span>
                              </div>
                              {teEngine?.linha?.odd_atual && (
                                <div className="text-[11px] font-mono text-white/60">
@@ -772,7 +772,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                                </div>
                              )}
                              <div className="text-[11px] font-mono text-white/60">
-                               Bet365 ({oddB365Manual ? 'manual' : 'pública'}): <span className="text-white font-bold">{oddB365.toFixed(2)}</span>
+                               Bet365 ({oddB365Manual ? 'manual' : 'pública'}): <span className="text-white font-bold">{oddB365 != null ? oddB365.toFixed(2) : '—'}</span>
                              </div>
                           </div>
                           <div className="flex items-baseline gap-2 pt-2 border-t border-white/10 mt-2">
@@ -1219,10 +1219,10 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
                   {[
-                    { label: 'Forma Recente', val: 78, color: 'bg-green-500' },
-                    { label: 'H2H', val: 71, color: 'bg-green-500/60' },
-                    { label: 'Motivação', val: 85, color: 'bg-green-500' },
-                    { label: 'Desfalques', val: 92, color: 'bg-green-500' }
+                    { label: 'Forma Recente', val: teEngine?.qualidade?.forma ?? 78, color: 'bg-green-500' },
+                    { label: 'H2H', val: teEngine?.qualidade?.h2h ?? 71, color: 'bg-green-500/60' },
+                    { label: 'Motivação', val: teEngine?.qualidade?.motivacao ?? 85, color: 'bg-green-500' },
+                    { label: 'Desfalques', val: teEngine?.qualidade?.desfalques ?? 92, color: 'bg-green-500' }
                   ].map(item => (
                     <div key={item.label} className="space-y-3">
                       <div className="flex justify-between items-baseline">
@@ -1648,7 +1648,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                                 c.vencedor === 'away' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
                                   'bg-white/10 text-white/40 border-white/10'
                               }`}>
-                              {c.vencedor === 'draw' ? 'EMP' : c.vencedor.substring(0, 3)}
+                              {c.vencedor === 'draw' ? 'EMP' : (c.vencedor ? c.vencedor.substring(0, 3) : '—')}
                             </span>
                           </div>
                         </div>

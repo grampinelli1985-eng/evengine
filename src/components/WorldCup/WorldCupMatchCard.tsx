@@ -1,14 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Shield, TrendingUp, ChevronDown, ChevronUp } from 'lucide-react';
+import { Zap, Shield, TrendingUp, ChevronDown, ChevronUp, AlertTriangle, Clock } from 'lucide-react';
 import { WCMatch, WCAnalysisResult } from '../../services/worldCup/wcTypes';
 import { getWCTeamRating } from '../../services/worldCup/wcEloService';
+import { checkEloDivergenceWarning, getEloStalenessInfo } from '../../services/eloService';
 
 interface WorldCupMatchCardProps {
   match: WCMatch;
   analysis?: WCAnalysisResult;
   isAnalyzing?: boolean;
   onAnalyze: (match: WCMatch) => void;
+  placar?: string | null;
+  placarAoVivo?: boolean;
 }
 
 const TEAM_PT: Record<string, string> = {
@@ -115,17 +118,30 @@ const PHASE_COLOR: Record<string, string> = {
   eliminatorias: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
 };
 
-export default function WorldCupMatchCard({ match, analysis, isAnalyzing, onAnalyze }: WorldCupMatchCardProps) {
+export default function WorldCupMatchCard({ match, analysis, isAnalyzing, onAnalyze, placar, placarAoVivo }: WorldCupMatchCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const homeRating = getWCTeamRating(match.home_team);
   const awayRating = getWCTeamRating(match.away_team);
 
+  // ELO-07: Staleness check — warns when rating hasn't been updated in 60+ days
+  const staleness = useMemo(
+    () => getEloStalenessInfo(match.home_team, match.away_team),
+    [match.home_team, match.away_team]
+  );
+
+  // ELO-08: Divergence warning — yellow AVISO when EV is between 15% and 20%
+  const gate = analysis?.gate;
+  const evDecimal = gate?.mercado?.ev != null ? gate.mercado.ev / 100 : 0;
+  const evCheck = useMemo(
+    () => checkEloDivergenceWarning(evDecimal),
+    [evDecimal]
+  );
+
   const matchDate = new Date(match.commence_time);
   const dateStr = matchDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   const timeStr = matchDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  const gate = analysis?.gate;
   const elo = analysis?.elo;
   const poisson = analysis?.poisson;
 
@@ -154,14 +170,45 @@ export default function WorldCupMatchCard({ match, analysis, isAnalyzing, onAnal
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1 text-center">
             <div className="text-sm font-black text-white uppercase tracking-tight truncate">{ptBR(match.home_team)}</div>
-            <div className="text-[8px] text-white/20 font-mono mt-0.5">ELO {homeRating}</div>
+            <div className="flex items-center justify-center gap-1 mt-0.5">
+              <span className="text-[8px] text-white/20 font-mono">ELO {homeRating}</span>
+              {staleness.home.level !== 'fresh' && (
+                <span title={`Rating desatualizado há ${staleness.home.daysSinceLastPlayed} dias`}>
+                  <Clock
+                    size={8}
+                    className={staleness.home.level === 'stale' ? 'text-rose-400' : 'text-amber-400'}
+                  />
+                </span>
+              )}
+            </div>
           </div>
-          <div className="shrink-0 px-3">
-            <span className="text-[10px] font-black text-white/10 italic">vs</span>
+          <div className="shrink-0 px-3 flex flex-col items-center gap-0.5">
+            {placar ? (
+              <div className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-mono font-black border shadow-lg shadow-black/50 ${
+                placarAoVivo
+                  ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+                  : 'bg-[#141416] border-white/10 text-white/80'
+              }`}>
+                {placarAoVivo && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                {placar}
+              </div>
+            ) : (
+              <span className="text-[10px] font-black text-white/10 italic">vs</span>
+            )}
           </div>
           <div className="flex-1 text-center">
             <div className="text-sm font-black text-white uppercase tracking-tight truncate">{ptBR(match.away_team)}</div>
-            <div className="text-[8px] text-white/20 font-mono mt-0.5">ELO {awayRating}</div>
+            <div className="flex items-center justify-center gap-1 mt-0.5">
+              <span className="text-[8px] text-white/20 font-mono">ELO {awayRating}</span>
+              {staleness.away.level !== 'fresh' && (
+                <span title={`Rating desatualizado há ${staleness.away.daysSinceLastPlayed} dias`}>
+                  <Clock
+                    size={8}
+                    className={staleness.away.level === 'stale' ? 'text-rose-400' : 'text-amber-400'}
+                  />
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -188,7 +235,13 @@ export default function WorldCupMatchCard({ match, analysis, isAnalyzing, onAnal
         <div className="px-5 py-3 border-t border-white/[0.04]">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {gate.status === 'APROVADO' ? (
+              {gate.status === 'APROVADO' && evCheck.status === 'aviso' ? (
+                // ELO-08: Yellow AVISO badge — EV between 15% and 20%, not blocked but diverging
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full">
+                  <AlertTriangle size={10} className="text-amber-400" />
+                  <span className="text-[8px] font-black text-amber-400 uppercase tracking-widest">Aviso EV</span>
+                </div>
+              ) : gate.status === 'APROVADO' ? (
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
                   <Zap size={10} className="text-emerald-400 fill-emerald-400" />
                   <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest">Aprovado</span>
@@ -202,10 +255,10 @@ export default function WorldCupMatchCard({ match, analysis, isAnalyzing, onAnal
                 </div>
               )}
 
-              {gate.status === 'APROVADO' && (
+              {gate.status === 'APROVADO' && gate.mercado != null && (
                 <div className="flex items-center gap-1">
-                  <TrendingUp size={10} className="text-emerald-500" />
-                  <span className="text-[9px] font-mono font-black text-emerald-400">
+                  <TrendingUp size={10} className={evCheck.status === 'aviso' ? 'text-amber-500' : 'text-emerald-500'} />
+                  <span className={`text-[9px] font-mono font-black ${evCheck.status === 'aviso' ? 'text-amber-400' : 'text-emerald-400'}`}>
                     EV {gate.mercado.ev > 0 ? '+' : ''}{gate.mercado.ev.toFixed(1)}%
                   </span>
                 </div>
@@ -231,19 +284,64 @@ export default function WorldCupMatchCard({ match, analysis, isAnalyzing, onAnal
           className="border-t border-white/[0.04] px-5 py-4 space-y-4"
         >
           {/* Mercado recomendado */}
-          {gate?.status === 'APROVADO' && (
+          {gate?.status === 'APROVADO' && gate.mercado != null && (
             <div className="p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-xl">
               <div className="text-[8px] text-white/30 uppercase font-black tracking-widest mb-1">Mercado Recomendado</div>
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-black text-white uppercase">{gate.mercado.nome}</span>
                 <div className="text-right">
-                  <div className="text-[10px] font-mono font-black text-emerald-400">Odd {gate.mercado.odd.toFixed(2)}</div>
-                  <div className="text-[8px] text-white/20 font-mono">{gate.mercado.probabilidade_ia}% conf.</div>
+                  {(() => {
+                    const oddPinnacle: number | undefined = gate.mercado.odd_referencia;
+                    const odd: number = oddPinnacle ?? gate.mercado.odd ?? gate.mercado.odd_api ?? 0;
+                    const isPinnacle = oddPinnacle != null;
+                    return (
+                      <div className="text-[10px] font-mono font-black text-emerald-400">
+                        Odd {odd > 0 ? odd.toFixed(2) : '—'}
+                        {isPinnacle && (
+                          <span className="ml-1.5 text-[7px] font-black text-white/20 uppercase tracking-widest bg-white/[0.04] border border-white/[0.08] rounded px-1 py-0.5">Pinnacle</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {gate.mercado.probabilidade_ia != null && (
+                    <div className="text-[8px] text-white/20 font-mono">{gate.mercado.probabilidade_ia}% conf.</div>
+                  )}
                 </div>
               </div>
-              <div className="mt-2 pt-2 border-t border-white/[0.04] flex justify-between text-[8px] font-mono">
-                <span className="text-white/30">Stake sugerida</span>
-                <span className="text-white/70 font-black">R$ {gate.stake.valor_reais} ({gate.stake.stake_final.toFixed(1)}% banca)</span>
+              {gate.stake != null && (
+                <div className="mt-2 pt-2 border-t border-white/[0.04] flex justify-between text-[8px] font-mono">
+                  <span className="text-white/30">Stake sugerida</span>
+                  <span className="text-white/70 font-black">R$ {gate.stake.valor_reais} ({gate.stake.stake_final.toFixed(1)}% banca)</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ELO-08: Divergence warning box — visible when EV is 15%-20% */}
+          {gate?.status === 'APROVADO' && evCheck.status === 'aviso' && evCheck.mensagem && (
+            <div className="p-3 bg-amber-500/5 border border-amber-500/15 rounded-xl flex items-start gap-2">
+              <AlertTriangle size={12} className="text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-amber-300/70 leading-relaxed">{evCheck.mensagem}</p>
+            </div>
+          )}
+
+          {/* ELO-07: Staleness warning box — visible when any team ELO is outdated */}
+          {staleness.anyWarning && (
+            <div className="p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl flex items-start gap-2">
+              <Clock size={12} className={`shrink-0 mt-0.5 ${staleness.anyStale ? 'text-rose-400' : 'text-amber-400/70'}`} />
+              <div className="space-y-0.5">
+                {staleness.home.level !== 'fresh' && (
+                  <p className="text-[9px] font-mono text-white/30">
+                    {ptBR(match.home_team)}: ELO sem atualização há <span className="text-amber-400/80">{staleness.home.daysSinceLastPlayed} dias</span>
+                    {staleness.home.decayApplied > 0 && ` (decay −${staleness.home.decayApplied} pts aplicado)`}
+                  </p>
+                )}
+                {staleness.away.level !== 'fresh' && (
+                  <p className="text-[9px] font-mono text-white/30">
+                    {ptBR(match.away_team)}: ELO sem atualização há <span className="text-amber-400/80">{staleness.away.daysSinceLastPlayed} dias</span>
+                    {staleness.away.decayApplied > 0 && ` (decay −${staleness.away.decayApplied} pts aplicado)`}
+                  </p>
+                )}
               </div>
             </div>
           )}

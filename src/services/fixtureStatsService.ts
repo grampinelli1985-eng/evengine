@@ -9,7 +9,6 @@ import { getTeamIdAsync } from './scoutingService';
 // Removido API_FOOTBALL_KEY do frontend por segurança (via Proxy)
 const API_BASE_URL = '/api/football';
 
-
 export const LEAGUE_ID_MAP: Record<string, number> = {
   'soccer_epl': 39,
   'soccer_spain_la_liga': 140,
@@ -27,14 +26,16 @@ export async function fetchTeamAvgStats(teamName: string, leagueId: number) {
   const teamId = await getTeamIdAsync(teamName);
   if (teamId === -1 || !hasQuota(1)) return null;
 
+  const now = new Date();
+  const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
 
   try {
-    trackRequest();
-    const res = await fetch(`${API_BASE_URL}/fixtures?team=${teamId}&league=${leagueId}&season=${new Date().getFullYear()}&last=5`, {
+    const res = await fetch(`${API_BASE_URL}/fixtures?team=${teamId}&league=${leagueId}&season=${season}&last=5`, {
       signal: AbortSignal.timeout(3000)
     });
 
     if (!res.ok) return null;
+    trackRequest();
     const data = await res.json();
     return data?.response ?? null;
   } catch (e) {
@@ -43,6 +44,7 @@ export async function fetchTeamAvgStats(teamName: string, leagueId: number) {
 }
 
 export async function fetchMatchStats(homeTeam: string, awayTeam: string, leagueId: number) {
+  if (!hasQuota(2)) return { home: null, away: null };
   const [homeData, awayData] = await Promise.all([
     fetchTeamAvgStats(homeTeam, leagueId),
     fetchTeamAvgStats(awayTeam, leagueId)

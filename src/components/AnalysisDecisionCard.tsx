@@ -20,9 +20,14 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
 
   const isAprovado = decisao.decisao.status === 'APROVADO';
   const score = decisao.score.valor;
-  
+
   // Extração de variáveis do motor para cálculo do Score Composto V2.0
   const evVal = decisao.mercado_selecionado?.ev ?? 0;
+
+  // ELO-08 (clubes): zona de alerta quando EV supera 10% — cap de clubes é 12%,
+  // atingiuTeto dispara em 10.2%. Acima de 10% o modelo começa a divergir do mercado.
+  const EV_AVISO_CLUBES = 10;
+  const isAvisoEV = isAprovado && evVal > EV_AVISO_CLUBES;
   const scoreEV = evVal >= 15 ? 100 : (evVal >= 3 ? 50 + ((evVal - 3) / 12) * 50 : (evVal >= 0 ? (evVal / 3) * 50 : 0));
   
   const probFinal = decisao.mercado_selecionado?.probabilidade_final ?? 50;
@@ -50,10 +55,10 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
     scoreLine = 0;
   }
 
-  // Cores HSL baseadas no status
-  const themeColor = isAprovado ? '#00e676' : '#f44336';
-  const themeGlow = isAprovado ? 'shadow-[#00e676]/20' : 'shadow-[#f44336]/20';
-  const themeBg = isAprovado ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-rose-500/10 border-rose-500/20';
+  // Cores HSL baseadas no status — âmbar quando EV está em zona de alerta
+  const themeColor = isAvisoEV ? '#f59e0b' : isAprovado ? '#00e676' : '#f44336';
+  const themeGlow = isAvisoEV ? 'shadow-amber-500/20' : isAprovado ? 'shadow-[#00e676]/20' : 'shadow-[#f44336]/20';
+  const themeBg = isAvisoEV ? 'bg-amber-500/10 border-amber-500/20' : isAprovado ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-rose-500/10 border-rose-500/20';
 
   return (
     <section className="bg-[#0c0c1e]/90 border border-white/[0.08] backdrop-blur-xl rounded-[2.5rem] p-6 sm:p-10 relative overflow-hidden shadow-2xl mb-10">
@@ -65,9 +70,11 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
       <div className="flex flex-col lg:flex-row items-stretch justify-between gap-8 mb-10 pb-8 border-b border-white/5 relative z-10">
         <div className="flex items-center gap-6">
           <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shadow-2xl transition-all duration-500 shrink-0 ${
-            isAprovado ? 'bg-[#00e676]' : 'bg-[#f44336]'
+            isAvisoEV ? 'bg-amber-500' : isAprovado ? 'bg-[#00e676]' : 'bg-[#f44336]'
           } ${themeGlow}`}>
-            {isAprovado ? (
+            {isAvisoEV ? (
+              <AlertTriangle size={40} className="text-[#0c0c1e]" />
+            ) : isAprovado ? (
               <ShieldCheck size={40} className="text-[#0c0c1e]" />
             ) : (
               <span className="text-4xl" style={{ fontFamily: 'Segoe UI Emoji' }}>⛔</span>
@@ -106,19 +113,25 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
           </div>
 
           {/* APOSTA QUALITY (Expected Value) */}
-          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 flex flex-col justify-between items-center text-center">
+          <div className={`rounded-2xl p-4 flex flex-col justify-between items-center text-center border ${
+            isAvisoEV ? 'bg-amber-500/[0.04] border-amber-500/20' : 'bg-white/[0.02] border-white/5'
+          }`}>
             <span className="text-[9px] text-white/40 uppercase font-black tracking-wider flex items-center gap-1.5 mb-2">
-              <TrendingUp size={10} className="text-blue-400" /> Vantagem (EV)
+              <TrendingUp size={10} className={isAvisoEV ? 'text-amber-400' : 'text-blue-400'} /> Vantagem (EV)
             </span>
             <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-mono font-black" style={{ color: evVal >= 3 ? '#00e676' : '#f44336' }}>
+              <span className="text-3xl font-mono font-black" style={{
+                color: isAvisoEV ? '#f59e0b' : evVal >= 3 ? '#00e676' : '#f44336'
+              }}>
                 {evVal > 0 ? '+' : ''}{evVal.toFixed(1)}%
               </span>
             </div>
             <span className={`text-[8px] font-mono mt-2 px-2 py-0.5 rounded uppercase tracking-wider ${
-              evVal >= 3 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
+              isAvisoEV
+                ? 'bg-amber-500/10 text-amber-400'
+                : evVal >= 3 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
             }`}>
-              {evVal >= 3 ? 'Valor OK' : 'Sem Valor'}
+              {isAvisoEV ? 'Valor Elevado' : evVal >= 3 ? 'Valor OK' : 'Sem Valor'}
             </span>
           </div>
         </div>
@@ -349,13 +362,37 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
 
       {/* DECISION ACTION / RESOLUTION BOX */}
       {isAprovado ? (
-        <div className="bg-emerald-500/[0.03] border border-emerald-500/20 rounded-2xl p-6 relative overflow-hidden">
+        <div className={`border rounded-2xl p-6 relative overflow-hidden ${
+          isAvisoEV
+            ? 'bg-amber-500/[0.03] border-amber-500/20'
+            : 'bg-emerald-500/[0.03] border-emerald-500/20'
+        }`}>
           {/* Corner Glow Accent */}
-          <div className="absolute right-0 bottom-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
+          <div className={`absolute right-0 bottom-0 w-24 h-24 rounded-full blur-2xl pointer-events-none ${
+            isAvisoEV ? 'bg-amber-500/5' : 'bg-emerald-500/5'
+          }`} />
+
+          {/* ELO-08: Aviso de EV elevado próximo ao cap de clubes */}
+          {isAvisoEV && (
+            <div className="mb-5 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-start gap-2.5">
+              <AlertTriangle size={13} className="text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest block mb-0.5">
+                  Aviso — EV Elevado ({evVal.toFixed(1)}%)
+                </span>
+                <p className="text-[10px] text-amber-300/70 font-mono leading-relaxed">
+                  EV acima de {EV_AVISO_CLUBES}% se aproxima do teto realista de clubes (12%).
+                  Verifique se as odds Pinnacle não moveram desde a análise antes de registrar.
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
             <div className="w-full lg:w-auto">
-              <span className="text-[10px] text-emerald-400/50 uppercase font-black tracking-[0.3em] block mb-2 text-center lg:text-left">
+              <span className={`text-[10px] uppercase font-black tracking-[0.3em] block mb-2 text-center lg:text-left ${
+                isAvisoEV ? 'text-amber-400/60' : 'text-emerald-400/50'
+              }`}>
                 ENTRADA RECOMENDADA
               </span>
               <div className="text-2xl font-black text-white mb-2 flex items-center gap-2">
@@ -382,7 +419,7 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
                   Probabilidade Alinhada: <span className="text-blue-400">{decisao.mercado_selecionado.probabilidade_final.toFixed(1)}%</span>
                 </div>
                 <div className="font-bold text-white/60">
-                  Odd Referência (Pinnacle): <span className="text-blue-400">{decisao.mercado_selecionado.odd_referencia.toFixed(2)}</span>
+                  Odd Referência (Pinnacle): <span className="text-blue-400">{decisao.mercado_selecionado.odd_referencia != null ? decisao.mercado_selecionado.odd_referencia.toFixed(2) : '—'}</span>
                 </div>
                 <div className="font-bold text-white/60">
                   Odd Mínima Sugerida: <span className="text-emerald-400">{decisao.mercado_selecionado.break_even_odd.toFixed(2)}</span>
@@ -481,11 +518,11 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
                 <div className="flex gap-4 shrink-0 font-mono text-[11px] bg-white/[0.02] border border-white/5 p-3 rounded-xl">
                   <div>
                     <span className="text-white/40 block text-[8px] uppercase font-bold tracking-wider">Odd Pin</span>
-                    <span className="text-white font-black text-sm">{decisao.sharp_context.mercado_alternativo.odd.toFixed(2)}</span>
+                    <span className="text-white font-black text-sm">{decisao.sharp_context.mercado_alternativo.odd != null ? decisao.sharp_context.mercado_alternativo.odd.toFixed(2) : '—'}</span>
                   </div>
                   <div className="border-l border-white/5 pl-4">
                     <span className="text-white/40 block text-[8px] uppercase font-bold tracking-wider">Edge EV</span>
-                    <span className="text-emerald-400 font-black text-sm">+{decisao.sharp_context.mercado_alternativo.ev.toFixed(1)}%</span>
+                    <span className="text-emerald-400 font-black text-sm">{decisao.sharp_context.mercado_alternativo.ev != null ? `+${decisao.sharp_context.mercado_alternativo.ev.toFixed(1)}%` : '—'}</span>
                   </div>
                 </div>
               </div>

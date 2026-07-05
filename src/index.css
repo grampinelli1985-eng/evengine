@@ -8,11 +8,11 @@
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
-  --font-sans: -apple-system, BlinkMacSystemFont, "San Francisco", "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "San Francisco", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
 html, body {
-  font-family: -apple-system, BlinkMacSystemFont, "San Francisco", "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "San Francisco", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
   @apply bg-background text-[#e1e1e3];
   overflow-x: hidden;
   width: 100%;

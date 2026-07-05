@@ -54,6 +54,9 @@ Object.defineProperty(global, 'fetch', {
   writable: true
 });
 
+// Setup environment variables before imports
+vi.stubEnv('VITE_ODDS_API_KEY', 'mocked_odds_api_key');
+
 // Import the calibrationService. Note: Import after defining mocks so it reads them.
 import {
   registrarPrevisao,
@@ -76,7 +79,7 @@ describe('Auditoria Sharp Money - Ponto 3: Filtro de Liga + Cache TTL', () => {
 
     // 2. Register a pending prediction of an unmonitored league (e.g., soccer_italy_serie_a)
     // The commence time is set to 3 hours ago to make sure it is considered pending
-    const commenceTime = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const commenceTime = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
     registrarPrevisao({
       matchId: 'match_unmonitored',
       homeTeam: 'Juventus',
@@ -129,7 +132,7 @@ describe('Auditoria Sharp Money - Ponto 3: Filtro de Liga + Cache TTL', () => {
     });
 
     // 3. Register prediction
-    const commenceTime = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const commenceTime = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
     registrarPrevisao({
       matchId: 'match_monitored',
       homeTeam: 'Juventus',
@@ -190,7 +193,7 @@ describe('Auditoria Sharp Money - Ponto 3: Filtro de Liga + Cache TTL', () => {
     );
 
     // 3. Register prediction
-    const commenceTime = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const commenceTime = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
     registrarPrevisao({
       matchId: 'match_cached',
       homeTeam: 'Arsenal',
@@ -243,7 +246,7 @@ describe('Auditoria Sharp Money - Ponto 3: Filtro de Liga + Cache TTL', () => {
     });
 
     // 3. Register prediction
-    const commenceTime = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const commenceTime = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
     registrarPrevisao({
       matchId: 'match_miss',
       homeTeam: 'Arsenal',

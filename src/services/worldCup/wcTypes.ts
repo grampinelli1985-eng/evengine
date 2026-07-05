@@ -80,6 +80,8 @@ export interface WCGateResult {
     ev: number;
     odd: number;
     probabilidade_ia: number;
+    odd_referencia?: number;
+    odd_api?: number;
   };
   stake: {
     kelly_base: number;
@@ -102,8 +104,8 @@ export interface WCAnalysisResult {
 
 export type WCTournament =
   | 'soccer_fifa_world_cup'
-  | 'soccer_fifa_world_cup_qualifier_europe'
-  | 'soccer_fifa_world_cup_qualifier_south_america'
+  | 'soccer_fifa_world_cup_qualifiers_europe'
+  | 'soccer_fifa_world_cup_qualifiers_south_america'
   | 'soccer_conmebol_copa_america'
   | 'soccer_uefa_european_championship';
 
@@ -111,6 +113,6 @@ export const WC_TOURNAMENTS: { key: WCTournament; name: string; flag: string }[]
   { key: 'soccer_fifa_world_cup', name: 'Copa do Mundo FIFA', flag: '🌍' },
   { key: 'soccer_conmebol_copa_america', name: 'Copa América', flag: '🌎' },
   { key: 'soccer_uefa_european_championship', name: 'Eurocopa', flag: '🇪🇺' },
-  { key: 'soccer_fifa_world_cup_qualifier_south_america', name: 'Eliminatórias CONMEBOL', flag: '🇧🇷' },
-  { key: 'soccer_fifa_world_cup_qualifier_europe', name: 'Eliminatórias UEFA', flag: '🏟️' },
+  { key: 'soccer_fifa_world_cup_qualifiers_south_america', name: 'Eliminatórias CONMEBOL', flag: '🇧🇷' },
+  { key: 'soccer_fifa_world_cup_qualifiers_europe', name: 'Eliminatórias UEFA', flag: '🏟️' },
 ];

@@ -88,6 +88,8 @@ import {
   JogoPonderado
 } from './valueBetService';
 
+const gateCache = new Map<string, string>();
+
 // Returns null when form data is unavailable so callers can trigger B-DADOS
 // instead of silently feeding the Poisson model with invented goal counts.
 // When form IS available, uses league-average goal distributions per result
@@ -105,7 +107,7 @@ function mapFormToGoals(form: string[] | undefined, _isHome: boolean): { lastGoa
       // Win: avg ~1.8 GF, ~0.7 GA (rounded to nearest integer for Poisson seed)
       lastGoalsFor.push(2);
       lastGoalsAgainst.push(1);
-    } else if (c === 'E' || c === 'D' && false) {
+    } else if (c === 'E') {
       // Draw: avg ~1.1 / 1.1
       lastGoalsFor.push(1);
       lastGoalsAgainst.push(1);
@@ -703,7 +705,7 @@ export async function runTipsterEngine(
   input: EngineInput,
   legacyMatchCardValues?: any // Mantido para compatibilidade temporária
 ): Promise<DecisaoEngine & any> {
-  const { analysis, matchCardValues: inputMatchCard, oddManualBet365, bancaTotal, userConfirmedAudit } = input;
+  const { analysis, matchCardValues: inputMatchCard, oddManualBet365, bancaTotal, userConfirmedAudit, currentLocalTime } = input;
   
   if (!podeEntrarNovaAposta()) {
     const estado = carregarStopLossState();
@@ -774,7 +776,10 @@ export async function runTipsterEngine(
       awayPower.defensePower,
       goalsOdds,
       analysis.scouting,
-      analysis.scouting
+      analysis.scouting,
+      undefined,
+      undefined,
+      analysis.matchData?.id ? Number(analysis.matchData.id) : undefined
     );
 
     // Candidates list
@@ -896,7 +901,7 @@ export async function runTipsterEngine(
 
       // Lista de referência — atualizar por temporada conforme transfers e impacto real.
       // Nomes genéricos (ex: 'martinez') foram removidos por alto risco de falso positivo.
-      const keyPlayers = ['mbappe', 'haaland', 'salah', 'kane', 'lewandowski', 'vinicius', 'messi', 'ronaldo', 'de bruyne', 'palmer', 'saka', 'bellingham', 'griezmann', 'leao'];
+      const keyPlayers = ['mbappe', 'haaland', 'salah', 'kane', 'lewandowski', 'vinicius', 'messi', 'ronaldo', 'de bruyne', 'palmer', 'saka', 'bellingham', 'griezmann', 'leao', 'wahi'];
       return injuriesList.some(name => {
         const nameLower = name.toString().toLowerCase();
         return keyPlayers.some(kp => nameLower.includes(kp));
@@ -1061,7 +1066,7 @@ export async function runTipsterEngine(
     const chosenCandidate = candidatesSortedByEV[0] || candidates[0];
 
     // ─── BLOCO 6 — ATUALIZAÇÃO E VALIDAÇÃO DE LINHA ───
-    const bloco6 = processBloco6(analysis, chosenCandidate, adjustedConfianca);
+    const bloco6 = processBloco6(analysis, chosenCandidate, adjustedConfianca, analysis?.currentLocalTime);
     if (bloco6.linha.odd_atual > 0) {
       chosenCandidate.odd_api = bloco6.linha.odd_atual;
       chosenCandidate.evFinal = bloco6.linha.ev_real;
@@ -1086,6 +1091,7 @@ export async function runTipsterEngine(
     // ─── BLOCO 5 — SANIDADE DE ODDS E MAPEAMENTO ───
     const oddBet365Actual = oddManualBet365 || analysis.odds?.atual;
     const sanidade = checkOddsSanity(analysis, chosenCandidate, oddBet365Actual);
+    const oddBet365Manual = sanidade.desvio_valido ? sanidade.odd_bet365_final : null;
 
     // ─── ETAPA 2.5 — VALIDAÇÃO DE DESVIO EXTREMO ───
     let desvioClassificacao = 'Normal';
@@ -1099,83 +1105,34 @@ export async function runTipsterEngine(
       });
     }
     let isBDesvioBlocked = false;
-    const oddBet365Manual = sanidade.desvio_valido ? sanidade.odd_bet365_final : null;
 
     if (sanidade.desvio_valido && oddBet365Manual && chosenCandidate.odd_api) {
       const dVal = ((oddBet365Manual - chosenCandidate.odd_api) / chosenCandidate.odd_api) * 100;
-      
-      if (dVal > 0) {
-        if (dVal <= 5) {
-          desvioClassificacao = 'Normal';
-        } else if (dVal <= 10) {
-          desvioClassificacao = 'Atenção';
-          desvioAviso = `⚠️ DESVIO POSITIVO MODERADO: +${dVal.toFixed(1)}%. Pinnacle: ${chosenCandidate.odd_api.toFixed(2)} | Bet365: ${oddBet365Manual.toFixed(2)}`;
-        } else if (dVal <= 20) {
-          desvioClassificacao = 'Suspeito';
-          desvioAviso = `⚠️ DESVIO SUSPEITO: +${dVal.toFixed(1)}%. Pinnacle: ${chosenCandidate.odd_api.toFixed(2)} | Bet365: ${oddBet365Manual.toFixed(2)}`;
-        } else if (dVal <= 30) {
-          desvioClassificacao = 'Odds infladas';
-          adjustedConfianca -= 15;
-          desvioFlags.push('ODDS_INFLADAS_PUBLICO');
-          desvioFlags.push('REVISAO_MANUAL_OBRIGATORIA');
-          desvioAviso = `⚠️ DESVIO EXTREMO: +${dVal.toFixed(1)}%\n Sharp money detectado no lado oposto.\n Pinnacle ref: ${chosenCandidate.odd_api.toFixed(2)} | Bet365: ${oddBet365Manual.toFixed(2)}\n EV pode estar inflado por distorção de mercado público.\n Valide manualmente antes de apostar.`;
-        } else if (dVal <= 50) {
-          desvioClassificacao = 'Armadilha pública';
-          adjustedConfianca -= 25;
-          desvioFlags.push('ARMADILHA_PUBLICA');
-          desvioAviso = `🚨 PADRÃO DE ARMADILHA PÚBLICA\n Contexto com desvio extremo (+${dVal.toFixed(1)}%) é padrão clássico de linha manipulada para mercado casual.\n Risco elevado de EV ilusório.\n Pinnacle ref: ${chosenCandidate.odd_api.toFixed(2)} | Bet365: ${oddBet365Manual.toFixed(2)}`;
-        } else {
-          desvioClassificacao = 'Distorção severa';
-          isBDesvioBlocked = true;
-          desvioAviso = `🚨 DISTORÇÃO SEVERA POR DESVIO: +${dVal.toFixed(1)}% na Bet365. Pinnacle ref: ${chosenCandidate.odd_api.toFixed(2)} | Bet365: ${oddBet365Manual.toFixed(2)}`;
-        }
-
-        // Regra D2 - Contexto Amplificador
-        if (dVal >= 20 && desvioClassificacao !== 'Distorção severa') {
-          const isCompFinal = isCupFinal;
-          const isPlayoffElim = isPlayoff;
-          const isPopularFavorite = summaryLower.includes('favorito') || summaryLower.includes('torcida') || summaryLower.includes('popular');
-          const isDerbyClasico = summaryLower.includes('clássico') || summaryLower.includes('classico') || summaryLower.includes('derby') || summaryLower.includes('derbi');
-
-          if (isCompFinal || isPlayoffElim || isPopularFavorite || isDerbyClasico) {
-            const currentPen = desvioClassificacao === 'Odds infladas' ? 15 : 25;
-            const extraPen = 25 - currentPen;
-            adjustedConfianca -= extraPen;
-            desvioClassificacao = 'Armadilha pública';
-            if (!desvioFlags.includes('ARMADILHA_PUBLICA')) {
-              desvioFlags.push('ARMADILHA_PUBLICA');
-            }
-            const compType = isCompFinal ? 'Final de competição' : isPlayoffElim ? 'Playoff eliminatório' : isPopularFavorite ? 'Favorito popular' : 'Clássico/Derby';
-            desvioAviso = `🚨 PADRÃO DE ARMADILHA PÚBLICA\n Contexto de ${compType} com desvio extremo (+${dVal.toFixed(1)}%) é padrão clássico de linha manipulada para mercado casual.\n Risco elevado de EV ilusório.\n Pinnacle ref: ${chosenCandidate.odd_api.toFixed(2)} | Bet365: ${oddBet365Manual.toFixed(2)}`;
-          }
-        }
-      } else if (dVal < 0) {
-        const absD = Math.abs(dVal);
-        if (absD <= 5) {
-          desvioClassificacao = 'Normal';
-        } else if (absD <= 15) {
-          desvioClassificacao = 'Sharp entrando';
-          desvioFlags.push('SHARP_ENTRANDO');
-        } else if (absD <= 30) {
-          desvioClassificacao = 'Sharp money confirmado';
-          adjustedConfianca += 10;
-          desvioFlags.push('SHARP_CONFIRMADO');
-          desvioAviso = `✅ SHARP MONEY CONFIRMADO\n Bet365 limitando exposição (-${absD.toFixed(1)}%).\n Pinnacle: ${chosenCandidate.odd_api.toFixed(2)} | Bet365: ${oddBet365Manual.toFixed(2)}\n Mercado profissional já nessa posição.\n Sinal de valor real confirmado.`;
-        } else {
-          desvioClassificacao = 'Sharp money pesado';
-          adjustedConfianca += 15;
-          desvioFlags.push('SHARP_PREMIUM');
-          desvioAviso = `✅ SHARP MONEY CONFIRMADO\n Bet365 limitando exposição (-${absD.toFixed(1)}%).\n Pinnacle: ${chosenCandidate.odd_api.toFixed(2)} | Bet365: ${oddBet365Manual.toFixed(2)}\n Mercado profissional já nessa posição.\n Sinal de valor real confirmado.`;
-        }
-      }
-
-      // Regra D4 - Bloqueio em jogo decisivo
+      const isPopularFavorite = summaryLower.includes('favorito') || summaryLower.includes('torcida') || summaryLower.includes('popular');
+      const isDerbyClasico = summaryLower.includes('clássico') || summaryLower.includes('classico') || summaryLower.includes('derby') || summaryLower.includes('derbi');
       const isSingleLegPlayoff = isPlayoff && (summaryLower.includes('jogo único') || summaryLower.includes('jogo unico') || summaryLower.includes('single match') || summaryLower.includes('single leg') || summaryLower.includes('decisão') || summaryLower.includes('decisao') || summaryLower.includes('final'));
       const isDecisiveMatch = isCupFinal || isSingleLegPlayoff || summaryLower.includes('playoff_jogo_unico') || summaryLower.includes('playoff_jogo_1');
-      if (dVal >= 30 && isDecisiveMatch) {
-        isBDesvioBlocked = true;
-        desvioAviso = `Desvio de +${dVal.toFixed(1)}% em jogo decisivo indica distorção severa de mercado público. Nenhum mercado confiável para EV real. Não sugerir alternativa. O problema é o jogo, não o mercado.`;
-      }
+
+      const desvioResult = calcDesvioClassificacao(
+        dVal,
+        isDecisiveMatch,
+        isPlayoff,
+        isCupFinal,
+        isPopularFavorite,
+        isDerbyClasico,
+        chosenCandidate.odd_api,
+        oddBet365Manual
+      );
+
+      desvioClassificacao = desvioResult.classificacao;
+      desvioAviso = desvioResult.aviso;
+      isBDesvioBlocked = desvioResult.blocked;
+      adjustedConfianca += desvioResult.confAdjustment;
+      desvioResult.flags.forEach(f => {
+        if (!desvioFlags.includes(f)) {
+          desvioFlags.push(f);
+        }
+      });
     }
 
     adjustedConfianca = Math.max(0, Math.min(100, adjustedConfianca));
@@ -1529,11 +1486,18 @@ export async function runTipsterEngine(
       });
     }
 
-    const rawText = await callGeminiAPI(
-      SYSTEM_PROMPT,
-      JSON.stringify(payload),
-      "json"
-    );
+    const cacheKey = `${analysis.matchId}_${Math.round(chosenCandidate.evFinal)}_${Math.round(adjustedConfianca)}`;
+    let rawText = '';
+    if (gateCache.has(cacheKey)) {
+      rawText = gateCache.get(cacheKey)!;
+    } else {
+      rawText = await callGeminiAPI(
+        SYSTEM_PROMPT,
+        JSON.stringify(payload),
+        "json"
+      );
+      gateCache.set(cacheKey, rawText);
+    }
 
     let engineData;
     try {
@@ -1561,13 +1525,11 @@ export async function runTipsterEngine(
       // Injetar stake para que formatToDecisaoEngine não receba undefined e retorne 0
       if (engineData.status === 'APROVADO' && !engineData.stake) {
         const kellyBase = chosenCandidate.kellyFinal ?? 0;
-        const stakeMultiplier = 0.25;
-        const stakeFinal = parseFloat((kellyBase * stakeMultiplier).toFixed(2));
         engineData.stake = {
           kelly_base: kellyBase,
-          modificador: stakeMultiplier,
-          stake_final: stakeFinal,
-          valor_reais: parseFloat(((bancaTotal * stakeFinal) / 100).toFixed(2))
+          modificador: 1.0,
+          stake_final: kellyBase,
+          valor_reais: parseFloat(((bancaTotal * kellyBase) / 100).toFixed(2))
         };
       }
 
@@ -1885,76 +1847,29 @@ export function recalculateTipsterMetrics(
 
   if (sanidade.desvio_valido && oddManualBet365 && pinnacleOdd) {
     const dVal = ((oddManualBet365 - pinnacleOdd) / pinnacleOdd) * 100;
-    
-    if (dVal > 0) {
-      if (dVal <= 5) {
-        desvioClassificacao = 'Normal';
-      } else if (dVal <= 10) {
-        desvioClassificacao = 'Atenção';
-        desvioAviso = `⚠️ DESVIO POSITIVO MODERADO: +${dVal.toFixed(1)}%. Pinnacle: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
-      } else if (dVal <= 20) {
-        desvioClassificacao = 'Suspeito';
-        desvioAviso = `⚠️ DESVIO SUSPEITO: +${dVal.toFixed(1)}%. Pinnacle: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
-      } else if (dVal <= 30) {
-        desvioClassificacao = 'Odds infladas';
-        currentAdjConf -= 15;
-        desvioFlags.push('ODDS_INFLADAS_PUBLICO');
-        desvioFlags.push('REVISAO_MANUAL_OBRIGATORIA');
-        desvioAviso = `⚠️ DESVIO EXTREMO: +${dVal.toFixed(1)}%\n Sharp money detectado no lado oposto.\n Pinnacle ref: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}\n EV pode estar inflado por distorção de mercado público.\n Valide manualmente antes de apostar.`;
-      } else if (dVal <= 50) {
-        desvioClassificacao = 'Armadilha pública';
-        currentAdjConf -= 25;
-        desvioFlags.push('ARMADILHA_PUBLICA');
-        desvioAviso = `🚨 PADRÃO DE ARMADILHA PÚBLICA\n Contexto com desvio extremo (+${dVal.toFixed(1)}%) é padrão clássico de linha manipulada para mercado casual.\n Risco elevado de EV ilusório.\n Pinnacle ref: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
-      } else {
-        desvioClassificacao = 'Distorção severa';
-        isBDesvioBlocked = true;
-        desvioAviso = `🚨 DISTORÇÃO SEVERA POR DESVIO: +${dVal.toFixed(1)}% na Bet365. Pinnacle ref: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
-      }
+    const isPopularFavorite = summaryLower.includes('favorito') || summaryLower.includes('torcida') || summaryLower.includes('popular');
+    const isDerbyClasico = summaryLower.includes('clássico') || summaryLower.includes('classico') || summaryLower.includes('derby') || summaryLower.includes('derbi');
 
-      // Regra D2 - Contexto Amplificador
-      if (dVal >= 20 && desvioClassificacao !== 'Distorção severa') {
-        const isCompFinal = isCupFinal;
-        const isPlayoffElim = isPlayoff;
-        const isPopularFavorite = summaryLower.includes('favorito') || summaryLower.includes('torcida') || summaryLower.includes('popular');
-        const isDerbyClasico = summaryLower.includes('clássico') || summaryLower.includes('classico') || summaryLower.includes('derby') || summaryLower.includes('derbi');
+    const desvioResult = calcDesvioClassificacao(
+      dVal,
+      isDecisiveMatch,
+      isPlayoff,
+      isCupFinal,
+      isPopularFavorite,
+      isDerbyClasico,
+      pinnacleOdd,
+      oddManualBet365
+    );
 
-        if (isCompFinal || isPlayoffElim || isPopularFavorite || isDerbyClasico) {
-          const currentPen = desvioClassificacao === 'Odds infladas' ? 15 : 25;
-          const extraPen = 25 - currentPen;
-          currentAdjConf -= extraPen;
-          desvioClassificacao = 'Armadilha pública';
-          if (!desvioFlags.includes('ARMADILHA_PUBLICA')) {
-            desvioFlags.push('ARMADILHA_PUBLICA');
-          }
-          const compType = isCompFinal ? 'Final de competição' : isPlayoffElim ? 'Playoff eliminatório' : isPopularFavorite ? 'Favorito popular' : 'Clássico/Derby';
-          desvioAviso = `🚨 PADRÃO DE ARMADILHA PÚBLICA\n Contexto de ${compType} com desvio extremo (+${dVal.toFixed(1)}%) é padrão clássico de linha manipulada para mercado casual.\n Risco elevado de EV ilusório.\n Pinnacle ref: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
-        }
+    desvioClassificacao = desvioResult.classificacao;
+    desvioAviso = desvioResult.aviso;
+    isBDesvioBlocked = desvioResult.blocked;
+    currentAdjConf += desvioResult.confAdjustment;
+    desvioResult.flags.forEach(f => {
+      if (!desvioFlags.includes(f)) {
+        desvioFlags.push(f);
       }
-    } else if (dVal < 0) {
-      const absD = Math.abs(dVal);
-      if (absD <= 5) {
-        desvioClassificacao = 'Normal';
-      } else if (absD <= 15) {
-        desvioClassificacao = 'Sharp entrando';
-        desvioFlags.push('SHARP_ENTRANDO');
-      } else if (absD <= 30) {
-        desvioClassificacao = 'Sharp money confirmado';
-        currentAdjConf += 10;
-        desvioFlags.push('SHARP_CONFIRMADO');
-        desvioAviso = `✅ SHARP MONEY CONFIRMADO\n Bet365 limitando exposição (-${absD.toFixed(1)}%).\n Pinnacle: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}\n Mercado profissional já nessa posição.\n Sinal de valor real confirmado.`;
-      } else {
-        desvioClassificacao = 'Sharp money pesado';
-        currentAdjConf += 15;
-        desvioFlags.push('SHARP_PREMIUM');
-        desvioAviso = `✅ SHARP MONEY PESADO CONFIRMADO\n Bet365 se protegendo com linha pesada de apostadores sharp (-${absD.toFixed(1)}%).\n Pinnacle: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}\n Mercado profissional já nessa posição.\n Sinal de valor real confirmado.`;
-      }
-    }
-
-    if (dVal >= 30 && isDecisiveMatch) {
-      isBDesvioBlocked = true;
-      desvioAviso = `Desvio de +${dVal.toFixed(1)}% em jogo decisivo indica distorção severa de mercado público. Nenhum mercado confiável para EV real. Não sugerir alternativa. O problema é o jogo, não o mercado.`;
-    }
+    });
   }
 
   if (!sanidade.desvio_valido) {
@@ -2151,4 +2066,95 @@ export function recalculateTipsterMetrics(
   }
 
   return formatToDecisaoEngine(result, analysis || {}, oddManualBet365, bancaTotal, userConfirmedAudit);
+}
+
+function calcDesvioClassificacao(
+  dVal: number,
+  isDecisiveMatch: boolean,
+  isPlayoff: boolean,
+  isCupFinal: boolean,
+  isPopularFavorite: boolean,
+  isDerbyClasico: boolean,
+  pinnacleOdd: number,
+  oddManualBet365: number
+): { classificacao: string; aviso: string; flags: string[]; blocked: boolean; confAdjustment: number } {
+  let classificacao = 'Normal';
+  let aviso = '';
+  let flags: string[] = [];
+  let blocked = false;
+  let confAdjustment = 0;
+
+  if (dVal > 0) {
+    if (dVal <= 5) {
+      classificacao = 'Normal';
+    } else if (dVal <= 10) {
+      classificacao = 'Atenção';
+      aviso = `⚠️ DESVIO POSITIVO MODERADO: +${dVal.toFixed(1)}%. Pinnacle: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
+    } else if (dVal <= 20) {
+      classificacao = 'Suspeito';
+      aviso = `⚠️ DESVIO SUSPEITO: +${dVal.toFixed(1)}%. Pinnacle: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
+    } else if (dVal <= 30) {
+      classificacao = 'Odds infladas';
+      confAdjustment = -15;
+      flags.push('ODDS_INFLADAS_PUBLICO');
+      flags.push('REVISAO_MANUAL_OBRIGATORIA');
+      aviso = `⚠️ DESVIO EXTREMO: +${dVal.toFixed(1)}%\n Sharp money detectado no lado oposto.\n Pinnacle ref: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}\n EV pode estar inflado por distorção de mercado público.\n Valide manualmente antes de apostar.`;
+    } else if (dVal <= 50) {
+      classificacao = 'Armadilha pública';
+      confAdjustment = -25;
+      flags.push('ARMADILHA_PUBLICA');
+      aviso = `🚨 PADRÃO DE ARMADILHA PÚBLICA\n Contexto com desvio extremo (+${dVal.toFixed(1)}%) é padrão clássico de linha manipulada para mercado casual.\n Risco elevado de EV ilusório.\n Pinnacle ref: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
+    } else {
+      classificacao = 'Distorção severa';
+      blocked = true;
+      aviso = `🚨 DISTORÇÃO SEVERA POR DESVIO: +${dVal.toFixed(1)}% na Bet365. Pinnacle ref: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
+    }
+
+    // Regra D2 - Contexto Amplificador
+    if (dVal >= 20 && classificacao !== 'Distorção severa') {
+      if (isCupFinal || isPlayoff || isPopularFavorite || isDerbyClasico) {
+        const currentPen = classificacao === 'Odds infladas' ? 15 : 25;
+        const extraPen = 25 - currentPen;
+        confAdjustment -= extraPen;
+        classificacao = 'Armadilha pública';
+        if (!flags.includes('ARMADILHA_PUBLICA')) {
+          flags.push('ARMADILHA_PUBLICA');
+        }
+        const compType = isCupFinal ? 'Final de competição' : isPlayoff ? 'Playoff eliminatório' : isPopularFavorite ? 'Favorito popular' : 'Clássico/Derby';
+        aviso = `🚨 PADRÃO DE ARMADILHA PÚBLICA\n Contexto de ${compType} com desvio extremo (+${dVal.toFixed(1)}%) é padrão clássico de linha manipulada para mercado casual.\n Risco elevado de EV ilusório.\n Pinnacle ref: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}`;
+      }
+    }
+
+    // Regra D4 - Bloqueio em jogo decisivo
+    if (dVal >= 30 && isDecisiveMatch) {
+      blocked = true;
+      aviso = `Desvio de +${dVal.toFixed(1)}% em jogo decisivo indica distorção severa de mercado público. Nenhum mercado confiável para EV real. Não sugerir alternativa. O problema é o jogo, não o mercado.`;
+    }
+  } else if (dVal < 0) {
+    const absD = Math.abs(dVal);
+    if (absD <= 5) {
+      classificacao = 'Normal';
+    } else if (absD <= 15) {
+      classificacao = 'Sharp entrando';
+      flags.push('SHARP_ENTRANDO');
+    } else if (absD <= 30) {
+      classificacao = 'Sharp money confirmado';
+      confAdjustment = 10;
+      flags.push('SHARP_CONFIRMADO');
+      aviso = `✅ SHARP MONEY CONFIRMADO\n Bet365 limitando exposição (-${absD.toFixed(1)}%).\n Pinnacle: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}\n Mercado profissional já nessa posição.\n Sinal de valor real confirmado.`;
+    } else {
+      classificacao = 'Sharp money pesado';
+      confAdjustment = 15;
+      flags.push('SHARP_PREMIUM');
+      aviso = `✅ SHARP MONEY PESADO CONFIRMADO\n Bet365 se protegendo com linha pesada de apostadores sharp (-${absD.toFixed(1)}%).\n Pinnacle: ${pinnacleOdd.toFixed(2)} | Bet365: ${oddManualBet365.toFixed(2)}\n Mercado profissional já nessa posição.\n Sinal de valor real confirmado.`;
+    }
+  }
+
+  return {
+    classificacao,
+    aviso,
+    flags,
+    blocked,
+    confAdjustment
+  };
 }

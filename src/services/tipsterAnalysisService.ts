@@ -242,7 +242,8 @@ export class TipsterAnalysisService {
     const q = 1 - prob;
     const fullKelly = b > 0 ? (prob * b - q) / b : 0;
     const fractionKelly = fullKelly * this.kellyFraction;
-    return Math.max(0, Math.min(bankroll * 0.05, fractionKelly * bankroll));
+    const stake = fractionKelly * bankroll;
+    return Math.max(0, Math.min(stake, bankroll * 0.03));
   }
 
   /** Calcula volatilidade do histórico de odds. */

@@ -28,7 +28,9 @@ export function registerOpeningOdds(matches: Match[]) {
   matches.forEach(match => {
     if (movements[match.id]) return;
 
-    const bookmaker = match.bookmakers?.[0];
+    const bookmaker = match.bookmakers?.find(b => b.key === 'pinnacle') ||
+                      match.bookmakers?.find(b => b.key === 'betfair_ex_eu') ||
+                      match.bookmakers?.[0];
     const h2h = bookmaker?.markets?.find(m => m.key === 'h2h');
     const outcomes = h2h?.outcomes || [];
     
@@ -59,7 +61,9 @@ export function detectLineMovement(match: Match): LineMovement | null {
   const move = movements[match.id];
   if (!move) return null;
 
-  const bookmaker = match.bookmakers?.[0];
+  const bookmaker = match.bookmakers?.find(b => b.key === 'pinnacle') ||
+                    match.bookmakers?.find(b => b.key === 'betfair_ex_eu') ||
+                    match.bookmakers?.[0];
   const h2h = bookmaker?.markets?.find(m => m.key === 'h2h');
   const outcomes = h2h?.outcomes || [];
   

@@ -6,10 +6,17 @@ import { fetchWCMatches } from '../../services/worldCup/wcOddsService';
 import { runWCTipsterEngine } from '../../services/worldCup/wcTipsterEngine';
 import { getAllWCRatings } from '../../services/worldCup/wcEloService';
 import WorldCupMatchCard from './WorldCupMatchCard';
+import { buildLiveKey } from '../../services/liveTrackerService';
+import { autoUpdateEloFromResults } from '../../services/eloUpdateService';
 
 interface WorldCupViewProps {
   onBack: () => void;
   bancaAtual?: number;
+  liveResults?: Record<string, string>;
+  liveScores?: Record<string, { matchId: string; placar: string; minuto: number; statusShort: string; finished: false }>;
+  showApprovedOnly?: boolean;
+  analyzedMatches?: Record<string, any>;
+  onAnalyze?: (match: any) => Promise<any> | void;
 }
 
 type DateFilter = 1 | 2 | 3 | 7; // dias à frente
@@ -28,7 +35,12 @@ function matchWithinDays(match: WCMatch, days: DateFilter): boolean {
   return t >= now - 2 * 60 * 60 * 1000 && t <= cutoff; // -2h para partidas já iniciadas
 }
 
-export default function WorldCupView({ onBack, bancaAtual = 1000 }: WorldCupViewProps) {
+export default function WorldCupView({
+  onBack,
+  bancaAtual = 1000,
+  liveResults,
+  liveScores
+}: WorldCupViewProps) {
   const [matches, setMatches] = useState<WCMatch[]>([]);
   const [analyses, setAnalyses] = useState<Record<string, WCAnalysisResult>>({});
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
@@ -36,8 +48,27 @@ export default function WorldCupView({ onBack, bancaAtual = 1000 }: WorldCupView
   const [activeTab, setActiveTab] = useState<'partidas' | 'rankings'>('partidas');
   const [activeTournament, setActiveTournament] = useState<WCTournament | 'all'>('all');
   const [dateFilter, setDateFilter] = useState<DateFilter>(7);
+  const [showApprovedOnly, setShowApprovedOnly] = useState(false);
 
   const wcRankings = useMemo(() => getAllWCRatings(), []);
+
+  // ELO-08: auto-update ELO ratings from Copa 2026 finished results (once per day)
+  useEffect(() => {
+    autoUpdateEloFromResults().then(report => {
+      if (report.skippedToday) return;
+      if (report.updatedCount > 0) {
+        console.info(`[ELO] ${report.updatedCount} partida(s) processada(s) — ELO atualizado`);
+      }
+      if (report.unresolvedTeams.length > 0) {
+        console.warn('[ELO] Times sem alias mapeado:', report.unresolvedTeams);
+      }
+      if (report.errors.length > 0) {
+        console.warn('[ELO] Erros no auto-update:', report.errors);
+      }
+    }).catch(err => {
+      console.warn('[ELO] Auto-update falhou (não crítico):', err);
+    });
+  }, []);
 
   useEffect(() => {
     loadMatches();
@@ -54,8 +85,16 @@ export default function WorldCupView({ onBack, bancaAtual = 1000 }: WorldCupView
   async function handleAnalyze(match: WCMatch) {
     setAnalyzingId(match.id);
     await new Promise(r => setTimeout(r, 300));
-    const result = runWCTipsterEngine(match, bancaAtual);
+    const result = runWCTipsterEngine(match);
     setAnalyses(prev => ({ ...prev, [match.id]: result }));
+    window.dispatchEvent(new CustomEvent('evengine_track_match', {
+      detail: {
+        matchId: match.id,
+        homeTeam: match.home_team,
+        awayTeam: match.away_team,
+        commenceTime: match.commence_time
+      }
+    }));
     setAnalyzingId(null);
   }
 
@@ -88,10 +127,15 @@ export default function WorldCupView({ onBack, bancaAtual = 1000 }: WorldCupView
       analyzed: analyzed.length,
       approved: approved.length,
       avgEV: approved.length > 0
-        ? (approved.reduce((s, a) => s + a.gate.mercado.ev, 0) / approved.length).toFixed(1)
+        ? (approved.reduce((s, a) => s + (a.gate.mercado?.ev ?? 0), 0) / approved.length).toFixed(1)
         : '0.0',
     };
   }, [analyses, filteredMatches]);
+
+  const displayedMatches = useMemo(() => {
+    if (!showApprovedOnly) return filteredMatches;
+    return filteredMatches.filter(m => analyses[m.id]?.gate?.status === 'APROVADO');
+  }, [filteredMatches, analyses, showApprovedOnly]);
 
   return (
     <div translate="no" className="min-h-screen bg-[#080809] text-white font-sans">
@@ -143,10 +187,18 @@ export default function WorldCupView({ onBack, bancaAtual = 1000 }: WorldCupView
           {[
             { label: 'Partidas', value: stats.total, color: 'text-white' },
             { label: 'Analisadas', value: stats.analyzed, color: 'text-blue-400' },
-            { label: 'Aprovadas Gate', value: stats.approved, color: 'text-emerald-400' },
+            { label: 'Aprovadas Gate', value: stats.approved, color: 'text-emerald-400', filterable: true },
             { label: 'EV Médio', value: `${stats.avgEV}%`, color: 'text-yellow-400' },
           ].map(s => (
-            <div key={s.label} className="bg-[#0d0d10] border border-white/[0.06] rounded-2xl p-4 text-center">
+            <div
+              key={s.label}
+              onClick={s.filterable ? () => setShowApprovedOnly(prev => !prev) : undefined}
+              className={`bg-[#0d0d10] border rounded-2xl p-4 text-center transition-all ${
+                s.filterable 
+                  ? 'cursor-pointer hover:bg-white/[0.04] active:scale-95 ' + (showApprovedOnly ? 'border-emerald-500/30 bg-emerald-500/[0.02]' : 'border-white/[0.06]') 
+                  : 'border-white/[0.06]'
+              }`}
+            >
               <div className="text-[8px] text-white/20 font-black uppercase tracking-widest mb-1">{s.label}</div>
               <div className={`text-2xl font-mono font-black ${s.color}`}>{s.value}</div>
             </div>
@@ -224,6 +276,19 @@ export default function WorldCupView({ onBack, bancaAtual = 1000 }: WorldCupView
                     </button>
                   ))}
                 </div>
+
+                {/* Gate Filter */}
+                <button
+                  onClick={() => setShowApprovedOnly(prev => !prev)}
+                  className={`px-3.5 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all flex items-center gap-1.5 ${
+                    showApprovedOnly
+                      ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400 font-bold'
+                      : 'border-white/[0.06] text-white/20 hover:text-white/50 bg-[#0d0d10]/40'
+                  }`}
+                >
+                  <span className={`w-1 h-1 rounded-full ${showApprovedOnly ? 'bg-emerald-400 animate-pulse' : 'bg-white/25'}`} />
+                  Aprovadas Gate
+                </button>
               </div>
 
               {loading ? (
@@ -233,33 +298,47 @@ export default function WorldCupView({ onBack, bancaAtual = 1000 }: WorldCupView
                     Buscando partidas internacionais...
                   </p>
                 </div>
-              ) : filteredMatches.length === 0 ? (
+              ) : displayedMatches.length === 0 ? (
                 <div className="text-center py-24 space-y-3">
                   <Trophy size={40} className="text-white/10 mx-auto" />
                   <p className="text-white/20 text-sm font-black uppercase tracking-wider">
-                    Sem partidas nos próximos {dateFilter === 1 ? 'hoje' : `${dateFilter} dias`}
+                    {showApprovedOnly ? 'Sem partidas aprovadas pelo Gate' : `Sem partidas nos próximos ${dateFilter === 1 ? 'hoje' : `${dateFilter} dias`}`}
                   </p>
                   <p className="text-white/10 text-[10px] font-mono max-w-xs mx-auto leading-relaxed">
-                    Tente ampliar o filtro de data ou aguarde a divulgação dos jogos pela The Odds API
+                    {showApprovedOnly 
+                      ? 'Tente analisar mais partidas ou amplie os outros filtros de data e torneio.'
+                      : 'Tente ampliar o filtro de data ou aguarde a divulgação dos jogos pela The Odds API'}
                   </p>
-                  <button
-                    onClick={() => setDateFilter(7)}
-                    className="mt-2 px-4 py-2 bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all hover:bg-yellow-500/20"
-                  >
-                    Ver 7 dias
-                  </button>
+                  {!showApprovedOnly && (
+                    <button
+                      onClick={() => setDateFilter(7)}
+                      className="mt-2 px-4 py-2 bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all hover:bg-yellow-500/20"
+                    >
+                      Ver 7 dias
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {filteredMatches.map(match => (
-                    <WorldCupMatchCard
-                      key={match.id}
-                      match={match}
-                      analysis={analyses[match.id]}
-                      isAnalyzing={analyzingId === match.id}
-                      onAnalyze={handleAnalyze}
-                    />
-                  ))}
+                  {displayedMatches.map(match => {
+                    const lk = buildLiveKey(match.home_team, match.away_team);
+                    const placarFinal = liveResults?.[lk];
+                    const placarParcial = liveScores?.[lk];
+                    const placarExibido = placarFinal
+                      ?? (placarParcial ? `${placarParcial.placar} · ${placarParcial.minuto}'` : null);
+
+                    return (
+                      <WorldCupMatchCard
+                        key={match.id}
+                        match={match}
+                        analysis={analyses[match.id]}
+                        isAnalyzing={analyzingId === match.id}
+                        onAnalyze={handleAnalyze}
+                        placar={placarExibido}
+                        placarAoVivo={!placarFinal && placarParcial != null}
+                      />
+                    );
+                  })}
                 </div>
               )}
             </motion.div>

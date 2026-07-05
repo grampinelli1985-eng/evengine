@@ -15,27 +15,6 @@ interface TicketModalProps {
   bancaAtual?: number;
 }
 
-/**
- * Ajusta a linha de mercado para baixo para aumentar a probabilidade (Segurança)
- */
-function adjustLineForSafety(originalFaixa: string, currentProb: number): { faixa: string, prob: number } {
-  if (currentProb >= 85) return { faixa: originalFaixa, prob: currentProb };
-  
-  const gap = 85 - currentProb;
-  const reductionFactor = (gap / 100) * 1.5; 
-  
-  const numbers = originalFaixa.match(/\d+(\.\d+)?/g)?.map(Number) || [];
-  if (numbers.length >= 2) {
-    const newStart = Math.max(1, Math.floor(numbers[0] * (1 - reductionFactor)));
-    const newEnd = Math.max(2, Math.floor(numbers[1] * (1 - reductionFactor)));
-    return { faixa: `${newStart}-${newEnd}`, prob: 85 };
-  } else if (numbers.length === 1) {
-     const newVal = Math.max(1, Math.floor(numbers[0] * (1 - reductionFactor)));
-     return { faixa: `Mais de ${newVal}`, prob: 85 };
-  }
-  
-  return { faixa: originalFaixa, prob: 85 };
-}
 
 const ticketService = new TicketGenerationService();
 
@@ -105,9 +84,12 @@ export default function TicketModal({ isOpen, onClose, matches, analyses, bancaA
       return `${item.match.home_team} vs ${item.match.away_team}\n${emoji} Palpite: ${item.type} (${Math.round(item.probability)}%)\n`;
     }).join('\n') + '\nGerado por EVEngine AI';
     
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Clipboard API indisponível (iframe, HTTP, iOS) — falha silenciosa
+    });
   };
 
   const analyzedCount = Object.keys(analyses).filter(id => matches.some(m => m.id === id)).length;
@@ -305,7 +287,7 @@ export default function TicketModal({ isOpen, onClose, matches, analyses, bancaA
                                 <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Estratégia Neural</h4>
                                 <p className="text-[11px] text-white/40 leading-relaxed font-medium">
                                   {ticket?.conselho ? <span>Perfil: <span>{ticket.conselho}</span>. </span> : ''}
-                                  <span>O bilhete consolidou <span>{ticketItems.length}</span> eventos. Odd Total: <span>{ticket?.odds_total.toFixed(2) || '---'}</span>.</span>
+                                  <span>O bilhete consolidou <span>{ticketItems.length}</span> eventos. Odd Total: <span>{ticket?.odds_total?.toFixed(2) ?? '---'}</span>.</span>
                                 </p>
 
                               </div>
@@ -322,8 +304,8 @@ export default function TicketModal({ isOpen, onClose, matches, analyses, bancaA
                                       
                                       // Usar sempre stake calculada para o bilhete múltiplo
                                       const stakeValue = ticket.stake_recomendado;
-                                        
-                                      return stakeValue.toFixed(2);
+
+                                      return stakeValue != null ? stakeValue.toFixed(2) : '0.00';
                                     })()}
                                   </span>
                                 </div>

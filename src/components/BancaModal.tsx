@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Check, RefreshCw } from 'lucide-react';
+import { X, Check, RefreshCw, Plus, Key, Lock } from 'lucide-react';
 import { getBanca, resetarContadores, carregarStopLossState } from '../services/bancaService';
 import { getCalibracaoStats, resolverPrevisoesPendentes } from '../services/calibrationService';
+import { useUserPlan } from '../hooks/useUserPlan';
+import { addBancaToSupabase, getBancasFromSupabase, switchActiveBanca, updateBancaBalance } from '../services/bancaService';
+import { updateApiKeyOwn } from '../services/planService';
+import { showToast } from './Toast';
 
 interface BancaModalProps {
   isOpen: boolean;
@@ -14,9 +18,23 @@ interface BancaModalProps {
 export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5 }: BancaModalProps) {
   const [bancaValue, setBancaValue] = useState<number>(0);
   const [showSaved, setShowSaved] = useState(false);
+  const { profile, plan, apiKeyOwn, canUseOwnApiKey } = useUserPlan();
   const [bancaState, setBancaState] = useState(getBanca());
   const [stats, setStats] = useState(getCalibracaoStats());
   const [isUpdatingCalibration, setIsUpdatingCalibration] = useState(false);
+  const [bancas, setBancas] = useState<any[]>([]);
+  const [bancaNome, setBancaNome] = useState('');
+  const [bancaSaldoInicial, setBancaSaldoInicial] = useState('');
+  const [apiKeyValue, setApiKeyValue] = useState('');
+  const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [bancaCriadaSuccess, setBancaCriadaSuccess] = useState(false);
+
+  const loadBancasData = async () => {
+    if (profile?.id) {
+      const list = await getBancasFromSupabase(profile.id);
+      setBancas(list);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -24,8 +42,45 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
       setBancaState(state);
       setBancaValue(state.bancaAtual ?? state.total ?? 1000);
       setStats(getCalibracaoStats());
+      setApiKeyValue(apiKeyOwn || '');
+
+      if (plan === 'sharp') {
+        loadBancasData();
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, profile, plan, apiKeyOwn]);
+
+  const handleCreateBanca = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile?.id || !bancaNome || !bancaSaldoInicial) return;
+
+    if (bancas.length >= 5) {
+      showToast.warning("Limite de 5 bancas atingido.");
+      return;
+    }
+
+    const valor = parseFloat(bancaSaldoInicial);
+    if (isNaN(valor) || valor <= 0) {
+      showToast.warning("Saldo inicial inválido.");
+      return;
+    }
+
+    const nova = await addBancaToSupabase(profile.id, bancaNome, valor);
+    if (nova) {
+      setBancaNome('');
+      setBancaSaldoInicial('');
+      setBancaCriadaSuccess(true);
+      setTimeout(() => setBancaCriadaSuccess(false), 2000);
+      loadBancasData();
+      switchActiveBanca(nova);
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    await updateApiKeyOwn(apiKeyValue || null);
+    setApiKeySaved(true);
+    setTimeout(() => setApiKeySaved(false), 2000);
+  };
 
   const handleUpdateCalibration = async () => {
     setIsUpdatingCalibration(true);
@@ -49,6 +104,25 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
       resetarContadores();
       setBancaState(getBanca());
     }
+  };
+
+  const handleNumericKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const allowedKeys = [
+      'Backspace', 'Delete', 'Tab', 'Escape', 'Enter',
+      'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+      '.', ','
+    ];
+    if (
+      allowedKeys.includes(e.key) ||
+      (e.key === 'a' && (e.ctrlKey || e.metaKey)) ||
+      (e.key === 'c' && (e.ctrlKey || e.metaKey)) ||
+      (e.key === 'v' && (e.ctrlKey || e.metaKey)) ||
+      (e.key === 'x' && (e.ctrlKey || e.metaKey)) ||
+      (e.key >= '0' && e.key <= '9')
+    ) {
+      return;
+    }
+    e.preventDefault();
   };
 
   const kellyConservador = (kellyPercent * 0.5 * bancaValue) / 100;
@@ -75,7 +149,7 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
                 <span className="text-xl">💰</span>
                 <h2 className="text-[13px] font-bold text-white uppercase tracking-wider">Gerenciador de Banca</h2>
               </div>
-              <button 
+              <button
                 onClick={onClose}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:bg-white/5 transition-colors"
               >
@@ -89,14 +163,16 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
                 <label className="text-[10px] text-white/50 uppercase font-bold tracking-widest block">Banca Atual</label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 font-bold text-xl">R$</span>
-                  <input 
+                  <input
                     type="number"
-                    value={bancaValue}
+                    value={bancaValue || ''}
                     onChange={(e) => setBancaValue(Number(e.target.value))}
+                    onKeyDown={handleNumericKeyDown}
+                    inputMode="decimal"
                     className="w-full bg-[#141428] border border-[#1e1e3e] rounded-xl pl-12 pr-4 py-4 text-[28px] font-bold text-white outline-none focus:border-green-500/50 transition-colors"
                   />
                 </div>
-                
+
                 <div className="flex flex-wrap gap-2 pt-2">
                   {[100, 500, 1000].map(val => (
                     <button key={`add-${val}`} onClick={() => handleFastAdd(val)} className="flex-1 min-w-[60px] py-2 bg-green-500/10 hover:bg-green-500/20 text-green-500 rounded-lg text-[11px] font-bold transition-colors">
@@ -111,7 +187,7 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
                 </div>
 
                 <div className="pt-2">
-                  <button 
+                  <button
                     onClick={handleSave}
                     className="w-full py-4 bg-green-500 hover:bg-green-400 text-black rounded-xl font-bold uppercase tracking-wider transition-colors relative overflow-hidden"
                   >
@@ -151,33 +227,30 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
               {/* Seção 3 - Proteção Ativa */}
               <div className="p-4 bg-[#141428] border border-[#1e1e3e] rounded-xl space-y-4">
                 <label className="text-[10px] text-white/50 uppercase font-bold tracking-widest block">Proteção Ativa</label>
-                
+
                 <div className="space-y-2 text-[12px]">
                   <div className="flex justify-between items-center">
                     <span className="text-white/70">REDs consecutivos</span>
-                    <span className={`font-bold px-2 py-0.5 rounded-md ${
-                      reds === 0 ? 'bg-green-500/20 text-green-400' : 
-                      reds < 3 ? 'bg-yellow-500/20 text-yellow-400' : 
-                      'bg-red-500/20 text-red-400'
-                    }`}>{reds}/3</span>
+                    <span className={`font-bold px-2 py-0.5 rounded-md ${reds === 0 ? 'bg-green-500/20 text-green-400' :
+                      reds < 3 ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-red-500/20 text-red-400'
+                      }`}>{reds}/3</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-white/70">Apostas hoje</span>
-                    <span className={`font-bold px-2 py-0.5 rounded-md ${
-                      apostas <= 1 ? 'bg-green-500/20 text-green-400' : 
-                      apostas === 2 ? 'bg-yellow-500/20 text-yellow-400' : 
-                      'bg-red-500/20 text-red-400'
-                    }`}>{apostas}/3</span>
+                    <span className={`font-bold px-2 py-0.5 rounded-md ${apostas <= 1 ? 'bg-green-500/20 text-green-400' :
+                      apostas === 2 ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-red-500/20 text-red-400'
+                      }`}>{apostas}/3</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-white/70">Stop loss ativo</span>
-                    <span className={`font-bold px-2 py-0.5 rounded-md ${
-                      stopLoss ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-green-500/20 text-green-400'
-                    }`}>{stopLoss ? 'SIM' : 'NÃO'}</span>
+                    <span className={`font-bold px-2 py-0.5 rounded-md ${stopLoss ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-green-500/20 text-green-400'
+                      }`}>{stopLoss ? 'SIM' : 'NÃO'}</span>
                   </div>
                 </div>
 
-                <button 
+                <button
                   onClick={handleResetContadores}
                   className="w-full py-2.5 mt-2 bg-white/5 hover:bg-white/10 text-white/60 text-[10px] font-bold rounded-lg uppercase tracking-wider transition-colors border border-white/5"
                 >
@@ -189,7 +262,7 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
               <div className="p-4 bg-[#141428] border border-[#1e1e3e] rounded-xl space-y-4">
                 <div className="flex items-center justify-between">
                   <label className="text-[10px] text-white/50 uppercase font-bold tracking-widest block">📊 Calibração do Modelo</label>
-                  <button 
+                  <button
                     onClick={handleUpdateCalibration}
                     disabled={isUpdatingCalibration}
                     className="p-1.5 hover:bg-white/10 rounded-lg text-white/40 hover:text-white transition-colors"
@@ -197,7 +270,7 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
                     <RefreshCw size={14} className={isUpdatingCalibration ? "animate-spin" : ""} />
                   </button>
                 </div>
-                
+
                 <div className="space-y-2 text-[12px]">
                   <div className="flex justify-between items-center">
                     <span className="text-white/70">Previsões registradas</span>
@@ -205,11 +278,10 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-white/70">Taxa de acerto real</span>
-                    <span className={`font-bold px-2 py-0.5 rounded-md ${
-                      stats.taxaAcerto >= 55 ? 'bg-green-500/20 text-green-400' :
+                    <span className={`font-bold px-2 py-0.5 rounded-md ${stats.taxaAcerto >= 55 ? 'bg-green-500/20 text-green-400' :
                       stats.taxaAcerto >= 45 ? 'bg-yellow-500/20 text-yellow-400' :
-                      'bg-red-500/20 text-red-400'
-                    }`}>{stats.taxaAcerto}%</span>
+                        'bg-red-500/20 text-red-400'
+                      }`}>{stats.taxaAcerto}%</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-white/70">Limiar recomendado</span>
@@ -245,6 +317,89 @@ export default function BancaModal({ isOpen, onClose, onSave, kellyPercent = 1.5
                   * Mínimo 10 previsões por faixa para calibração confiável. Dados insuficientes até lá.
                 </p>
               </div>
+
+              {/* Seção 5 - Chave API (Sharp) */}
+              <div className="p-4 bg-[#141428] border border-[#1e1e3e] rounded-xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-white/50 uppercase font-bold tracking-widest block">🔑 Odds API Key (Sharp)</label>
+                  {!canUseOwnApiKey && (
+                    <span className="text-[8px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded flex items-center gap-0.5 uppercase font-bold">
+                      <Lock size={8} /> SHARP
+                    </span>
+                  )}
+                </div>
+
+                {canUseOwnApiKey ? (
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={apiKeyValue}
+                      onChange={(e) => setApiKeyValue(e.target.value)}
+                      placeholder="Chave API da The Odds API"
+                      className="w-full bg-[#0d0d1a] border border-[#1e1e3e] rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-green-500/50"
+                    />
+                    <button
+                      onClick={handleSaveApiKey}
+                      className="w-full py-2 bg-green-500 hover:bg-green-400 text-black rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors"
+                    >
+                      {apiKeySaved ? 'Salvo!' : 'Salvar Chave API'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-center py-2">
+                    <p className="text-[10px] text-white/30 leading-relaxed mb-3">
+                      Insira sua própria chave API para limites elevados de chamadas e cotações.
+                    </p>
+                    <button
+                      onClick={() => {
+                        onClose();
+                        window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal', { detail: { targetPlan: 'sharp' } }));
+                      }}
+                      className="px-4 py-2 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/20 hover:border-blue-500/30 text-blue-400 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5 mx-auto"
+                    >
+                      <Lock size={10} /> Desbloquear com Sharp
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Seção 6 - Multi-Banca (Sharp) */}
+              {plan === 'sharp' && (
+                <div className="p-4 bg-[#141428] border border-[#1e1e3e] rounded-xl space-y-4">
+                  <label className="text-[10px] text-white/50 uppercase font-bold tracking-widest block">🏦 Criar Nova Banca (Max 5)</label>
+
+                  {bancas.length >= 5 ? (
+                    <p className="text-[10px] text-rose-400 font-bold">Limite de 5 bancas atingido.</p>
+                  ) : (
+                    <form onSubmit={handleCreateBanca} className="space-y-3">
+                      <input
+                        type="text"
+                        value={bancaNome}
+                        onChange={(e) => setBancaNome(e.target.value)}
+                        placeholder="Nome da Banca (ex: Pinnacle, Betfair)"
+                        required
+                        className="w-full bg-[#0d0d1a] border border-[#1e1e3e] rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-green-500/50"
+                      />
+                      <input
+                        type="number"
+                        value={bancaSaldoInicial}
+                        onChange={(e) => setBancaSaldoInicial(e.target.value)}
+                        placeholder="Saldo Inicial (R$)"
+                        required
+                        onKeyDown={handleNumericKeyDown}
+                        inputMode="decimal"
+                        className="w-full bg-[#0d0d1a] border border-[#1e1e3e] rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-green-500/50"
+                      />
+                      <button
+                        type="submit"
+                        className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-1"
+                      >
+                        <Plus size={12} /> {bancaCriadaSuccess ? 'Criada!' : 'Criar Banca'}
+                      </button>
+                    </form>
+                  )}
+                </div>
+              )}
 
             </div>
           </motion.div>
