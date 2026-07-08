@@ -1653,7 +1653,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               </button>
             </div>
           </div>
-        );}
+        )}
       {!isDemoMode && (() => {
         const quotaInfo = getOddsApiQuotaInfo();
         if (!quotaInfo.errorStatus && import.meta.env.VITE_ODDS_API_KEY && import.meta.env.VITE_ODDS_API_KEY !== 'YOUR_ODDS_API_KEY') return null;
