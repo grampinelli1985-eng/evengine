@@ -18,12 +18,7 @@ const MEDIAS_XG_LIGA: Record<string, { home: number; away: number }> = {
   'Primeira Liga': { home: 1.50, away: 1.20 },
 };
 
-export function calculatePoisson(
-  homeExpected: number,
-  awayExpected: number,
-  league?: string,
-  xgData?: { home_xg: number | null; away_xg: number | null }
-): PoissonData {
+export function calculatePoisson(homeExpected: number, awayExpected: number, league?: string): PoissonData {
 
   let homeXg = homeExpected;
   let awayXg = awayExpected;
@@ -37,22 +32,8 @@ export function calculatePoisson(
     fonte = leagueKey ? 'media_liga' : 'media_global';
   }
 
-  let lambdaHome = homeXg;
-  let lambdaAway = awayXg;
-
-  // [BUG-PSN-XG FIX] fonte atualizado para 'sportmonks_blend' quando xG real é aplicado
-  // Blending aplicado ANTES da correção Dixon-Coles (PSN-05)
-  const ALPHA_XG = 0.35;
-  if (xgData?.home_xg !== null && xgData?.home_xg !== undefined) {
-    lambdaHome = (1 - ALPHA_XG) * lambdaHome + ALPHA_XG * xgData.home_xg;
-    homeXg = lambdaHome;
-    fonte = 'sportmonks_blend';
-  }
-  if (xgData?.away_xg !== null && xgData?.away_xg !== undefined) {
-    lambdaAway = (1 - ALPHA_XG) * lambdaAway + ALPHA_XG * xgData.away_xg;
-    awayXg = lambdaAway;
-    fonte = 'sportmonks_blend';
-  }
+  const lambdaHome = homeXg;
+  const lambdaAway = awayXg;
 
   // PSN-04: Log-space Poisson calculation to avoid underflow for large k/lambda
   function poissonLogPMF(k: number, lambda: number): number {
@@ -64,9 +45,11 @@ export function calculatePoisson(
   const poisson = (k: number, lambda: number) => Math.exp(poissonLogPMF(k, lambda));
 
   // PSN-05: Build raw matrix first, then renormalize BEFORE applying cap
-  // XMD-04 (clubs): Fixed swapped lambdas in Dixon-Coles tau(1,0) and tau(0,1)
-  //   tau(1,0): home=1, away=0 → correction uses lambdaHome (home team scored)
-  //   tau(0,1): home=0, away=1 → correction uses lambdaAway (away team scored)
+  // Dixon-Coles (1997) tau correction for low-score dependence — eq. 4 from original paper:
+  //   tau(0,0) = 1 - λ_home * λ_away * ρ
+  //   tau(1,0) = 1 + λ_away * ρ   ← uses AWAY lambda (team that did NOT score)
+  //   tau(0,1) = 1 + λ_home * ρ   ← uses HOME lambda (team that did NOT score)
+  //   tau(1,1) = 1 - ρ
   const rho = -0.12;
   const rawMatrix: number[][] = [];
   let matrixSum = 0;
@@ -76,8 +59,8 @@ export function calculatePoisson(
     for (let a = 0; a <= 8; a++) {
       let tau = 1.0;
       if (h === 0 && a === 0) tau = 1 - lambdaHome * lambdaAway * rho;
-      else if (h === 1 && a === 0) tau = 1 + lambdaHome * rho;
-      else if (h === 0 && a === 1) tau = 1 + lambdaAway * rho;
+      else if (h === 1 && a === 0) tau = 1 + lambdaAway * rho;
+      else if (h === 0 && a === 1) tau = 1 + lambdaHome * rho;
       else if (h === 1 && a === 1) tau = 1 - rho;
 
       rawMatrix[h][a] = poisson(h, lambdaHome) * poisson(a, lambdaAway) * Math.max(0, tau);
@@ -100,7 +83,7 @@ export function calculatePoisson(
 
   for (let h = 0; h <= 8; h++) {
     for (let a = 0; a <= 8; a++) {
-      const prob = rawMatrix[h][a] * normFactor * 100;
+      const prob = rawMatrix[h][a] * normFactor * 100; // normalized, in %
 
       if (h + a > 0.5) over05 += prob;
       if (h + a > 1.5) over15 += prob;
@@ -131,10 +114,6 @@ export function calculatePoisson(
 
   // PSN-05: Cap at 95% applied AFTER renormalization — values now reflect true normalized probs
   return {
-    homeXg,
-    awayXg,
-    homeExpected,
-    awayExpected,
     home_expected: homeExpected,
     away_expected: awayExpected,
     top_scores: topScores,

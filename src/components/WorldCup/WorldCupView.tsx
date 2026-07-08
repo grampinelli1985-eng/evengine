@@ -7,7 +7,7 @@ import { runWCTipsterEngine } from '../../services/worldCup/wcTipsterEngine';
 import { getAllWCRatings } from '../../services/worldCup/wcEloService';
 import WorldCupMatchCard from './WorldCupMatchCard';
 import { buildLiveKey } from '../../services/liveTrackerService';
-import { autoUpdateEloFromResults } from '../../services/eloUpdateService';
+import { canAnalyzeToday, incrementAnalysesToday } from '../../services/planService';
 
 interface WorldCupViewProps {
   onBack: () => void;
@@ -52,24 +52,6 @@ export default function WorldCupView({
 
   const wcRankings = useMemo(() => getAllWCRatings(), []);
 
-  // ELO-08: auto-update ELO ratings from Copa 2026 finished results (once per day)
-  useEffect(() => {
-    autoUpdateEloFromResults().then(report => {
-      if (report.skippedToday) return;
-      if (report.updatedCount > 0) {
-        console.info(`[ELO] ${report.updatedCount} partida(s) processada(s) — ELO atualizado`);
-      }
-      if (report.unresolvedTeams.length > 0) {
-        console.warn('[ELO] Times sem alias mapeado:', report.unresolvedTeams);
-      }
-      if (report.errors.length > 0) {
-        console.warn('[ELO] Erros no auto-update:', report.errors);
-      }
-    }).catch(err => {
-      console.warn('[ELO] Auto-update falhou (não crítico):', err);
-    });
-  }, []);
-
   useEffect(() => {
     loadMatches();
   }, []);
@@ -83,10 +65,19 @@ export default function WorldCupView({
   }
 
   async function handleAnalyze(match: WCMatch) {
+    const isReAnalysis = !!analyses[match.id];
+    // Cota só é verificada/consumida na primeira análise — re-análise é gratuita
+    if (!isReAnalysis && !canAnalyzeToday()) {
+      window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
+      return;
+    }
     setAnalyzingId(match.id);
     await new Promise(r => setTimeout(r, 300));
     const result = runWCTipsterEngine(match);
     setAnalyses(prev => ({ ...prev, [match.id]: result }));
+    if (!isReAnalysis) {
+      await incrementAnalysesToday();
+    }
     window.dispatchEvent(new CustomEvent('evengine_track_match', {
       detail: {
         matchId: match.id,
@@ -101,6 +92,10 @@ export default function WorldCupView({
   async function handleAnalyzeAll() {
     for (const match of filteredMatches) {
       if (!analyses[match.id]) {
+        if (!canAnalyzeToday()) {
+          window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
+          break;
+        }
         await handleAnalyze(match);
       }
     }

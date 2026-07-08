@@ -262,7 +262,7 @@ export function seedEloFromOdds(match: Match) {
         const fairProbs2 = removeOverround([homeOdd, awayOdd]);
         probHome = fairProbs2[0];
         probAway = fairProbs2[1];
-      } catch {}
+      } catch { }
     }
 
     let changed = false;
@@ -416,7 +416,7 @@ export function getEloStalenessInfo(homeTeam: string, awayTeam: string): {
     const daysSinceLastPlayed = (Date.now() - lastPlayedMs) / (1000 * 60 * 60 * 24);
     const level: EloStalenessInfo['level'] =
       daysSinceLastPlayed >= ELO_STALENESS_STALE_DAYS ? 'stale' :
-      daysSinceLastPlayed >= ELO_STALENESS_WARNING_DAYS ? 'warning' : 'fresh';
+        daysSinceLastPlayed >= ELO_STALENESS_WARNING_DAYS ? 'warning' : 'fresh';
     const ratingDecayed = applyTemporalDecay(entry);
     return {
       team,
@@ -473,7 +473,7 @@ export function checkEloDivergenceWarning(
       status: 'aviso',
       evCalculado: evDecimal,
       threshold: bevMaxDecimal,
-      mensagem: `EV de ${(evDecimal * 100).toFixed(1)}% se aproxima do teto realista (${(bevMaxDecimal * 100).toFixed(0)}%). Verifique odds antes de registrar.`,
+      mensagem: `EV de ${(evDecimal * 100).toFixed(1)}% se aproxima do teto realista (${(bevMaxDecimal * 100).toFixed(0)}%). Verifique se odds é igual ou maior antes de registrar.`,
     };
   }
   return { status: 'ok', evCalculado: evDecimal, threshold: bevMaxDecimal, mensagem: null };

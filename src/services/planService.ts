@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 export interface UserProfile {
   id: string;
   email: string;
-  plan: 'free' | 'pro' | 'sharp';
+  plan: 'demo' | 'free' | 'pro' | 'sharp';
   plan_expires_at: string | null;
   analyses_today: number;
   analyses_reset_at: string;
@@ -14,7 +14,6 @@ export interface UserProfile {
 let currentProfile: UserProfile | null = null;
 const LISTENERS = new Set<(profile: UserProfile | null) => void>();
 
-// Ligas Tier-A reconhecidas pelo engine
 const TIER_A_LEAGUES = [
   'soccer_epl',
   'soccer_spain_la_liga',
@@ -56,15 +55,16 @@ export function setCachedProfile(profile: UserProfile | null) {
 }
 
 /**
- * Loads the user profile from Supabase profiles table,
- * initializing it if it doesn't exist, and resetting the daily count if midnight has passed.
+ * Loads the user profile from Supabase profiles table.
+ * New users start with plan='demo' (5 total analyses, non-renewable).
+ * Demo plan counter never resets daily — it's a lifetime quota.
  */
 export async function fetchProfile(userId: string, email: string): Promise<UserProfile | null> {
   if (!supabase) {
     const mockProfile: UserProfile = {
       id: userId,
       email: email,
-      plan: 'free',
+      plan: 'demo',
       plan_expires_at: null,
       analyses_today: 0,
       analyses_reset_at: new Date().toISOString(),
@@ -83,11 +83,11 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
       .maybeSingle();
 
     if (error) {
-      console.warn('[Supabase] Erro ao carregar perfil (tabela profiles ausente). Retornando perfil local temporário.', error);
+      console.warn('[Supabase] Erro ao carregar perfil. Retornando perfil local temporário.', error);
       const fallbackProfile: UserProfile = {
         id: userId,
         email: email,
-        plan: 'free',
+        plan: 'demo',
         plan_expires_at: null,
         analyses_today: 0,
         analyses_reset_at: new Date().toISOString(),
@@ -99,10 +99,11 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
     }
 
     if (!data) {
+      // Novo usuário — inicia no plano demo
       const newProfile = {
         id: userId,
         email: email,
-        plan: 'free',
+        plan: 'demo',
         plan_expires_at: null,
         analyses_today: 0,
         analyses_reset_at: new Date().toISOString(),
@@ -115,14 +116,12 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
         .single();
 
       if (insertError) {
-        // Handle race condition where another parallel request created the profile first
         if (insertError.code === '23505' || String((insertError as any).status) === '409') {
           const { data: reFetched, error: reFetchError } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', userId)
             .maybeSingle();
-
           if (!reFetchError && reFetched) {
             data = reFetched;
           } else {
@@ -136,40 +135,57 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
       }
     }
 
-    // [INC-P3 FIX] Compara apenas datas (strings YYYY-MM-DD) para evitar reset imediato
-    // em perfis recém-criados onde analyses_reset_at = now()
-    const resetDate = new Date(data.analyses_reset_at).toDateString();
-    const today = new Date().toDateString();
-    const needsReset = today !== resetDate;
-
-    if (needsReset) {
-      const nextMidnight = new Date();
-      nextMidnight.setHours(24, 0, 0, 0);
-
-      const { data: updated, error: updateError } = await supabase
-        .from('profiles')
-        .update({
-          analyses_today: 0,
-          analyses_reset_at: nextMidnight.toISOString()
-        })
-        .eq('id', userId)
-        .select()
-        .single();
-
-      if (!updateError && updated) {
-        data = updated;
+    // Fallback de segurança: verifica se plano PRO/SHARP expirou
+    // (o webhook do ASAAS é o mecanismo principal, este é o safety net)
+    if ((data as UserProfile).plan !== 'demo' && (data as UserProfile).plan !== 'free') {
+      const expiresAt = data.plan_expires_at ? new Date(data.plan_expires_at) : null;
+      if (expiresAt && expiresAt < new Date()) {
+        const { data: downgraded } = await supabase
+          .from('profiles')
+          .update({ plan: 'free', plan_expires_at: null })
+          .eq('id', userId)
+          .select()
+          .single();
+        if (downgraded) data = downgraded;
+        console.warn(`[planService] Plano expirado para ${userId} — downgrade para free`);
       }
     }
 
-    const profile: UserProfile = data;
-    setCachedProfile(profile);
-    return profile;
+    // Plano demo: cota vitalícia — nunca reseta o contador
+    // Planos pagos: reseta se mudou o dia
+    if ((data as UserProfile).plan !== 'demo') {
+      const resetDate = new Date(data.analyses_reset_at).toDateString();
+      const today = new Date().toDateString();
+      const needsReset = today !== resetDate;
+
+      if (needsReset) {
+        const nextMidnight = new Date();
+        nextMidnight.setHours(24, 0, 0, 0);
+
+        const { data: updated, error: updateError } = await supabase
+          .from('profiles')
+          .update({
+            analyses_today: 0,
+            analyses_reset_at: nextMidnight.toISOString()
+          })
+          .eq('id', userId)
+          .select()
+          .single();
+
+        if (!updateError && updated) {
+          data = updated;
+        }
+      }
+    }
+
+    setCachedProfile(data as UserProfile);
+    return data as UserProfile;
   } catch (err) {
     console.error('Erro ao buscar/criar perfil no Supabase:', err);
     const fallbackProfile: UserProfile = {
       id: userId,
       email: email,
-      plan: 'free',
+      plan: 'demo',
       plan_expires_at: null,
       analyses_today: 0,
       analyses_reset_at: new Date().toISOString(),
@@ -182,7 +198,8 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
 }
 
 /**
- * Increments user analyses count today
+ * Increments user analyses count.
+ * Demo plan: persists total count (vitalício, não reseta diariamente).
  */
 export async function incrementAnalysesToday(): Promise<UserProfile | null> {
   const profile = getCachedProfile();
@@ -191,11 +208,6 @@ export async function incrementAnalysesToday(): Promise<UserProfile | null> {
   const nextCount = profile.analyses_today + 1;
   profile.analyses_today = nextCount;
   setCachedProfile({ ...profile });
-
-  if (profile.id === 'demo_user') {
-    localStorage.setItem('evengine_demo_analyses_today', nextCount.toString());
-    return profile;
-  }
 
   if (!supabase) return profile;
 
@@ -208,8 +220,8 @@ export async function incrementAnalysesToday(): Promise<UserProfile | null> {
       .single();
 
     if (!error && data) {
-      setCachedProfile(data);
-      return data;
+      setCachedProfile(data as UserProfile);
+      return data as UserProfile;
     }
   } catch (err) {
     console.error('Erro ao incrementar análises:', err);
@@ -218,16 +230,23 @@ export async function incrementAnalysesToday(): Promise<UserProfile | null> {
   return profile;
 }
 
-// [INC-P2 FIX] Mantida apenas updateUserPlan — updateUserProfilePlan removida (duplicata)
+/**
+ * Migra usuário de qualquer plano para free/pro/sharp.
+ * Zera o contador diário ao migrar (demo → plano pago).
+ */
 export async function updateUserPlan(userId: string, plan: 'free' | 'pro' | 'sharp'): Promise<UserProfile | null> {
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 30);
 
   const profile = getCachedProfile();
   if (profile) {
-    profile.plan = plan;
-    profile.plan_expires_at = expiresAt.toISOString();
-    setCachedProfile({ ...profile });
+    setCachedProfile({
+      ...profile,
+      plan,
+      plan_expires_at: plan === 'free' ? null : expiresAt.toISOString(),
+      analyses_today: 0,
+      analyses_reset_at: new Date().toISOString()
+    });
   }
 
   if (!supabase) return getCachedProfile();
@@ -236,16 +255,18 @@ export async function updateUserPlan(userId: string, plan: 'free' | 'pro' | 'sha
     const { data, error } = await supabase
       .from('profiles')
       .update({
-        plan: plan,
-        plan_expires_at: expiresAt.toISOString()
+        plan,
+        plan_expires_at: plan === 'free' ? null : expiresAt.toISOString(),
+        analyses_today: 0,
+        analyses_reset_at: new Date().toISOString()
       })
       .eq('id', userId)
       .select()
       .single();
 
     if (!error && data) {
-      setCachedProfile(data);
-      return data;
+      setCachedProfile(data as UserProfile);
+      return data as UserProfile;
     }
   } catch (err) {
     console.error('Erro ao atualizar plano:', err);
@@ -253,9 +274,6 @@ export async function updateUserPlan(userId: string, plan: 'free' | 'pro' | 'sha
   return getCachedProfile();
 }
 
-/**
- * Updates owner own API key
- */
 export async function updateApiKeyOwn(apiKey: string | null): Promise<UserProfile | null> {
   const profile = getCachedProfile();
   if (!profile) return null;
@@ -274,8 +292,8 @@ export async function updateApiKeyOwn(apiKey: string | null): Promise<UserProfil
       .single();
 
     if (!error && data) {
-      setCachedProfile(data);
-      return data;
+      setCachedProfile(data as UserProfile);
+      return data as UserProfile;
     }
   } catch (err) {
     console.error('Erro ao atualizar chave API:', err);
@@ -284,13 +302,18 @@ export async function updateApiKeyOwn(apiKey: string | null): Promise<UserProfil
   return profile;
 }
 
-/**
- * Standard plan feature access queries (UI Layer)
- */
-
-export type UserPlan = 'free' | 'pro' | 'sharp';
+export type UserPlan = 'demo' | 'free' | 'pro' | 'sharp';
 
 export const PLAN_LIMITS = {
+  demo: {
+    analysesPerDay: 5,          // cota total vitalícia (não renova)
+    leagueTiers: ['A', 'B', 'C', 'D'] as string[],
+    wcModule: true,
+    historyDays: 0,
+    oddAlerts: false,
+    clvTracking: false,
+    exportData: false,
+  },
   free: {
     analysesPerDay: 3,
     leagueTiers: ['A'] as string[],
@@ -321,10 +344,6 @@ export const PLAN_LIMITS = {
 } as const;
 
 export function canRunAnalysis(plan: UserPlan, usedToday: number): boolean {
-  const profile = getCachedProfile();
-  if (profile?.id === 'demo_user') {
-    return usedToday < 5;
-  }
   return usedToday < PLAN_LIMITS[plan].analysesPerDay;
 }
 
@@ -346,27 +365,18 @@ export function canAnalyzeToday(): boolean {
   return canRunAnalysis(profile.plan, profile.analyses_today);
 }
 
-// [INC-P1 FIX] Sharp (tier D) acessa tudo; pro acessa B+C; free só A
 export function canAccessLeague(leagueKey: string): boolean {
   const profile = getCachedProfile();
   if (!profile) return false;
-  if (profile.id === 'demo_user') return true; // permite testar todas as ligas no demo
   const tiers = PLAN_LIMITS[profile.plan].leagueTiers;
-
-  // Sharp tem acesso irrestrito
   if (tiers.includes('D')) return true;
-
-  // Tier-A: ligas das 5 grandes ligas europeias
   if (TIER_A_LEAGUES.includes(leagueKey)) return tiers.includes('A');
-
-  // Demais ligas são B (pro e sharp têm acesso)
   return tiers.includes('B');
 }
 
 export function canAccessWorldCup(): boolean {
   const profile = getCachedProfile();
   if (!profile) return false;
-  if (profile.id === 'demo_user') return true; // permite testar Copa no demo
   return hasWCAccess(profile.plan);
 }
 
@@ -404,13 +414,10 @@ export function canAddBanca(currentBancasCount: number): boolean {
 export function getRemainingAnalysesToday(): number {
   const profile = getCachedProfile();
   if (!profile) return 0;
-  if (profile.id === 'demo_user') {
-    return Math.max(0, 5 - profile.analyses_today);
-  }
   const limit = PLAN_LIMITS[profile.plan].analysesPerDay;
   if (limit === Infinity) return Infinity;
   return Math.max(0, limit - profile.analyses_today);
 }
 
-// Alias mantido para compatibilidade com imports existentes em App.tsx
+// Alias para compatibilidade com imports existentes
 export const updateUserProfilePlan = updateUserPlan;

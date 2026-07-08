@@ -36,6 +36,34 @@ interface CalibracaoState {
 const STORAGE_KEY = 'evengine_calibracao';
 let isOddsApiUnauthorized = false;
 
+function cleanTeamName(name: string): string {
+  if (!name) return '';
+  return name
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/^(fc|afc|sc|rkc|nec|pec|cf|ac|rcd|rc|fk|az|psv|ud|cd|club|vfl|vfb|tsg|sv)\s+/gi, '')
+    .replace(/\s+(fc|cf|ac|sc|e\.v\.|rcd|rc|cfr|fk|az|psv|ud|cd|club|club de futbol)$/gi, '')
+    .replace(/[-\s]+/g, ' ')
+    .trim();
+}
+
+function matchTeams(nameA: string, nameB: string): boolean {
+  const cleanA = cleanTeamName(nameA);
+  const cleanB = cleanTeamName(nameB);
+  if (cleanA === cleanB) return true;
+  if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) return true;
+  const withCommonAbbreviations = (s: string) => {
+    return s
+      .replace(/\bmineiro\b/g, 'mg')
+      .replace(/\bparanaense\b/g, 'pr')
+      .replace(/\bgoiano\b/g, 'go')
+      .replace(/\bsp\b/g, 'sao paulo')
+      .replace(/\s+/g, '');
+  };
+  return withCommonAbbreviations(cleanA) === withCommonAbbreviations(cleanB);
+}
+
 // ── FUNÇÕES PRINCIPAIS ────────────────────────────────
 
 // Registrar previsão quando Gate APROVA uma entrada
@@ -94,14 +122,14 @@ export async function resolverPrevisoesPendentes(): Promise<void> {
 
     for (const previsao of prevs) {
       const jogo = jogos.find((j: any) =>
-        j.home_team === previsao.homeTeam &&
-        j.away_team === previsao.awayTeam &&
+        matchTeams(j.home_team, previsao.homeTeam) &&
+        matchTeams(j.away_team, previsao.awayTeam) &&
         j.completed === true
       );
 
       if (jogo?.scores) {
-        const scoreCasa = jogo.scores.find((s: any) => s.name === previsao.homeTeam)?.score ?? 0;
-        const scoreFora = jogo.scores.find((s: any) => s.name === previsao.awayTeam)?.score ?? 0;
+        const scoreCasa = jogo.scores.find((s: any) => matchTeams(s.name, previsao.homeTeam))?.score ?? 0;
+        const scoreFora = jogo.scores.find((s: any) => matchTeams(s.name, previsao.awayTeam))?.score ?? 0;
         
         const vencedor = parseInt(scoreCasa, 10) > parseInt(scoreFora, 10)
           ? 'Home'

@@ -4,7 +4,7 @@
  */
 
 import { hasQuota, trackRequest } from './apiQuotaService';
-import { getTeamIdAsync } from './scoutingService';
+import { getTeamIdAsync, getSeasonForLeague } from './scoutingService';
 
 // Removido API_FOOTBALL_KEY do frontend por segurança (via Proxy)
 const API_BASE_URL = '/api/football';
@@ -26,8 +26,7 @@ export async function fetchTeamAvgStats(teamName: string, leagueId: number) {
   const teamId = await getTeamIdAsync(teamName);
   if (teamId === -1 || !hasQuota(1)) return null;
 
-  const now = new Date();
-  const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+  const season = getSeasonForLeague(leagueId);
 
   try {
     const res = await fetch(`${API_BASE_URL}/fixtures?team=${teamId}&league=${leagueId}&season=${season}&last=5`, {

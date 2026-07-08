@@ -3,54 +3,49 @@
  * Serviço standalone para análise de picks de tipster em apostas esportivas.
  * 100% compatível com projetos React/TypeScript (ex: Antigravity).
  * Sem dependências externas.
+ *
+ * FIX-01: Probabilidade derivada das odds de mercado (no-vig) como base.
+ *   O score de confiança histórico do tipster atua como fator de Shrinkage
+ *   Bayesiano sobre a probabilidade de mercado — nunca como probabilidade bruta.
+ *
+ *   Fórmula: p_final = α × p_market + (1 - α) × p_tipster_hist
+ *   onde α = peso do mercado (inversamente proporcional à confiança no tipster)
+ *
+ *   p_market   = 1/odds * (1 + estimativa de overround)  → sem vig via Shin
+ *   p_tipster  = winRate histórico do tipster (âncora bayesiana)
+ *   α          = 1 - shrinkage_weight  (quanto mais confiável o tipster, menos α)
  */
 
 export interface Match {
-  /** Time da casa */
   homeTeam: string;
-  /** Time visitante */
   awayTeam: string;
-  /** Data do jogo (ISO string) */
   date: string;
-  /** Competição opcional */
   competition?: string;
 }
 
 export interface Market {
-  /** Tipo de mercado (ex: '1x2', 'overunder') */
   type: string;
-  /** Resultado selecionado (ex: 'Home', 'Over') */
   outcome: string;
 }
 
 export interface OddsHistory {
-  /** Odds atuais */
   current: number;
-  /** Histórico de odds recentes */
   history: number[];
 }
 
 export interface Stats {
-  /** Taxa de acerto (0 a 1) */
   winRate: number;
-  /** Odds médias históricas */
   avgOdds: number;
-  /** ROI histórico (ex: 0.12 para 12%) */
   roi: number;
-  /** Limite máximo de picks por dia */
   dailyLimit: number;
 }
 
 export interface PickInput {
   match: Match;
   market: Market;
-  /** Odds da aposta */
   odds: number;
-  /** Histórico de odds (opcional) */
   oddsHistory?: OddsHistory;
-  /** Bankroll disponível */
   bankroll: number;
-  /** Stake sugerido (opcional, default 1) */
   stake?: number;
 }
 
@@ -60,39 +55,36 @@ export interface PickAnalysis {
   odds: number;
   oddsHistory?: OddsHistory;
   bankroll: number;
-  /** Probabilidade implícita nas odds */
+  /** Probabilidade implícita bruta nas odds (inclui vig) */
   impliedProbability: number;
-  /** Odds justas baseadas na confiança */
+  /** Probabilidade final blendada (market no-vig + shrinkage tipster) */
+  blendedProbability: number;
+  /** Probabilidade de mercado sem vig (Shin) */
+  marketFairProbability: number;
+  /** Peso dado ao tipster no blend (0-1) */
+  tipsterShrinkageWeight: number;
+  /** Odds justas baseadas na blendedProbability */
   fairOdds: number;
   /** Valor esperado (EV) */
   expectedValue: number;
-  /** Nível de confiança calculado (0 a 1) */
+  /** Score de confiança histórico do tipster (NÃO é probabilidade) */
   confidence: number;
-  /** Tier da aposta */
   tier: Tier;
-  /** Stake calculado pelo critério Kelly */
   kellyStake: number;
-  /** Stake recomendado */
   recommendedStake: number;
-  /** Indica se é uma aposta de valor */
   isValueBet: boolean;
 }
 
 export interface Tier {
-  /** Nome do tier (S, A, B, etc.) */
   name: string;
-  /** Confiança mínima requerida */
   minConfidence: number;
-  /** Descrição */
   description: string;
 }
 
 export class TipsterAnalysisService {
-  // Estado interno
   private dailyCount: number = 0;
-  private kellyFraction: number = 0.25; // Fração Kelly padrão (1/4)
+  private kellyFraction: number = 0.25;
 
-  // Tiers pré-definidos, ordenados decrescente
   private tiers: Tier[] = [
     { name: 'S', minConfidence: 0.75, description: 'Super aposta - Alta confiança' },
     { name: 'A', minConfidence: 0.65, description: 'Ótima aposta' },
@@ -101,31 +93,35 @@ export class TipsterAnalysisService {
     { name: 'D', minConfidence: 0.00, description: 'Evitar - Baixo valor' }
   ].sort((a, b) => b.minConfidence - a.minConfidence);
 
-
-  /**
-   * Analisa um pick e retorna a análise completa.
-   * Incrementa contador diário apenas se incrementCount for true.
-   */
   public analyzePick(input: PickInput, stats: Stats, incrementCount: boolean = false): PickAnalysis {
-    // Validação prévia
     const validation = this.validatePick(input, stats, incrementCount);
     if (!validation.isValid) {
       throw new Error(validation.error || 'Pick inválido');
     }
+    if (incrementCount) this.dailyCount++;
 
-    // Incrementa contador diário se solicitado
-    if (incrementCount) {
-      this.dailyCount++;
-    }
-
-
-    const stake = input.stake || 1;
     const impliedProb = this.calculateImpliedProbRaw(input.odds);
-    const confidence = this.calculateConfidence(input, stats);
-    const fairOdds = this.calculateFairOdds(confidence);
-    const ev = this.calculateEV(confidence, input.odds, stake);
+
+    // FIX-01: probabilidade de mercado sem vig como âncora principal
+    const marketFairProb = this.removeVigShin(input.odds);
+
+    // Score de confiança do tipster (heurístico histórico, NÃO é probabilidade)
+    const confidence = this.calculateConfidenceScore(input, stats);
+
+    // Peso Bayesiano do tipster: quanto maior o score, mais peso na âncora histórica
+    // Máximo 30% de influência tipster — mercado sempre domina (mínimo 70%)
+    const tipsterShrinkageWeight = confidence * 0.30;
+
+    // Probabilidade blendada: market fair + shrinkage bayesiano do tipster
+    const blendedProbability = Math.max(0.01, Math.min(0.99,
+      (1 - tipsterShrinkageWeight) * marketFairProb +
+      tipsterShrinkageWeight * stats.winRate
+    ));
+
+    const fairOdds = blendedProbability > 0 ? 1 / blendedProbability : Infinity;
+    const ev = this.calculateEV(blendedProbability, input.odds);
     const tier = this.getTier(confidence);
-    const kellyStake = this.calculateKellyStake(confidence, input.odds, input.bankroll);
+    const kellyStake = this.calculateKellyStake(blendedProbability, input.odds, input.bankroll);
 
     return {
       match: input.match,
@@ -134,38 +130,28 @@ export class TipsterAnalysisService {
       oddsHistory: input.oddsHistory,
       bankroll: input.bankroll,
       impliedProbability: impliedProb,
+      blendedProbability,
+      marketFairProbability: marketFairProb,
+      tipsterShrinkageWeight,
       fairOdds,
       expectedValue: ev,
       confidence,
       tier,
       kellyStake,
       recommendedStake: kellyStake,
-      isValueBet: fairOdds < input.odds,
+      isValueBet: blendedProbability > impliedProb,
     };
   }
 
-  /**
-   * Reseta o contador de picks diários.
-   */
-  public resetDailyCount(): void {
-    this.dailyCount = 0;
-  }
-
-  /**
-   * Define a fração Kelly (0 a 1).
-   */
+  public resetDailyCount(): void { this.dailyCount = 0; }
   public setKellyFraction(fraction: number): void {
     this.kellyFraction = Math.max(0, Math.min(1, fraction));
   }
 
-  /**
-   * Valida um pick antes da análise.
-   */
   public validatePick(input: PickInput, stats: Stats, checkLimit: boolean = true): { isValid: boolean; error?: string } {
     if (checkLimit && this.dailyCount >= stats.dailyLimit) {
       return { isValid: false, error: 'Limite diário de picks atingido.' };
     }
-
     if (input.odds < 1.01 || input.odds > 100) {
       return { isValid: false, error: 'Odds inválidas (deve ser > 1.01 e < 100).' };
     }
@@ -178,79 +164,81 @@ export class TipsterAnalysisService {
     return { isValid: true };
   }
 
-  // ===== MÉTODOS PRIVADOS =====
+  // ── Métodos privados ────────────────────────────────────────────────────────
 
-  /** 
-   * Calcula probabilidade implícita BRUTA das odds (decimal).
-   * ATENÇÃO: Inclui a margem da casa de aposta (overround/vig).
-   * O valor retornado está inflado. Não utilizar como fair prob.
-   */
+  /** Probabilidade implícita bruta (inclui vig — apenas para display). */
   private calculateImpliedProbRaw(odds: number): number {
     return 1 / odds;
   }
 
-  /** Calcula EV unitário (Expected Value por unidade de stake). */
-  private calculateEV(prob: number, odds: number, _stake: number): number {
+  /**
+   * Remove vig de odds individuais usando aproximação Shin (single-outcome).
+   * Para mercados com 2+ outcomes, o ideal é passar todas as odds ao Shin completo.
+   * Aqui usamos a estimativa conservadora: assume overround de 5% para casas soft,
+   * 2% para sharp. Como não sabemos o bookmaker, usa 3.5% como estimativa central.
+   */
+  private removeVigShin(odds: number): number {
+    const estimatedOverround = 0.035; // 3.5% — estimativa conservadora
+    const impliedRaw = 1 / odds;
+    // Aproximação: fair prob ≈ implied / (1 + overround * implied)
+    const fairProb = impliedRaw / (1 + estimatedOverround * impliedRaw);
+    return Math.max(0.01, Math.min(0.99, fairProb));
+  }
+
+  /** EV por unidade de stake usando blended probability. */
+  private calculateEV(prob: number, odds: number): number {
     return prob * (odds - 1) - (1 - prob);
   }
 
-  /** Calcula odds justas baseadas na probabilidade. */
-  private calculateFairOdds(prob: number): number {
-    return prob > 0 ? 1 / prob : Infinity;
-  }
+  /**
+   * Score de confiança histórico do tipster (0-1).
+   * ATENÇÃO: Este é um score heurístico — NÃO é probabilidade de outcome.
+   * Usado apenas como peso de Shrinkage no blend Bayesiano (máx 30%).
+   */
+  private calculateConfidenceScore(input: PickInput, stats: Stats): number {
+    let score = stats.winRate;
 
-  /** Calcula confiança baseada em stats e histórico. */
-  private calculateConfidence(input: PickInput, stats: Stats): number {
-    let confidence = stats.winRate;
-
-    // Compatibilidade com odds médias
+    // Penaliza pick muito fora do perfil histórico de odds
     const oddsMatch = 1 - Math.abs(input.odds - stats.avgOdds) / Math.max(input.odds, stats.avgOdds);
-    confidence += oddsMatch * 0.2;
+    score += oddsMatch * 0.2;
 
-    // Penalidade por volatilidade
+    // Penalidade por volatilidade de linha
     let volatility = 0.1;
     if (input.oddsHistory?.history && input.oddsHistory.history.length > 1) {
       volatility = this.calculateVolatility(input.oddsHistory.history);
     }
-    confidence -= volatility * 0.3;
+    score -= volatility * 0.3;
 
-    // Boost por ROI — clampado para evitar que ROI muito alto distorça a confiança
-    confidence += Math.max(-0.2, Math.min(0.2, stats.roi * 0.5));
+    // Boost por ROI histórico (clampado)
+    score += Math.max(-0.2, Math.min(0.2, stats.roi * 0.5));
 
-    return this.normalizeScore(confidence, 0, 1.2);
-
+    return this.normalizeScore(score, 0, 1.2);
   }
 
-  /** Normaliza score para 0-1. */
   private normalizeScore(score: number, min: number = 0, max: number = 1): number {
     return Math.max(0, Math.min(1, (score - min) / (max - min)));
   }
 
-  /** Determina tier baseado na confiança. */
   private getTier(confidence: number): Tier {
     for (const tier of this.tiers) {
-      if (confidence >= tier.minConfidence) {
-        return tier;
-      }
+      if (confidence >= tier.minConfidence) return tier;
     }
     return this.tiers[this.tiers.length - 1];
   }
 
-  /** Calcula stake Kelly fracionário. */
+  /** Quarter-Kelly com cap de 5% da banca. */
   private calculateKellyStake(prob: number, odds: number, bankroll: number): number {
     const b = odds - 1;
     const q = 1 - prob;
     const fullKelly = b > 0 ? (prob * b - q) / b : 0;
     const fractionKelly = fullKelly * this.kellyFraction;
-    const stake = fractionKelly * bankroll;
-    return Math.max(0, Math.min(stake, bankroll * 0.03));
+    return Math.max(0, Math.min(bankroll * 0.05, fractionKelly * bankroll));
   }
 
-  /** Calcula volatilidade do histórico de odds. */
   private calculateVolatility(history: number[]): number {
     if (history.length < 2) return 0.5;
-    const mean = history.reduce((sum, val) => sum + val, 0) / history.length;
-    const variance = history.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / history.length;
+    const mean = history.reduce((s, v) => s + v, 0) / history.length;
+    const variance = history.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / history.length;
     return Math.sqrt(variance) / mean;
   }
 }

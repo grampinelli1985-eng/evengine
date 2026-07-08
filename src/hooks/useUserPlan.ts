@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import {
   subscribeToProfile,
+  getCachedProfile,
   UserProfile,
   fetchProfile,
   canAnalyzeToday,
@@ -17,31 +18,24 @@ import {
 
 export function useUserPlan() {
   const { user } = useAuth();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  // Inicializa com o perfil em cache (cobre demo mode que já foi setado antes do mount)
+  const [profile, setProfile] = useState<UserProfile | null>(getCachedProfile());
 
   useEffect(() => {
-    if (!user) {
-      setProfile(null);
-      return;
-    }
-
-    // Load initial profile data
-    fetchProfile(userIdClean(user.id), user.email || '');
-
-    // Subscribe to profile changes (local updates and syncs)
+    // Sempre assina alterações de perfil — cobre tanto usuários reais quanto modo demo
     const unsubscribe = subscribeToProfile((prof) => {
       setProfile(prof);
     });
+
+    // Só busca no Supabase se houver usuário autenticado real
+    if (user) {
+      fetchProfile(user.id, user.email || '');
+    }
 
     return () => {
       unsubscribe();
     };
   }, [user]);
-
-  // Support clean ids (remove prefix if auth provider attaches any format)
-  function userIdClean(id: string) {
-    return id;
-  }
 
   return {
     profile,

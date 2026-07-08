@@ -119,72 +119,72 @@ function parseApiError(errors: Record<string, string>): ApiErrorKind {
 // ─── Aliases de seleções nacionais (PT/ES → EN) ──────────────
 
 const NATIONAL_TEAM_ALIASES: Record<string, string[]> = {
-  'ivory coast':            ['costa do marfim', 'cote d ivoire', 'côte d\'ivoire'],
-  'south korea':            ['coreia do sul', 'korea republic', 'korea rep'],
-  'north korea':            ['coreia do norte'],
-  'united states':          ['estados unidos', 'usa', 'us'],
-  'czech republic':         ['republica tcheca', 'czechia'],
-  'republic of ireland':    ['irlanda', 'ireland'],
-  'saudi arabia':           ['arabia saudita'],
-  'south africa':           ['africa do sul'],
-  'new zealand':            ['nova zelandia', 'nueva zelanda'],
-  'cape verde':             ['cabo verde'],
-  'trinidad & tobago':      ['trinidad e tobago', 'trinidad tobago'],
-  'bosnia herzegovina':     ['bosnia e herzegovina', 'bosnia & herzegovina'],
-  'northern ireland':       ['irlanda do norte'],
-  'dem. rep. congo':        ['republica democratica do congo', 'dr congo', 'congo dr'],
-  'central african rep.':   ['republica centro-africana'],
-  'equatorial guinea':      ['guine equatorial'],
-  'guinea-bissau':          ['guine-bissau'],
-  'switzerland':            ['suica', 'suíça'],
-  'germany':                ['alemanha'],
-  'france':                 ['franca', 'frança'],
-  'spain':                  ['espanha'],
-  'england':                ['inglaterra'],
-  'portugal':               ['portugal'],
-  'netherlands':            ['holanda', 'paises baixos'],
-  'brazil':                 ['brasil'],
-  'argentina':              ['argentina'],
-  'japan':                  ['japao', 'japão'],
-  'australia':              ['australia', 'austrália'],
-  'mexico':                 ['mexico', 'méxico'],
-  'morocco':                ['marrocos'],
-  'senegal':                ['senegal'],
-  'cameroon':               ['camaroões', 'camaroes'],
-  'nigeria':                ['nigeria', 'nigéria'],
-  'ghana':                  ['gana'],
-  'egypt':                  ['egito'],
-  'algeria':                ['argelia', 'argélia'],
-  'tunisia':                ['tunisia', 'tunísia'],
-  'colombia':               ['colombia', 'colômbia'],
-  'venezuela':              ['venezuela'],
-  'ecuador':                ['equador'],
-  'paraguay':               ['paraguai'],
-  'uruguay':                ['uruguai'],
-  'chile':                  ['chile'],
-  'peru':                   ['peru'],
-  'bolivia':                ['bolivia', 'bolívia'],
-  'turkey':                 ['turquia'],
-  'ukraine':                ['ucrania', 'ucrânia'],
-  'poland':                 ['polonia', 'polônia'],
-  'sweden':                 ['suecia', 'suécia'],
-  'norway':                 ['noruega'],
-  'denmark':                ['dinamarca'],
-  'finland':                ['finlandia', 'finlândia'],
-  'greece':                 ['grecia', 'grécia'],
-  'romania':                ['romenia', 'romênia'],
-  'hungary':                ['hungria'],
-  'slovakia':               ['eslovaquia', 'eslováquia'],
-  'slovenia':               ['eslovenia', 'eslovênia'],
-  'croatia':                ['croacia', 'croácia'],
-  'serbia':                 ['servia', 'sérvia'],
-  'austria':                ['austria', 'áustria'],
-  'belgium':                ['belgica', 'bélgica'],
-  'iran':                   ['ira', 'irã'],
-  'china':                  ['china'],
-  'india':                  ['india', 'índia'],
-  'iraq':                   ['iraque'],
-  'qatar':                  ['catar'],
+  'ivory coast': ['costa do marfim', 'cote d ivoire', 'côte d\'ivoire'],
+  'south korea': ['coreia do sul', 'korea republic', 'korea rep'],
+  'north korea': ['coreia do norte'],
+  'united states': ['estados unidos', 'usa', 'us'],
+  'czech republic': ['republica tcheca', 'czechia'],
+  'republic of ireland': ['irlanda', 'ireland'],
+  'saudi arabia': ['arabia saudita'],
+  'south africa': ['africa do sul'],
+  'new zealand': ['nova zelandia', 'nueva zelanda'],
+  'cape verde': ['cabo verde'],
+  'trinidad & tobago': ['trinidad e tobago', 'trinidad tobago'],
+  'bosnia herzegovina': ['bosnia e herzegovina', 'bosnia & herzegovina'],
+  'northern ireland': ['irlanda do norte'],
+  'dem. rep. congo': ['republica democratica do congo', 'dr congo', 'congo dr'],
+  'central african rep.': ['republica centro-africana'],
+  'equatorial guinea': ['guine equatorial'],
+  'guinea-bissau': ['guine-bissau'],
+  'switzerland': ['suica', 'suíça'],
+  'germany': ['alemanha'],
+  'france': ['franca', 'frança'],
+  'spain': ['espanha'],
+  'england': ['inglaterra'],
+  'portugal': ['portugal'],
+  'netherlands': ['holanda', 'paises baixos'],
+  'brazil': ['brasil'],
+  'argentina': ['argentina'],
+  'japan': ['japao', 'japão'],
+  'australia': ['australia', 'austrália'],
+  'mexico': ['mexico', 'méxico'],
+  'morocco': ['marrocos'],
+  'senegal': ['senegal'],
+  'cameroon': ['camaroões', 'camaroes'],
+  'nigeria': ['nigeria', 'nigéria'],
+  'ghana': ['gana'],
+  'egypt': ['egito'],
+  'algeria': ['argelia', 'argélia'],
+  'tunisia': ['tunisia', 'tunísia'],
+  'colombia': ['colombia', 'colômbia'],
+  'venezuela': ['venezuela'],
+  'ecuador': ['equador'],
+  'paraguay': ['paraguai'],
+  'uruguay': ['uruguai'],
+  'chile': ['chile'],
+  'peru': ['peru'],
+  'bolivia': ['bolivia', 'bolívia'],
+  'turkey': ['turquia'],
+  'ukraine': ['ucrania', 'ucrânia'],
+  'poland': ['polonia', 'polônia'],
+  'sweden': ['suecia', 'suécia'],
+  'norway': ['noruega'],
+  'denmark': ['dinamarca'],
+  'finland': ['finlandia', 'finlândia'],
+  'greece': ['grecia', 'grécia'],
+  'romania': ['romenia', 'romênia'],
+  'hungary': ['hungria'],
+  'slovakia': ['eslovaquia', 'eslováquia'],
+  'slovenia': ['eslovenia', 'eslovênia'],
+  'croatia': ['croacia', 'croácia'],
+  'serbia': ['servia', 'sérvia'],
+  'austria': ['austria', 'áustria'],
+  'belgium': ['belgica', 'bélgica'],
+  'iran': ['ira', 'irã'],
+  'china': ['china'],
+  'india': ['india', 'índia'],
+  'iraq': ['iraque'],
+  'qatar': ['catar'],
 };
 
 /** Normaliza nome para comparação: remove acentos, prefixos e pontuação */
@@ -242,7 +242,7 @@ function loadTracked(): TrackedMatch[] {
 function saveTracked(list: TrackedMatch[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  } catch {}
+  } catch { }
 }
 
 // ─── API Pública ─────────────────────────────────────────────
@@ -305,6 +305,19 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
 
   if (!forceToday && pending.length === 0) return [];
 
+  // Só faz poll no modo Copa se houver jogo ao vivo ou iniciando em ≤90 min
+  if (forceToday) {
+    const now = Date.now();
+    const WINDOW_MS = 90 * 60 * 1000;
+    const allTracked = loadTracked();
+    const hasMatchNearby = allTracked.some(m => {
+      if (m.resolved) return false;
+      const start = new Date(m.commenceTime).getTime();
+      const elapsed = now - start;
+      return (elapsed >= 0 && elapsed < 120 * 60 * 1000) || (start - now <= WINDOW_MS && start > now);
+    });
+    if (!hasMatchNearby) return [];
+  }
   const today = new Date().toISOString().split('T')[0];
   const dates = forceToday
     ? [today]
@@ -336,8 +349,14 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
 
       if (data.errors && Object.keys(data.errors).length > 0) {
         const detail = Object.values(data.errors as Record<string, string>).join(' · ');
-        console.error(`[LiveTracker] Erro da API Football:`, data.errors);
         const kind = parseApiError(data.errors as Record<string, string>);
+        // Em modo Copa (forceToday), erros de acesso/suspended são esperados no plano gratuito
+        // (Copa 2026 requer plano pago) — silenciar o banner vermelho neste contexto
+        if (forceToday && kind === 'suspended') {
+          console.warn(`[LiveTracker] Acesso negado no modo Copa (plano gratuito) — sem banner:`, data.errors);
+          continue;
+        }
+        console.error(`[LiveTracker] Erro da API Football:`, data.errors);
         scheduleError({ kind, detail });
         continue;
       }

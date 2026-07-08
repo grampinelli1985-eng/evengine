@@ -55,7 +55,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const data = await apiRes.json();
 
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
+    // Nunca cachear respostas com erros — a API-Football retorna status 200 mesmo em erros
+    // (ex: "Your account is suspended"), o que faria o Vercel CDN cachear o erro por 5 min.
+    const hasApiError = data?.errors && Object.keys(data.errors).length > 0;
+    if (apiRes.ok && !hasApiError) {
+      res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=120');
+    } else {
+      res.setHeader('Cache-Control', 'no-store');
+    }
+
     res.status(apiRes.status).json(data);
   } catch (err) {
     res.status(502).json({ error: 'Proxy error', detail: String(err) });

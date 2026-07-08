@@ -180,6 +180,17 @@ function saveAutoMap(map: Record<string, number>) {
   localStorage.setItem(AUTO_MAP_KEY, JSON.stringify(map));
 }
 
+export function getSeasonForLeague(leagueId?: number): number {
+  const now = new Date();
+  const year = now.getFullYear();
+  const calendarYearLeagues = [71, 13, 11, 253]; // Brasileirão, Libertadores, Sul-Americana, MLS
+  if (leagueId && calendarYearLeagues.includes(leagueId)) {
+    return year;
+  }
+  return now.getMonth() < 6 ? year - 1 : year; // Winter leagues: July starts new season registry
+}
+
+
 export async function getTeamIdAsync(teamName: string): Promise<number> {
   if (TEAM_NAME_MAP[teamName]) return TEAM_NAME_MAP[teamName];
 
@@ -240,8 +251,7 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
   const awayId = await getTeamIdAsync(awayTeam);
 
   const fetchForm = async (id: number, teamName: string) => {
-    const now = new Date();
-    const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+    const season = getSeasonForLeague(leagueId);
 
     if (id !== -1 && hasQuota(1)) {
       try {
@@ -343,8 +353,7 @@ export async function fetchInjuries(teamName: string, leagueId: number): Promise
     } catch { sessionStorage.removeItem(cacheKey); }
   }
 
-  const now = new Date();
-  const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+  const season = getSeasonForLeague(leagueId);
 
   try {
     const res = await fetch(`${API_BASE_URL}/injuries?team=${teamId}&league=${leagueId}&season=${season}`, {
@@ -491,9 +500,9 @@ export async function getFormaRecente(
   const resolvedId = teamId && teamId !== -1 ? teamId : await getTeamIdAsync(teamName);
   if (resolvedId && resolvedId !== -1) {
     try {
-      const now = new Date();
-      const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
-      const res = await fetch(`${API_BASE_URL}/teams/statistics?league=${LEAGUE_ID_MAP[sportKey] || 71}&season=${season}&team=${resolvedId}`, {
+      const league_id_calculated = LEAGUE_ID_MAP[sportKey] || 71;
+      const season = getSeasonForLeague(league_id_calculated);
+      const res = await fetch(`${API_BASE_URL}/teams/statistics?league=${league_id_calculated}&season=${season}&team=${resolvedId}`, {
         signal: AbortSignal.timeout(4000)
       });
       // [INC-SC-2 FIX] Verificar res.ok antes de chamar .json()
@@ -616,8 +625,7 @@ Retorne APENAS o JSON.`;
       const leagueId = leagueKey ? SPORTMONKS_LEAGUE_BY_NAME[leagueKey] : null;
 
       if (leagueId) {
-        const now = new Date();
-        const year = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+        const year = getSeasonForLeague(leagueId);
         const seasonId = await getSeasonId(leagueId, year);
 
         if (seasonId) {
@@ -931,8 +939,7 @@ async function fetchStandingsForSeason(leagueId: number, season: number): Promis
 }
 
 export async function fetchLeagueStandings(leagueId: number): Promise<any[] | null> {
-  const now = new Date();
-  const currentYear = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+  const currentYear = getSeasonForLeague(leagueId);
   const cacheKey = `standings_${leagueId}`;
   const errorCacheKey = `standings_error_${leagueId}`;
 

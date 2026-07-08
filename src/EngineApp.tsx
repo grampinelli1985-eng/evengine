@@ -22,7 +22,6 @@ import { seedEloFromOdds, sanitizeEloRatings, calcularEstadoJogo, EstadoJogo, at
 import { registerOpeningOdds, detectLineMovement } from './services/lineMovementService';
 import { calcularValueBets, validateReport } from './services/valueBetService';
 import { runTipsterEngine } from './services/tipsterEngine';
-import { getCLVSummary } from './services/clvService';
 import { buscarEstatisticasMedias, buscarH2H } from './services/scoutingService';
 import BancaModal from './components/BancaModal';
 import { getBancaAtual, setBancaAtual } from './services/bancaService';
@@ -81,33 +80,17 @@ const leagueIcons: Record<string, any> = {
 };
 
 interface EngineAppProps {
-  initialDemoMode?: boolean;
+  isPreviewMode?: boolean;
   onSignOut?: () => void;
 }
 
-export default function EngineApp({ initialDemoMode = false, onSignOut }: EngineAppProps) {
+export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAppProps) {
   const { user, signOut } = useAuth();
   const { profile, plan, apiKeyOwn } = useUserPlan();
-  
+
   const [bancas, setBancas] = useState<BancaDB[]>([]);
   const [activeBancaId, setActiveBancaId] = useState<string | null>(() => localStorage.getItem('evengine_active_banca_id'));
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
-
-  useEffect(() => {
-    if (initialDemoMode) {
-      const demoProfile = {
-        id: 'demo_user',
-        email: 'demo@evengine.ai',
-        plan: 'free' as const,
-        plan_expires_at: null,
-        analyses_today: Number(localStorage.getItem('evengine_demo_analyses_today') || '0'),
-        analyses_reset_at: new Date().toISOString(),
-        api_key_own: null,
-        created_at: new Date().toISOString()
-      };
-      setCachedProfile(demoProfile);
-    }
-  }, [initialDemoMode]);
 
   // Stripe Checkout Init & Url query parser
   useEffect(() => {
@@ -209,7 +192,10 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
   const [banca, setBanca] = useState(getBanca());
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isDemoMode, setIsDemoMode] = useState(initialDemoMode);
+  // Preview mode = sem autenticação, apenas visualização (sem análises)
+  // Demo mode = usuário registrado com plan='demo' (5 análises totais)
+  const isDemoMode = isPreviewMode && !user;
+  const isDemoUser = !!user && plan === 'demo';
   const [apiFootballError, setApiFootballError] = useState<ApiErrorType>(null);
 
   useEffect(() => {
@@ -438,6 +424,9 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
   }, []);
 
   const loadMatches = async (silent = false) => {
+    // Copa/torneio view usa API-Football exclusivamente — não consome Odds API
+    if (view === 'worldcup') return;
+
     if (!silent) setLoading(true);
     else setIsRefreshing(true);
 
@@ -491,6 +480,15 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
       loadMatches(true);
     }
   }, []);
+
+  // Recarrega partidas ao voltar para a view principal (evita fetch desnecessário na Copa)
+  const prevViewRef = useRef<string>(view);
+  useEffect(() => {
+    if (prevViewRef.current === 'worldcup' && view === 'main' && hasStarted) {
+      loadMatches(true);
+    }
+    prevViewRef.current = view;
+  }, [view]);
 
   const toggleFilterLeague = (key: string) => {
     setFilterLeagues(prev => {
@@ -568,6 +566,11 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
   );
 
   const handleAnalyze = async (match: Match) => {
+    // Preview mode: sem cadastro, redireciona para registro
+    if (isDemoMode) {
+      window.dispatchEvent(new CustomEvent('evengine_open_auth_modal'));
+      return;
+    }
     if (!canAnalyzeToday()) {
       window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
       return;
@@ -614,30 +617,23 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
       const valueReport = calcularValueBets(match, result);
       const finalReport = validateReport(valueReport);
 
-      // CORREÇÃO CLV
-      let clvSinal: 'POSITIVO' | 'NEUTRO' | 'NEGATIVO' = 'NEUTRO';
-      try {
-        const clvData = getCLVSummary();
-        if (clvData !== null) {
-          clvSinal = clvData.roi > 2 ? 'POSITIVO' : clvData.roi < -2 ? 'NEGATIVO' : 'NEUTRO';
-        }
-      } catch (e) {
-        clvSinal = 'NEUTRO';
-      }
-
-      // CORREÇÃO LINE MOVEMENT
+      // Line Movement + CLV signal (unified — clvSinal from this match's line movement, not global portfolio ROI)
       let lmTipo: 'STEAM_MOVE' | 'GRADUAL' | 'ESTAVEL' | 'ADVERSO' | 'REVERSE' = 'ESTAVEL';
       let lmDirecao: 'FAVOR' | 'CONTRA' | 'NEUTRO' = 'NEUTRO';
+      let clvSinal: 'POSITIVO' | 'NEUTRO' | 'NEGATIVO' = 'NEUTRO';
       try {
         const lmData = detectLineMovement(match);
         if (lmData !== null) {
           const varHome = lmData.variation?.home ?? 0;
           lmTipo = lmData.tem_steam ? 'STEAM_MOVE' : varHome > 3 ? 'GRADUAL' : varHome < -3 ? 'ADVERSO' : 'ESTAVEL';
-          lmDirecao = lmData.variation?.home > 0 ? 'FAVOR' : lmData.variation?.home < 0 ? 'CONTRA' : 'NEUTRO';
+          lmDirecao = varHome > 0 ? 'FAVOR' : varHome < 0 ? 'CONTRA' : 'NEUTRO';
+          if (lmData.tem_steam || varHome > 3) clvSinal = 'POSITIVO';
+          else if (varHome < -3) clvSinal = 'NEGATIVO';
         }
       } catch (e) {
         lmTipo = 'ESTAVEL';
         lmDirecao = 'NEUTRO';
+        clvSinal = 'NEUTRO';
       }
 
       const forma = result.scouting?.forma ?? 50;
@@ -810,6 +806,10 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
 
       for (const match of toAnalyze) {
         try {
+          if (isDemoMode) {
+            window.dispatchEvent(new CustomEvent('evengine_open_auth_modal'));
+            break;
+          }
           if (!canAnalyzeToday()) {
             window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
             break;
@@ -1349,7 +1349,6 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
                 )}
               </AnimatePresence>
             </div>
-          </div>
 
             <div className="w-[1px] h-6 bg-white/10 mx-0.5 2xl:mx-1 shrink-0" />
 
@@ -1360,8 +1359,6 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
               <Ticket size={14} className="text-blue-500 shrink-0" />
               <span className="text-[10px] font-black uppercase tracking-widest text-blue-400 whitespace-nowrap">AUTO</span>
             </button>
-
-
           </div>
 
           {/* Mobile Navigation Controls (Visible only under xl screens) */}
@@ -1610,6 +1607,7 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
             </motion.div>
           )}
         </AnimatePresence>
+        </div>
       </header>
 
       {stopLossState.suspensaoAtiva && (
@@ -1635,8 +1633,30 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
         </div>
       )}
 
-      {isDemoMode && (() => {
+      {isDemoMode && (
+          <div className="bg-amber-500/10 border-b border-amber-500/20 py-2.5 transition-all">
+            <div className="max-w-[1600px] mx-auto px-6 flex items-center justify-center flex-wrap gap-x-4 gap-y-1">
+              <div className="flex items-center gap-2">
+                <AlertCircle size={14} className="text-amber-500 shrink-0" />
+                <p className="text-[10px] text-amber-500/80 font-bold uppercase tracking-widest leading-none">
+                  MODO VISUALIZAÇÃO
+                </p>
+              </div>
+              <p className="text-[10px] text-amber-400/90 font-medium">
+                Cadastre-se gratuitamente para desbloquear 5 análises de demonstração.
+              </p>
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('evengine_open_auth_modal'))}
+                className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[9px] font-black uppercase tracking-widest rounded transition-all border border-amber-500/30"
+              >
+                Criar Conta Grátis
+              </button>
+            </div>
+          </div>
+        );}
+      {!isDemoMode && (() => {
         const quotaInfo = getOddsApiQuotaInfo();
+        if (!quotaInfo.errorStatus && import.meta.env.VITE_ODDS_API_KEY && import.meta.env.VITE_ODDS_API_KEY !== 'YOUR_ODDS_API_KEY') return null;
         let motivo = "Chave de Odds ou IA (Gemini) expirada/ausente.";
         if (quotaInfo.errorStatus === '401') {
           motivo = "A chave da Odds API retornou erro 401 (Não Autorizada/Inválida). Verifique sua chave no arquivo .env.";
@@ -1645,7 +1665,6 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
         } else if (!import.meta.env.VITE_ODDS_API_KEY || import.meta.env.VITE_ODDS_API_KEY === 'YOUR_ODDS_API_KEY') {
           motivo = "A chave VITE_ODDS_API_KEY não está configurada no seu arquivo .env.";
         }
-        
         return (
           <div className="bg-amber-500/10 border-b border-amber-500/20 py-2.5 transition-all">
             <div className="max-w-[1600px] mx-auto px-6 flex items-center justify-center flex-wrap gap-x-4 gap-y-1">
@@ -1658,11 +1677,8 @@ export default function EngineApp({ initialDemoMode = false, onSignOut }: Engine
               <p className="text-[10px] text-amber-400/90 font-medium">
                 {motivo}
               </p>
-              <button 
-                onClick={() => {
-                  sessionStorage.clear();
-                  window.location.reload();
-                }} 
+              <button
+                onClick={() => { sessionStorage.clear(); window.location.reload(); }}
                 className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[9px] font-black uppercase tracking-widest rounded transition-all border border-amber-500/30"
               >
                 Limpar Cache e Recarregar

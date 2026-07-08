@@ -6,7 +6,6 @@
 import { Match, AnalysisResponse, ValueBetReport, MarketValueBet, LEAGUES, MarketReference } from '../types';
 
 const MAX_EDGE_REALISTA = 0.12; // EV-04: edges above 12% vs Pinnacle are virtually impossible and indicate model error
-export const MIN_PROB_THRESHOLD = 5;
 
 export const KELLY_MAX_ABSOLUTO = 0.03; // 3% do bankroll — teto hard
 
@@ -94,19 +93,31 @@ export function removeOverroundShin(odds: number[]): number[] {
 }
 
 export function calcularValueBets(match: Match, analysis: AnalysisResponse): ValueBetReport {
-  // EV-01: Always use Pinnacle (or betfair_ex_eu as fallback) for reference bookmaker
-  const refBookmaker = match.bookmakers?.find(b => b.key === 'pinnacle')
-    ?? match.bookmakers?.find(b => b.key === 'betfair_ex_eu')
-    ?? match.bookmakers?.[0];
+  // EV-01: Always use Pinnacle (or betfair_ex_eu as fallback) for reference bookmaker.
+  // EV-05: Track whether we fell through to a soft bookmaker — affects model confidence.
+  const pinnacleBook = match.bookmakers?.find(b => b.key === 'pinnacle');
+  const betfairBook = match.bookmakers?.find(b => b.key === 'betfair_ex_eu');
+  const hasSharpRef = !!(pinnacleBook ?? betfairBook);
+  const refBookmaker = pinnacleBook ?? betfairBook ?? match.bookmakers?.[0];
   const bookmaker = refBookmaker;
   if (!bookmaker) return { mercados: [], total_value_bets: 0, tem_value: false, melhor_value: null };
+  if (!hasSharpRef) {
+    console.warn(
+      `[EV-05] Sem referência sharp (Pinnacle/Betfair) para ${match.home_team} vs ${match.away_team}.` +
+      ` Usando "${bookmaker.key}" como referência — edge calculado pode ser artificial.`
+    );
+  }
 
   const league = LEAGUES.find(l => l.key === match.sport_key);
   const imprevisibilidade = league?.imprevisibilidade || 'media';
 
-  const w = !league ? 0.85 :
-            imprevisibilidade === 'muito_alta' ? 0.80 :
-            imprevisibilidade === 'alta' ? 0.90 : 1.0;
+  // EV-05: Reduce model weight when using soft bookmaker — their lines are inefficient,
+  // so trusting our model more than the reference would inflate EV artificially.
+  // Cap Bayesian weight at 0.70 without a sharp reference.
+  const wBase = !league ? 0.85 :
+    imprevisibilidade === 'muito_alta' ? 0.80 :
+      imprevisibilidade === 'alta' ? 0.90 : 1.0;
+  const w = hasSharpRef ? wBase : Math.min(wBase, 0.70);
 
   const ref = extractMarketReference(match);
 
@@ -130,7 +141,7 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
       fairHome = bookmakerFair[0];
       fairDraw = h2hOdds.length === 3 ? bookmakerFair[1] : 0.0;
       fairAway = h2hOdds.length === 3 ? bookmakerFair[2] : bookmakerFair[1];
-    } catch {}
+    } catch { }
   }
 
   // Regressão Bayesiana (Shrinkage)
@@ -161,7 +172,7 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
       try {
         const fairProbs = removeOverround([o25.price, u25.price]);
         fairOver25 = fairProbs[0];
-      } catch {}
+      } catch { }
     }
   }
   const probOver25Calibrada = w * (analysis.gols.over25.probabilidade / 100) + (1 - w) * fairOver25;
@@ -182,13 +193,14 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
 
     if (homeOdd && drawOdd && awayOdd) {
       try {
-        // EV-03: Derive DC odds from fair probs (no overround) for correct EV calculation
-        const prob1X_fair = fairHome + fairDraw;
-        const probX2_fair = fairDraw + fairAway;
-        const prob12_fair = fairHome + fairAway;
-        const dc1X_bookmaker_odd = prob1X_fair > 0 ? 1 / prob1X_fair : 1 / ((1 / homeOdd) + (1 / drawOdd));
-        const dcX2_bookmaker_odd = probX2_fair > 0 ? 1 / probX2_fair : 1 / ((1 / drawOdd) + (1 / awayOdd));
-        const dc12_bookmaker_odd = prob12_fair > 0 ? 1 / prob12_fair : 1 / ((1 / homeOdd) + (1 / awayOdd));
+        // EV-03 fix: DC odds derived from actual bookmaker H2H odds, not fair probs.
+        // Using 1/prob_fair as "bookmaker odd" compared our model to a vig-free line,
+        // creating an artificial edge. Instead we combine the raw bookmaker H2H odds
+        // the same way a bookmaker would price DC: 1 / (1/o1 + 1/o2) gives the
+        // effective bookmaker DC price (preserving the original vig structure).
+        const dc1X_bookmaker_odd = 1 / ((1 / homeOdd) + (1 / drawOdd));
+        const dcX2_bookmaker_odd = 1 / ((1 / drawOdd) + (1 / awayOdd));
+        const dc12_bookmaker_odd = 1 / ((1 / homeOdd) + (1 / awayOdd));
 
         const probIa1X = probHomeCalibrada + probDrawCalibrada;
         const probIaX2 = probDrawCalibrada + probAwayCalibrada;
@@ -222,9 +234,116 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
     }
   }
 
-  // GATE-02: Filter by min/max odd for clubs
+  // 4. BTTS (Ambas Marcam)
+  const bttsMarket = bookmaker.markets.find(m => m.key === 'btts');
+  if (analysis.poisson?.btts_prob !== undefined) {
+    const bttsProb = analysis.poisson.btts_prob / 100;
+    let fairBtts = 0.50;
+    let bttsYesOdd: number | null = null;
+
+    if (bttsMarket) {
+      const yes = bttsMarket.outcomes.find((o: any) => o.name === 'Yes');
+      const no = bttsMarket.outcomes.find((o: any) => o.name === 'No');
+      if (yes && no) {
+        try {
+          const fp = removeOverround([yes.price, no.price]);
+          fairBtts = fp[0];
+          bttsYesOdd = yes.price;
+        } catch { }
+      }
+    }
+
+    const probBttsCalibrada = w * bttsProb + (1 - w) * fairBtts;
+    if (bttsYesOdd) {
+      markets.push(createValueMarket('Ambas Marcam (Sim)', bttsYesOdd, probBttsCalibrada));
+    }
+  }
+
+  // 5. DNB (Empate Anula Aposta)
+  {
+    const dnbMarket = bookmaker.markets.find(m => m.key === 'draw_no_bet');
+    const dnbHRaw = h2h?.outcomes.find((o: any) => o.name === match.home_team)?.price;
+    const dnbARaw = h2h?.outcomes.find((o: any) => o.name === match.away_team)?.price;
+    const total12 = probHomeCalibrada + probAwayCalibrada;
+
+    if (total12 > 0 && dnbHRaw && dnbARaw) {
+      const probDnbHome = probHomeCalibrada / total12;
+      const probDnbAway = probAwayCalibrada / total12;
+      const fairTotal12 = fairHome + fairAway;
+
+      let dnbHOdd: number | null = null;
+      let dnbAOdd: number | null = null;
+      let dnbEstimated = false;
+
+      if (dnbMarket) {
+        dnbHOdd = dnbMarket.outcomes.find((o: any) => o.name === match.home_team)?.price ?? null;
+        dnbAOdd = dnbMarket.outcomes.find((o: any) => o.name === match.away_team)?.price ?? null;
+      } else if (fairTotal12 > 0) {
+        // Derive from sharp h2h fair probs (vig-free — mark estimated)
+        dnbHOdd = fairTotal12 / fairHome;
+        dnbAOdd = fairTotal12 / fairAway;
+        dnbEstimated = true;
+      }
+
+      if (dnbHOdd) markets.push(createValueMarket('Empate Anula - Casa', dnbHOdd, probDnbHome, dnbEstimated));
+      if (dnbAOdd) markets.push(createValueMarket('Empate Anula - Fora', dnbAOdd, probDnbAway, dnbEstimated));
+    }
+  }
+
+  // 6. Asian Totals (Over 2.0, 2.25, 2.75, 3.0)
+  // Effective probs account for push scenarios per Dixon-Coles/Asian lines math:
+  //   Over N.0:  win=P(goals>N), push=P(goals=N), lose=P(goals<N)  → eff = P(win)/(P(win)+P(lose))
+  //   Over N.25: split ½ on N.0 + ½ on N.5                         → eff = P(win)/(1-0.5*P(push))
+  //   Over N.75: split ½ on N.5 + ½ on (N+1).0                     → eff = (P(win)+0.5*P(push))/(1-0.5*P(push))
+  if (analysis.poisson && totals) {
+    const po = analysis.poisson;
+    const p25 = po.over_2_5 / 100;  // P(goals ≥ 3)
+    const p15 = po.over_1_5 / 100;  // P(goals ≥ 2)
+    const p35 = po.over_3_5 / 100;  // P(goals ≥ 4)
+
+    const eq2 = Math.max(0, p15 - p25);   // P(goals = 2)
+    const eq3 = Math.max(0, p25 - p35);   // P(goals = 3)
+    const lt2 = Math.max(0, 1 - p15);     // P(goals ≤ 1)
+    const lt3 = Math.max(0, 1 - p25);     // P(goals ≤ 2)
+
+    if (p25 > 0) {
+      const eff20 = (p25 + lt2) > 0 ? p25 / (p25 + lt2) : 0;
+      const eff225 = (1 - 0.5 * eq2) > 0 ? p25 / (1 - 0.5 * eq2) : 0;
+      const eff275 = (1 - 0.5 * eq3) > 0 ? (p35 + 0.5 * eq3) / (1 - 0.5 * eq3) : 0;
+      const eff30 = (p35 + lt3) > 0 ? p35 / (p35 + lt3) : 0;
+
+      // Try alternate_totals for real bookmaker Asian odds
+      const altTotals = bookmaker.markets.find(m => m.key === 'alternate_totals');
+      const getAltOdd = (label: string): number | null =>
+        altTotals?.outcomes.find((o: any) => o.name === label)?.price ?? null;
+
+      const asianLines = [
+        { name: 'Asian Over 2.0', eff: eff20, altLabel: 'Over 2' },
+        { name: 'Asian Over 2.25', eff: eff225, altLabel: 'Over 2.25' },
+        { name: 'Asian Over 2.75', eff: eff275, altLabel: 'Over 2.75' },
+        { name: 'Asian Over 3.0', eff: eff30, altLabel: 'Over 3' },
+      ];
+
+      for (const line of asianLines) {
+        if (line.eff <= 0) continue;
+        // Bookmaker reference: scale sharp fair Over 2.5 prob proportionally by model shape
+        const refProb = fairOver25 * (line.eff / p25);
+        if (refProb <= 0 || refProb >= 1) continue;
+
+        const altOdd = getAltOdd(line.altLabel);
+        const estimated = !altOdd;
+        const bookmakerOdd = altOdd ?? (1 / refProb);
+
+        const probCalibrada = w * line.eff + (1 - w) * refProb;
+        markets.push(createValueMarket(line.name, bookmakerOdd, probCalibrada, estimated));
+      }
+    }
+  }
+
+  // GATE-02: Filter by min/max odd for clubs (Asian/prop markets exempt from min odd)
   const validatedMarkets = markets.filter(m => validateMarket(m)).filter(m => {
-    if (m.odd_api < CLUB_MIN_ODD || m.odd_api > CLUB_MAX_ODD) return false;
+    const isAsianOrProp = m.market.startsWith('Asian') || m.market.startsWith('Ambas') || m.market.startsWith('Empate Anula');
+    if (!isAsianOrProp && (m.odd_api < CLUB_MIN_ODD || m.odd_api > CLUB_MAX_ODD)) return false;
     return true;
   });
 
@@ -240,7 +359,7 @@ function createValueMarket(name: string, oddApi: number, probIA: number, estimat
   const fairOdd = 1 / probIA;
   let edge = (probIA * oddApi) - 1;
 
-  const atingiuTeto = edge > MAX_EDGE_REALISTA;
+  const atingiuTeto = edge >= MAX_EDGE_REALISTA * 0.85;
   const edgeLimitado = Math.min(edge, MAX_EDGE_REALISTA);
 
   return {
@@ -249,7 +368,7 @@ function createValueMarket(name: string, oddApi: number, probIA: number, estimat
     prob_ia: probIA * 100,
     odd_fair: fairOdd,
     edge: edgeLimitado,
-    is_value_bet: edge > 0.05 && !atingiuTeto,
+    is_value_bet: edge > 0.05 && !atingiuTeto && edge <= MAX_EDGE_REALISTA,
     recomenda: edge > 0.10 && !atingiuTeto,
     odd_is_estimated: estimated || atingiuTeto,
     observacao: ''
@@ -258,13 +377,13 @@ function createValueMarket(name: string, oddApi: number, probIA: number, estimat
 
 function validateMarket(market: MarketValueBet): boolean {
   if (market.odd_is_estimated && market.edge > MAX_EDGE_REALISTA) return false;
-  if (market.prob_ia < MIN_PROB_THRESHOLD) return false;
+  if (market.prob_ia < 5) return false;
   return true;
 }
 
 export function validateReport(report: ValueBetReport): ValueBetReport {
   report.mercados = report.mercados.map(m => {
-    if (m.prob_ia < MIN_PROB_THRESHOLD) m.is_value_bet = false;
+    if (m.prob_ia < 15) m.is_value_bet = false;
     if (m.odd_is_estimated && m.edge > MAX_EDGE_REALISTA) m.is_value_bet = false;
     return m;
   });

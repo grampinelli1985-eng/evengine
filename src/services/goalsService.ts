@@ -241,7 +241,19 @@ export async function analyzeGoalsMarket(
     }
   }
 
-  const poissonData = calculatePoisson(lambdaHome, lambdaAway, undefined, xgData);
+  let blendedHomeXg = lambdaHome;
+  let blendedAwayXg = lambdaAway;
+  const ALPHA_XG = 0.35;
+  if (xgData) {
+    if (xgData.home_xg !== null && xgData.home_xg !== undefined) {
+      blendedHomeXg = (1 - ALPHA_XG) * lambdaHome + ALPHA_XG * xgData.home_xg;
+    }
+    if (xgData.away_xg !== null && xgData.away_xg !== undefined) {
+      blendedAwayXg = (1 - ALPHA_XG) * lambdaAway + ALPHA_XG * xgData.away_xg;
+    }
+  }
+
+  const poissonData = calculatePoisson(blendedHomeXg, blendedAwayXg, undefined);
 
   const finalPoissonProbs = {
     over0_5: (poissonData.over_0_5 ?? 0) / 100,

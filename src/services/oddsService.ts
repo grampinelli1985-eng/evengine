@@ -241,8 +241,8 @@ export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Pr
       try {
         const { data, timestamp } = JSON.parse(cached);
         
-        // TTL Dinâmico: 30 minutos padrão, reduzindo para 5 minutos se faltar < 2 horas para o kickoff (ou < 2 horas pós-kickoff)
-        let currentTTL = 30 * 60 * 1000; // 30 minutos padrão
+        // TTL Dinâmico: 15 minutos padrão, reduzindo para 5 minutos se faltar < 2 horas para o kickoff (ou < 2 horas pós-kickoff)
+        let currentTTL = 15 * 60 * 1000; // 15 minutos padrão
         if (Array.isArray(data) && data.length > 0) {
           const now = Date.now();
           const twoHoursMs = 2 * 60 * 60 * 1000;
