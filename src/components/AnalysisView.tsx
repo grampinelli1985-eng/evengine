@@ -22,6 +22,7 @@ import { AnalysisDecisionCard } from './AnalysisDecisionCard';
 import { recalculateTipsterMetrics } from '../services/tipsterEngine';
 import { poissonDistribution } from '../services/goalsService';
 import { getFormaRecente } from '../services/scoutingService';
+import AHCard from './Analysis/AHCard';
 import { createBet } from '../services/betService';
 
 const tipsterService = new TipsterAnalysisServiceBase();
@@ -1099,6 +1100,11 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                   )})}
                 </div>
               </section>
+
+              {/* 1b. Asian Handicap Equivalentes — plano Pro/Sharp */}
+              {(analysis as any).asianHandicap && (
+                <AHCard analysis={(analysis as any).asianHandicap} />
+              )}
 
               {/* 2. Ranking Elo Card (Based on Imagem 02) */}
               <div className="grid grid-cols-12 gap-6">

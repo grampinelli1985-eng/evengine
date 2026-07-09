@@ -7,6 +7,13 @@ import { Match, LEAGUES } from '../types';
 
 const ODDS_API_BASE_URL = 'https://api.the-odds-api.com/v4/sports';
 
+// Cache keys
+const ACTIVE_SPORTS_CACHE_KEY = 'evengine_active_sports_cache';
+const ACTIVE_SPORTS_TTL = 60 * 60 * 1000; // 1 hora — lista de esportes ativos muda pouco
+const ODDS_CACHE_PREFIX = 'evengine_odds_cache_';
+const ODDS_CACHE_TTL_DEFAULT = 30 * 60 * 1000; // 30 min padrão (localStorage sobrevive reload)
+const ODDS_CACHE_TTL_NEAR_KICKOFF = 5 * 60 * 1000; // 5 min se jogo < 2h
+
 const MOCK_MATCHES: Match[] = [
   {
     id: 'mock_match_1',
@@ -220,143 +227,191 @@ const MOCK_MATCHES: Match[] = [
   }
 ];
 
+// ─── localStorage cache helpers ───────────────────────────────────────────────
+
+function lsGet<T>(key: string, ttl: number): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { data, ts } = JSON.parse(raw);
+    if (Date.now() - ts > ttl) { localStorage.removeItem(key); return null; }
+    return data as T;
+  } catch { return null; }
+}
+
+function lsSet(key: string, data: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() })); } catch { /* quota */ }
+}
+
+// ─── Step 1: Busca lista de esportes ativos (GRATUITO — não consome cota) ────
+
+async function fetchActiveSportKeys(apiKey: string): Promise<Set<string>> {
+  const cached = lsGet<string[]>(ACTIVE_SPORTS_CACHE_KEY, ACTIVE_SPORTS_TTL);
+  if (cached) {
+    console.log(`[OddsAPI] Active sports from cache: ${cached.length} sports`);
+    return new Set(cached);
+  }
+
+  try {
+    const res = await fetch(
+      `${ODDS_API_BASE_URL}?apiKey=${apiKey}&all=false`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (!res.ok) {
+      console.warn(`[OddsAPI] /sports returned ${res.status} — skipping active sports filter`);
+      return new Set(); // Set vazio = não filtra, tenta buscar tudo
+    }
+    const sports: Array<{ key: string; active: boolean }> = await res.json();
+    const activeKeys = sports.filter(s => s.active).map(s => s.key);
+    lsSet(ACTIVE_SPORTS_CACHE_KEY, activeKeys);
+    console.log(`[OddsAPI] Active sports: ${activeKeys.join(', ')}`);
+    return new Set(activeKeys);
+  } catch (err) {
+    console.warn('[OddsAPI] Failed to fetch active sports:', err);
+    return new Set(); // fallback: não filtra
+  }
+}
+
+// ─── TTL dinâmico por proximidade de kickoff ──────────────────────────────────
+
+function getTTLForData(data: Match[]): number {
+  if (!Array.isArray(data) || data.length === 0) return ODDS_CACHE_TTL_DEFAULT;
+  const now = Date.now();
+  const twoH = 2 * 60 * 60 * 1000;
+  const hasNearKickoff = data.some(m => {
+    if (!m.commence_time) return false;
+    const delta = new Date(m.commence_time).getTime() - now;
+    return delta > -twoH && delta < twoH;
+  });
+  return hasNearKickoff ? ODDS_CACHE_TTL_NEAR_KICKOFF : ODDS_CACHE_TTL_DEFAULT;
+}
+
+// ─── fetchAllMatches ──────────────────────────────────────────────────────────
 
 export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Promise<Match[]> {
   if (!apiKey || apiKey === 'MY_ODDS_API_KEY') {
     return MOCK_MATCHES;
   }
 
-  const leaguesToFetch = leagueKeys 
+  // Step 1: Descobrir quais ligas estão ativas AGORA (grátis)
+  const activeSports = await fetchActiveSportKeys(apiKey);
+  const hasActiveSports = activeSports.size > 0;
+
+  const leaguesToFetch = (leagueKeys
     ? LEAGUES.filter(l => leagueKeys.includes(l.key))
-    : LEAGUES;
+    : LEAGUES
+  ).filter(league => {
+    // Se conseguimos a lista de ativos, filtra. Se falhou, tenta tudo.
+    if (!hasActiveSports) return true;
+    const isActive = activeSports.has(league.key);
+    if (!isActive) {
+      console.log(`[OddsAPI] Liga fora de temporada — pulando sem consumir cota: ${league.key}`);
+    }
+    return isActive;
+  });
+
+  if (leaguesToFetch.length === 0) {
+    console.log('[OddsAPI] Nenhuma liga ativa no momento — zero requests consumidas.');
+    return [];
+  }
+
+  console.log(`[OddsAPI] Ligas ativas para buscar: ${leaguesToFetch.map(l => l.key).join(', ')}`);
 
   const results: PromiseSettledResult<Match[]>[] = [];
 
   for (const league of leaguesToFetch) {
-    const cacheKey = `odds_cache_${league.key}`;
-    const cached = sessionStorage.getItem(cacheKey);
-    
-    let isCached = false;
-    if (cached) {
-      try {
-        const { data, timestamp } = JSON.parse(cached);
-        
-        // TTL Dinâmico: 15 minutos padrão, reduzindo para 5 minutos se faltar < 2 horas para o kickoff (ou < 2 horas pós-kickoff)
-        let currentTTL = 15 * 60 * 1000; // 15 minutos padrão
-        if (Array.isArray(data) && data.length > 0) {
-          const now = Date.now();
-          const twoHoursMs = 2 * 60 * 60 * 1000;
-          const temJogoProximo = data.some((m: any) => {
-            if (!m.commence_time) return false;
-            const kickoff = new Date(m.commence_time).getTime();
-            const delta = kickoff - now;
-            return delta > -twoHoursMs && delta < twoHoursMs;
-          });
-          if (temJogoProximo) {
-            currentTTL = 5 * 60 * 1000; // 5 minutos se próximo do kickoff
-          }
-        }
+    const cacheKey = `${ODDS_CACHE_PREFIX}${league.key}`;
 
-        if (Date.now() - timestamp < currentTTL) {
-          results.push({ status: 'fulfilled', value: data as Match[] });
-          isCached = true;
-        }
-      } catch (e) {
-        sessionStorage.removeItem(cacheKey);
+    // Step 2: Checar cache localStorage (sobrevive reload)
+    const cached = lsGet<Match[]>(cacheKey, ODDS_CACHE_TTL_DEFAULT);
+    if (cached !== null) {
+      // Recalcular TTL baseado nos dados cacheados
+      const dynamicTTL = getTTLForData(cached);
+      const raw = localStorage.getItem(cacheKey);
+      if (raw) {
+        try {
+          const { ts } = JSON.parse(raw);
+          if (Date.now() - ts < dynamicTTL) {
+            console.log(`[OddsAPI] Cache hit (localStorage): ${league.key}`);
+            results.push({ status: 'fulfilled', value: cached });
+            continue;
+          }
+        } catch { /* ignora, vai buscar */ }
       }
     }
 
-    if (isCached) continue;
-
+    // Step 3: Buscar odds da liga ativa
     try {
       const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu';
       const url = `${ODDS_API_BASE_URL}/${league.key}/odds/?apiKey=${apiKey}&bookmakers=${SHARP_BOOKMAKERS}&markets=h2h,totals&oddsFormat=decimal&daysFrom=7`;
       const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
-      
+
       if (!response.ok) {
-        // API-01: Differentiate permanent (401) vs temporary (429) errors
         if (response.status === 401) {
-          sessionStorage.setItem('odds_api_error_status', '401');
-          throw new Error('API_KEY_INVALID'); // permanent error — stop all requests
+          localStorage.setItem('odds_api_error_status', '401');
+          throw new Error('API_KEY_INVALID');
         }
         if (response.status === 429) {
-          sessionStorage.setItem('odds_api_error_status', '429');
-          throw new Error('RATE_LIMITED'); // temporary — retry later
+          localStorage.setItem('odds_api_error_status', '429');
+          throw new Error('RATE_LIMITED');
         }
         console.error(`[OddsAPI] HTTP ${response.status} for league ${league.key}`);
         results.push({ status: 'fulfilled', value: [] });
       } else {
-        sessionStorage.removeItem('odds_api_error_status');
+        localStorage.removeItem('odds_api_error_status');
+
         const remaining = response.headers.get('x-requests-remaining');
         const used = response.headers.get('x-requests-used');
-        if (remaining !== null) {
-          sessionStorage.setItem('odds_api_remaining', remaining);
-        }
-        if (used !== null) {
-          sessionStorage.setItem('odds_api_used', used);
-        }
+        if (remaining !== null) localStorage.setItem('odds_api_remaining', remaining);
+        if (used !== null) localStorage.setItem('odds_api_used', used);
 
-        // API-02: Check abort signal before JSON.parse — AbortSignal.timeout() cancels
-        // the fetch but does NOT cancel the pending response.json() microtask, which
-        // can throw an unhandled DOMException or block the event loop on large payloads.
         if (response.bodyUsed === false) {
           const contentLength = response.headers.get('content-length');
           if (contentLength && parseInt(contentLength, 10) > 5 * 1024 * 1024) {
-            console.warn(`[OddsAPI] Large response for ${league.key}: ${contentLength} bytes — skipping parse`);
+            console.warn(`[OddsAPI] Payload muito grande para ${league.key} — pulando parse`);
             results.push({ status: 'fulfilled', value: [] });
             continue;
           }
         }
 
-        const data = await response.json();
+        const data: Match[] = await response.json();
 
-        // API-03: Cache even empty results (with shorter TTL) to avoid repeated API calls consuming quota
-        if (Array.isArray(data) && data.length === 0) {
-          sessionStorage.setItem(cacheKey, JSON.stringify({ data: [], ts: Date.now(), empty: true, timestamp: Date.now() }));
-        } else if (Array.isArray(data) && data.length > 0) {
-          sessionStorage.setItem(cacheKey, JSON.stringify({ data, timestamp: Date.now() }));
-        }
-
-        results.push({ status: 'fulfilled', value: data as Match[] });
+        // Cachear resultado (mesmo vazio, para não repetir requests)
+        lsSet(cacheKey, Array.isArray(data) ? data : []);
+        results.push({ status: 'fulfilled', value: Array.isArray(data) ? data : [] });
       }
     } catch (err: any) {
-      // API-01: API_KEY_INVALID is permanent — propagate to stop all requests
-      // RATE_LIMITED is temporary — propagate to fall back to mock data
       if (err.message === 'API_KEY_INVALID' || err.message === 'RATE_LIMITED' || err.message === 'QUOTA_EXCEEDED') {
         results.push({ status: 'rejected', reason: err });
       } else {
         results.push({ status: 'fulfilled', value: [] });
       }
     }
-    
-    // Pequeno delay para evitar o "429 Too Many Requests" do Burst Rate Limit da The Odds API
+
+    // Delay anti-burst (The Odds API burst limit)
     await new Promise(resolve => setTimeout(resolve, 350));
   }
 
-  const hasQuotaIssue = results.some(r => r.status === 'rejected' && (r.reason.message === 'QUOTA_EXCEEDED' || r.reason.message === 'RATE_LIMITED' || r.reason.message === 'API_KEY_INVALID'));
-  if (hasQuotaIssue) {
-    return MOCK_MATCHES;
-  }
+  const hasQuotaIssue = results.some(
+    r => r.status === 'rejected' &&
+    ['QUOTA_EXCEEDED', 'RATE_LIMITED', 'API_KEY_INVALID'].includes(r.reason?.message)
+  );
+  if (hasQuotaIssue) return MOCK_MATCHES;
 
   const allMatches: Match[] = results
     .filter((r): r is PromiseFulfilledResult<Match[]> => r.status === 'fulfilled' && Array.isArray(r.value))
     .flatMap(r => r.value);
 
-  // Deduplication by ID
-  const uniqueMatchesMap = new Map();
-  allMatches.forEach(m => {
-    if (!uniqueMatchesMap.has(m.id)) {
-      uniqueMatchesMap.set(m.id, m);
-    }
-  });
-
-  return Array.from(uniqueMatchesMap.values());
+  // Deduplicação por ID
+  const seen = new Map<string, Match>();
+  allMatches.forEach(m => { if (!seen.has(m.id)) seen.set(m.id, m); });
+  return Array.from(seen.values());
 }
 
 export function getOddsApiQuotaInfo() {
   return {
-    remaining: sessionStorage.getItem('odds_api_remaining'),
-    used: sessionStorage.getItem('odds_api_used'),
-    errorStatus: sessionStorage.getItem('odds_api_error_status')
+    remaining: localStorage.getItem('odds_api_remaining'),
+    used: localStorage.getItem('odds_api_used'),
+    errorStatus: localStorage.getItem('odds_api_error_status')
   };
 }

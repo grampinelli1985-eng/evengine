@@ -4,10 +4,11 @@ import { ArrowLeft, RefreshCw, Trophy, Globe, BarChart3, Activity, Calendar } fr
 import { WCMatch, WCAnalysisResult, WC_TOURNAMENTS, WCTournament } from '../../services/worldCup/wcTypes';
 import { fetchWCMatches } from '../../services/worldCup/wcOddsService';
 import { runWCTipsterEngine } from '../../services/worldCup/wcTipsterEngine';
+import { fetchWCApiFootballData, WCApiFootballData } from '../../services/worldCup/wcApiFootballService';
 import { getAllWCRatings } from '../../services/worldCup/wcEloService';
+import { canAnalyzeToday, incrementAnalysesToday } from '../../services/planService';
 import WorldCupMatchCard from './WorldCupMatchCard';
 import { buildLiveKey } from '../../services/liveTrackerService';
-import { canAnalyzeToday, incrementAnalysesToday } from '../../services/planService';
 
 interface WorldCupViewProps {
   onBack: () => void;
@@ -19,7 +20,7 @@ interface WorldCupViewProps {
   onAnalyze?: (match: any) => Promise<any> | void;
 }
 
-type DateFilter = 1 | 2 | 3 | 7; // dias à frente
+type DateFilter = 1 | 2 | 3 | 7;
 
 const DATE_FILTERS: { label: string; value: DateFilter }[] = [
   { label: 'Hoje', value: 1 },
@@ -32,7 +33,7 @@ function matchWithinDays(match: WCMatch, days: DateFilter): boolean {
   const now = Date.now();
   const cutoff = now + days * 24 * 60 * 60 * 1000;
   const t = new Date(match.commence_time).getTime();
-  return t >= now - 2 * 60 * 60 * 1000 && t <= cutoff; // -2h para partidas já iniciadas
+  return t >= now - 2 * 60 * 60 * 1000 && t <= cutoff;
 }
 
 export default function WorldCupView({
@@ -66,18 +67,31 @@ export default function WorldCupView({
 
   async function handleAnalyze(match: WCMatch) {
     const isReAnalysis = !!analyses[match.id];
-    // Cota só é verificada/consumida na primeira análise — re-análise é gratuita
+
     if (!isReAnalysis && !canAnalyzeToday()) {
       window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
       return;
     }
+
     setAnalyzingId(match.id);
     await new Promise(r => setTimeout(r, 300));
-    const result = runWCTipsterEngine(match);
-    setAnalyses(prev => ({ ...prev, [match.id]: result }));
-    if (!isReAnalysis) {
-      await incrementAnalysesToday();
+
+    // Fetch API-Football data concurrently (non-blocking — falls back gracefully)
+    let apiData: WCApiFootballData | null = null;
+    try {
+      apiData = await fetchWCApiFootballData(
+        match.home_team,
+        match.away_team,
+        match.sport_key,
+        match.commence_time
+      );
+    } catch {
+      // API-Football unavailable — engine runs without enrichment
     }
+
+    const result = runWCTipsterEngine(match, bancaAtual, apiData);
+    setAnalyses(prev => ({ ...prev, [match.id]: result }));
+
     window.dispatchEvent(new CustomEvent('evengine_track_match', {
       detail: {
         matchId: match.id,
@@ -86,6 +100,11 @@ export default function WorldCupView({
         commenceTime: match.commence_time
       }
     }));
+
+    if (!isReAnalysis) {
+      await incrementAnalysesToday();
+    }
+
     setAnalyzingId(null);
   }
 
@@ -122,7 +141,7 @@ export default function WorldCupView({
       analyzed: analyzed.length,
       approved: approved.length,
       avgEV: approved.length > 0
-        ? (approved.reduce((s, a) => s + (a.gate.mercado?.ev ?? 0), 0) / approved.length).toFixed(1)
+        ? (approved.reduce((s, a) => s + a.gate.mercado.ev, 0) / approved.length).toFixed(1)
         : '0.0',
     };
   }, [analyses, filteredMatches]);
@@ -153,7 +172,7 @@ export default function WorldCupView({
                 </h1>
               </div>
               <p className="text-[9px] font-mono text-white/20 uppercase tracking-widest mt-0.5">
-                Motor ELO + Poisson WC · Gate v2.0 Calibrado
+                Motor ELO + Poisson WC · Gate v2.2 · API-Football
               </p>
             </div>
           </div>
@@ -189,8 +208,8 @@ export default function WorldCupView({
               key={s.label}
               onClick={s.filterable ? () => setShowApprovedOnly(prev => !prev) : undefined}
               className={`bg-[#0d0d10] border rounded-2xl p-4 text-center transition-all ${
-                s.filterable 
-                  ? 'cursor-pointer hover:bg-white/[0.04] active:scale-95 ' + (showApprovedOnly ? 'border-emerald-500/30 bg-emerald-500/[0.02]' : 'border-white/[0.06]') 
+                s.filterable
+                  ? 'cursor-pointer hover:bg-white/[0.04] active:scale-95 ' + (showApprovedOnly ? 'border-emerald-500/30 bg-emerald-500/[0.02]' : 'border-white/[0.06]')
                   : 'border-white/[0.06]'
               }`}
             >
@@ -300,7 +319,7 @@ export default function WorldCupView({
                     {showApprovedOnly ? 'Sem partidas aprovadas pelo Gate' : `Sem partidas nos próximos ${dateFilter === 1 ? 'hoje' : `${dateFilter} dias`}`}
                   </p>
                   <p className="text-white/10 text-[10px] font-mono max-w-xs mx-auto leading-relaxed">
-                    {showApprovedOnly 
+                    {showApprovedOnly
                       ? 'Tente analisar mais partidas ou amplie os outros filtros de data e torneio.'
                       : 'Tente ampliar o filtro de data ou aguarde a divulgação dos jogos pela The Odds API'}
                   </p>

@@ -49,6 +49,8 @@ export interface MatchCardTipsterProps {
 import TipsterAnalysisServiceBase from '../services/tipsterAnalysisService';
 import { calcularEstadoJogo } from '../services/eloService';
 import { getTeamPositionInLeague } from '../services/scoutingService';
+import { getLineMovement, LineMovementResult } from '../services/lineMovementService';
+import SteamBadge from './SteamBadge';
 
 const tipsterService = new TipsterAnalysisServiceBase();
 
@@ -100,6 +102,7 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
   const [localSelected, setLocalSelected] = useState(isSelectedProp);
   const [homeRank, setHomeRank] = useState<number | null>(null);
   const [awayRank, setAwayRank] = useState<number | null>(null);
+  const [lineMovement, setLineMovement] = useState<LineMovementResult | null>(() => getLineMovement(match.id));
 
   const estado = calcularEstadoJogo(match);
   const kickoff = new Date(match.date);
@@ -108,6 +111,10 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
   useEffect(() => {
     setLocalSelected(isSelectedProp);
   }, [isSelectedProp]);
+
+  useEffect(() => {
+    setLineMovement(getLineMovement(match.id));
+  }, [match.id]);
 
   useEffect(() => {
     let active = true;
@@ -249,6 +256,12 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
                </>
              )}
           </div>
+
+          {lineMovement?.tem_steam && (
+            <div className="mb-2">
+              <SteamBadge steamSide={lineMovement.steam_side} sharpScore={lineMovement.sharpScore} compact />
+            </div>
+          )}
 
           <h3 className="text-lg font-black text-white leading-tight uppercase tracking-tight flex flex-wrap items-center gap-x-1.5">
             <span>{match.homeTeam}</span>

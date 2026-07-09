@@ -22,6 +22,7 @@ import { calculateWCElo, seedWCEloFromOdds } from './wcEloService';
 import { calculateWCPoisson, calcularEVMercadoWC } from './wcPoissonService';
 import { getBancaAtual } from '../bancaService';
 import { getEloStalenessInfo } from '../eloService';
+import { WCApiFootballData, computeFormConfidenceAdjustment, buildWCScoutingText } from './wcApiFootballService';
 
 const TEAM_PT: Record<string, string> = {
   'Brazil': 'Brasil', 'Argentina': 'Argentina', 'France': 'França', 'England': 'Inglaterra',
@@ -178,10 +179,11 @@ function scoreComposto(ev: number, confianca: number, eloConfianca: number): num
   return Math.round(scoreEV * 0.35 + scoreConf * 0.25 + scoreElo * 0.20 + scoreOdd * 0.20);
 }
 
-export function runWCTipsterEngine(match: WCMatch): WCAnalysisResult {
-  // KLY-03: Banca dinâmica — usa saldo real do usuário em vez de hardcoded 1000
-  const bancaTotal = getBancaAtual();
-
+export function runWCTipsterEngine(
+  match: WCMatch,
+  bancaTotal: number = 1000,
+  apiData?: WCApiFootballData | null
+): WCAnalysisResult {
   seedWCEloFromOdds(match);
 
   const elo = calculateWCElo(match, match.phase);
@@ -228,8 +230,19 @@ export function runWCTipsterEngine(match: WCMatch): WCAnalysisResult {
     return buildBlocked(match, elo, poisson, 'B-DADOS', 'Sem candidatos válidos com odds disponíveis');
   }
 
+  // API-Football enrichment (tactical overlay, capped at ±7.5% to avoid Kelly overconfidence)
+  let apiConfAdj = 0;
+  let scoutingText: string | null = null;
+  if (apiData) {
+    const favoriteIsHome = elo.probabilidades.casa >= elo.probabilidades.fora;
+    const rawAdj = computeFormConfidenceAdjustment(apiData, favoriteIsHome);
+    apiConfAdj = Math.max(-7.5, Math.min(7.5, rawAdj * 0.5));
+    scoutingText = buildWCScoutingText(apiData, match.home_team, match.away_team);
+  }
+
   const eloConfianca = 100 - Math.abs(elo.delta) / 20;
-  const score = scoreComposto(chosen.ev, chosen.probabilidade, Math.max(0, eloConfianca));
+  const adjustedConf = Math.min(99, Math.max(1, chosen.probabilidade + apiConfAdj));
+  const score = scoreComposto(chosen.ev, adjustedConf, Math.max(0, eloConfianca));
 
   const minEV = getMinEV(match.phase);
 
@@ -243,9 +256,9 @@ export function runWCTipsterEngine(match: WCMatch): WCAnalysisResult {
       `EV ${chosen.ev.toFixed(1)}% acima do máximo realista (${GATE_MAX_EV_REALISTA}%) — ELO pode divergir do mercado`);
   }
 
-  if (chosen.probabilidade < GATE_MIN_CONF) {
+  if (adjustedConf < GATE_MIN_CONF) {
     return buildBlocked(match, elo, poisson, 'B-CONF',
-      `Confiança ${chosen.probabilidade.toFixed(0)}% abaixo do mínimo (${GATE_MIN_CONF}%)`);
+      `Confiança ${adjustedConf.toFixed(0)}% abaixo do mínimo (${GATE_MIN_CONF}%)`);
   }
 
   if (score < GATE_MIN_SCORE) {
@@ -260,7 +273,7 @@ export function runWCTipsterEngine(match: WCMatch): WCAnalysisResult {
 
   let edgeVsMercado: number | null = null;
   if (marketImplied !== null) {
-    edgeVsMercado = chosen.probabilidade - marketImplied;
+    edgeVsMercado = adjustedConf - marketImplied;
 
     if (edgeVsMercado > GATE_MAX_EDGE_VS_MARKET) {
       return buildBlocked(match, elo, poisson, 'B-MEFF',
@@ -273,13 +286,16 @@ export function runWCTipsterEngine(match: WCMatch): WCAnalysisResult {
     }
   }
 
-  const p = chosen.probabilidade / 100;
+  const p = adjustedConf / 100;
   const b = chosen.odd - 1;
   const kelly = Math.max(0, (p * b - (1 - p)) / b);
   const stakeFrac = Math.min(kelly * KELLY_FRACTION, MAX_STAKE_PCT);
   const stakeReais = Math.round((bancaTotal * stakeFrac) / 5) * 5;
 
   const alertas: string[] = [];
+  if (scoutingText) alertas.push(scoutingText);
+  if (apiConfAdj > 0) alertas.push(`📈 API-Football: forma real elevou confiança +${apiConfAdj.toFixed(1)} pts`);
+  if (apiConfAdj < 0) alertas.push(`⚠️ API-Football: lesões/forma reduziram confiança -${Math.abs(apiConfAdj).toFixed(1)} pts`);
   if (match.phase === 'eliminatorias') alertas.push('Eliminatórias: mais variância de resultado');
   if (KNOCKOUT_PHASES.has(match.phase ?? '')) alertas.push('Fase knockout: EV mínimo elevado para 6% — só apostas com edge claro');
   if (Math.abs(elo.delta) < 80) alertas.push('ELO delta < 80 — draw estratégico provável em fase de grupos');
@@ -314,7 +330,7 @@ export function runWCTipsterEngine(match: WCMatch): WCAnalysisResult {
         nome: chosen.nome,
         ev: parseFloat(chosen.ev.toFixed(2)),
         odd: chosen.odd,
-        probabilidade_ia: chosen.probabilidade,
+        probabilidade_ia: adjustedConf,
       },
       stake: {
         kelly_base: parseFloat((kelly * 100).toFixed(2)),

@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { 
-  fetchBets, resolveBet, calculatePerformanceMetrics, resetBets, Bet 
+import {
+  fetchBets, resolveBet, calculatePerformanceMetrics, resetBets, Bet
 } from '../services/betService';
+import CLVDashboard from './Sharp/CLVDashboard';
 import { 
   TrendingUp, Award, DollarSign, Activity, AlertTriangle, 
   Check, X as CloseIcon, Filter, Calendar, BookOpen, 
@@ -13,6 +14,7 @@ import { useUserPlan } from '../hooks/useUserPlan';
 import { canViewHistory, canTrackCLV, canExportCSV } from '../services/planService';
 import { supabase } from '../services/supabaseClient';
 import { showToast } from './Toast';
+import { atualizarResultadoCLV } from '../services/clvService';
 
 interface BetsViewProps {
   onBack: () => void;
@@ -157,6 +159,13 @@ export default function BetsView({ onBack }: BetsViewProps) {
             .update({ closing_odd_pinnacle: closingOddVal })
             .eq('id', resolvingBet.id);
         }
+
+        // Sincronizar resultado no tracker CLV local (localStorage)
+        const clvStatus = resStatus === 'green' ? 'GREEN' : resStatus === 'red' ? 'RED' : 'VOID';
+        if (resolvingBet.analysis_id) {
+          atualizarResultadoCLV(resolvingBet.analysis_id, clvStatus);
+        }
+
         setResolvingBet(null);
         // Reset form
         setResCashoutAmount('');
@@ -367,6 +376,13 @@ export default function BetsView({ onBack }: BetsViewProps) {
           </div>
         </div>
       </section>
+
+      {/* CLV DASHBOARD — plano Sharp */}
+      {plan === 'sharp' && (
+        <section className="bg-[#0f0f11] border border-white/5 rounded-[2.5rem] p-6 sm:p-8">
+          <CLVDashboard plan={plan} />
+        </section>
+      )}
 
       {/* FILTROS AVANÇADOS */}
       <section className="bg-[#0f0f11] border border-white/5 rounded-3xl p-6 space-y-6">

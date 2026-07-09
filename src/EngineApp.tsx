@@ -20,6 +20,8 @@ import { useAuth } from './contexts/AuthContext';
 import { syncQuotaFromAPI } from './services/apiQuotaService';
 import { seedEloFromOdds, sanitizeEloRatings, calcularEstadoJogo, EstadoJogo, atualizarEloPartida } from './services/eloService';
 import { registerOpeningOdds, detectLineMovement } from './services/lineMovementService';
+import { registrarEntradaCLV, capturarOddsFechamento } from './services/clvService';
+import { analisarMatchAH } from './services/asianHandicapService';
 import { calcularValueBets, validateReport } from './services/valueBetService';
 import { runTipsterEngine } from './services/tipsterEngine';
 import { buscarEstatisticasMedias, buscarH2H } from './services/scoutingService';
@@ -260,6 +262,12 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       const isWorldCup = localStorage.getItem('evengine_active_view') === 'worldcup';
       const shouldForce = force || isWorldCup;
       if (!shouldForce && !hasPendingLiveMatches()) return;
+
+      // Capturar odds de fechamento para entradas CLV pendentes
+      try {
+        capturarOddsFechamento(matches);
+      } catch { /* silencioso */ }
+
       const updates = await pollLiveResults(shouldForce);
       if (updates.length === 0) return;
 
@@ -443,8 +451,6 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       });
 
       setMatches(data);
-      const isRealKey = ODDS_API_KEY && ODDS_API_KEY !== 'MY_ODDS_API_KEY';
-      setIsDemoMode(!isRealKey || data.some(m => m.id.startsWith('mock-')));
     } catch (err) {
       console.error(err);
       setError('Houve um erro ao buscar as partidas reais. Verifique sua chave de API e conexão.');
@@ -770,19 +776,45 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
       // 🚀 CALIBRATION: Registrar se aprovado
       if (engineVerdict.status === 'APROVADO') {
+        const oddAnalise = melhorMarket?.odd_api || result.tipster?.odds || 1.85;
+        const mercadoAnalise = melhorMarket
+          ? (melhorMarket.mercado || 'Mercado Principal')
+          : (result.tipster?.market?.name || 'Mercado Principal');
+
         registrarPrevisao({
           matchId: match.id,
           homeTeam: match.home_team,
           awayTeam: match.away_team,
           commenceTime: match.commence_time,
-          mercadoPrevisto: result.tipster?.market?.name || 'Mercado Principal',
+          mercadoPrevisto: mercadoAnalise,
           resultadoPrevisto: result.tipster?.market?.outcome || 'Home',
           confiancaEstimada: confiancaPercentualValue,
           evEstimado: evFinal,
-          oddUtilizada: result.tipster?.odds || 1.85,
+          oddUtilizada: oddAnalise,
           scoreGate: engineVerdict.score || 0,
           sportKey: match.sport_key
         });
+
+        // CLV: registrar entrada para rastrear vs odd de fechamento
+        if (canTrackCLV()) {
+          registrarEntradaCLV({
+            matchId: match.id,
+            homeTeam: match.home_team,
+            awayTeam: match.away_team,
+            sportKey: match.sport_key,
+            commenceTime: match.commence_time,
+            mercado: mercadoAnalise,
+            oddUtilizada: oddAnalise
+          });
+        }
+
+        // AH: calcular equivalentes e anexar ao resultado (plano Pro+)
+        if (plan === 'pro' || plan === 'sharp') {
+          try {
+            const ahAnalysis = analisarMatchAH(match.home_team, match.away_team, match.bookmakers || []);
+            if (ahAnalysis) result.asianHandicap = ahAnalysis;
+          } catch { /* silencioso */ }
+        }
       }
 
       setAnalysis(result);
