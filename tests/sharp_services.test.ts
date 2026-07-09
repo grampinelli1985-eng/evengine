@@ -44,6 +44,9 @@ import {
   analisarEquivalentesAH
 } from '../src/services/asianHandicapService';
 
+import { fetchWCMatches } from '../src/services/worldCup/wcOddsService';
+import { fetchAllMatches } from '../src/services/oddsService';
+
 describe('Auditoria Sharp Money — Line Movement (Steam Move)', () => {
   beforeEach(() => {
     localStorageMock.clear();
@@ -273,5 +276,48 @@ describe('Auditoria Sharp Money — Asian Handicap Overround', () => {
     expect(res.overroundH2H).toBeGreaterThan(0);
     expect(res.equivalentesCasa.length).toBe(4);
     expect(res.melhorMercadoCasa?.overround).toBeLessThanOrEqual(res.overroundH2H);
+  });
+});
+
+describe('Auditoria Sharp Money — Economia de Créditos (Quota saving)', () => {
+  beforeEach(() => {
+    localStorageMock.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('Deve salvar inatividade do torneio com 12h de cache se a API retornar 404', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(() =>
+      Promise.resolve({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve([])
+      } as any)
+    );
+
+    // Primeira chamada: deve chamar o fetch
+    const matches1 = await fetchWCMatches('test_api_key_valid_123', ['soccer_fifa_world_cup']);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Segunda chamada: deve usar o cache inativo e não disparar novo fetch
+    const matches2 = await fetchWCMatches('test_api_key_valid_123', ['soccer_fifa_world_cup']);
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // Continua sendo 1
+    expect(matches1[0].id).toContain('wc_mock');
+    expect(matches2[0].id).toContain('wc_mock');
+  });
+
+  it('Deve abortar a busca de todas as ligas (retornando vazio) se a API /sports falhar e não houver cache', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(() =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve([])
+      } as any)
+    );
+
+    const matches = await fetchAllMatches('test_api_key_valid_123');
+    // Como a API /sports falhou e não havia cache de esportes ativos anterior,
+    // o sistema aborta a busca retornando [] para evitar buscar 9 ligas às cegas
+    expect(matches).toEqual([]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // Chamou apenas o /sports
   });
 });

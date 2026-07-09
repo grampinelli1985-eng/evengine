@@ -258,8 +258,15 @@ async function fetchActiveSportKeys(apiKey: string): Promise<Set<string>> {
       { signal: AbortSignal.timeout(6000) }
     );
     if (!res.ok) {
-      console.warn(`[OddsAPI] /sports returned ${res.status} — skipping active sports filter`);
-      return new Set(); // Set vazio = não filtra, tenta buscar tudo
+      console.warn(`[OddsAPI] /sports returned ${res.status} — using stale cache or empty filter`);
+      const stale = localStorage.getItem(ACTIVE_SPORTS_CACHE_KEY);
+      if (stale) {
+        try {
+          const { data } = JSON.parse(stale);
+          if (Array.isArray(data)) return new Set(data);
+        } catch {}
+      }
+      return new Set();
     }
     const sports: Array<{ key: string; active: boolean }> = await res.json();
     const activeKeys = sports.filter(s => s.active).map(s => s.key);
@@ -267,8 +274,15 @@ async function fetchActiveSportKeys(apiKey: string): Promise<Set<string>> {
     console.log(`[OddsAPI] Active sports: ${activeKeys.join(', ')}`);
     return new Set(activeKeys);
   } catch (err) {
-    console.warn('[OddsAPI] Failed to fetch active sports:', err);
-    return new Set(); // fallback: não filtra
+    console.warn('[OddsAPI] Failed to fetch active sports — using stale cache or empty filter:', err);
+    const stale = localStorage.getItem(ACTIVE_SPORTS_CACHE_KEY);
+    if (stale) {
+      try {
+        const { data } = JSON.parse(stale);
+        if (Array.isArray(data)) return new Set(data);
+      } catch {}
+    }
+    return new Set();
   }
 }
 
@@ -295,14 +309,18 @@ export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Pr
 
   // Step 1: Descobrir quais ligas estão ativas AGORA (grátis)
   const activeSports = await fetchActiveSportKeys(apiKey);
-  const hasActiveSports = activeSports.size > 0;
+  
+  // Se o set estiver vazio (falha na API /sports e sem cache local anterior),
+  // aborta a busca em vez de tentar buscar às cegas (previne desperdício de créditos)
+  if (activeSports.size === 0) {
+    console.log('[OddsAPI] Lista de esportes ativos indisponível e sem cache. Abortando busca para proteger cota.');
+    return [];
+  }
 
   const leaguesToFetch = (leagueKeys
     ? LEAGUES.filter(l => leagueKeys.includes(l.key))
     : LEAGUES
   ).filter(league => {
-    // Se conseguimos a lista de ativos, filtra. Se falhou, tenta tudo.
-    if (!hasActiveSports) return true;
     const isActive = activeSports.has(league.key);
     if (!isActive) {
       console.log(`[OddsAPI] Liga fora de temporada — pulando sem consumir cota: ${league.key}`);

@@ -164,11 +164,16 @@ export async function fetchWCMatches(
 
   for (const key of keys) {
     const cacheKey = `wc_odds_cache_${key}`;
-    const cached = sessionStorage.getItem(cacheKey);
+    const cached = localStorage.getItem(cacheKey);
     if (cached) {
       try {
-        const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 30 * 60 * 1000) { // 30 min TTL
+        const { data, ts, inactive } = JSON.parse(cached);
+        const ttl = inactive ? 12 * 60 * 60 * 1000 : 30 * 60 * 1000; // 12h para inativo, 30min para ativo
+        if (Date.now() - ts < ttl) {
+          if (inactive) {
+            console.log(`[WC] Torneio ${key} inativo (cache hit) — pulando API call.`);
+            continue;
+          }
           results.push(...data);
           continue;
         }
@@ -181,7 +186,9 @@ export async function fetchWCMatches(
 
       if (!response.ok) {
         if (response.status === 404) {
-          // Torneio não está ativo no momento — silencioso
+          // Torneio inativo: cachear como inativo para poupar créditos da API
+          console.log(`[WC] Torneio ${key} inativo (404) — salvando cache de inatividade.`);
+          localStorage.setItem(cacheKey, JSON.stringify({ data: [], ts: Date.now(), inactive: true }));
           continue;
         }
         console.warn(`[WC] HTTP ${response.status} para ${key}`);
@@ -196,7 +203,7 @@ export async function fetchWCMatches(
         phase: inferPhase(m),
       }));
 
-      sessionStorage.setItem(cacheKey, JSON.stringify({ data: enriched, ts: Date.now() }));
+      localStorage.setItem(cacheKey, JSON.stringify({ data: enriched, ts: Date.now(), inactive: false }));
       results.push(...enriched);
     } catch (err: any) {
       if (err?.name === 'TimeoutError') {

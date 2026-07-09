@@ -166,11 +166,11 @@ describe('Auditoria Sharp Money - Ponto 3: Filtro de Liga + Cache TTL', () => {
     expect(prev?.resultadoReal).toBe('Home');
   });
 
-  it('Gate 2: Cache hit (zero requisições adicionais) se houver cache válido no sessionStorage', async () => {
+  it('Gate 2: Cache hit (zero requisições adicionais) se houver cache válido no localStorage', async () => {
     // 1. Configure monitored leagues
     localStorageMock.setItem('evengine_selected_leagues', JSON.stringify(['soccer_epl']));
 
-    // 2. Populate sessionStorage with a valid cache (TTL is 30 mins, so set timestamp to 5 minutes ago)
+    // 2. Populate localStorage with a valid cache (TTL is 30 mins, so set timestamp to 5 minutes ago)
     const mockGames = [
       {
         id: 'match_cached',
@@ -184,7 +184,7 @@ describe('Auditoria Sharp Money - Ponto 3: Filtro de Liga + Cache TTL', () => {
       }
     ];
 
-    sessionStorageMock.setItem(
+    localStorageMock.setItem(
       'scores_cache_soccer_epl',
       JSON.stringify({
         data: mockGames,
@@ -221,7 +221,7 @@ describe('Auditoria Sharp Money - Ponto 3: Filtro de Liga + Cache TTL', () => {
     expect(prev?.status).toBe('WIN'); // draw predicted, draw occurred
   });
 
-  it('Gate 2 Cache Miss: Busca na API e atualiza o cache no sessionStorage', async () => {
+  it('Gate 2 Cache Miss: Busca na API e atualiza o cache no localStorage', async () => {
     // 1. Configure monitored leagues
     localStorageMock.setItem('evengine_selected_leagues', JSON.stringify(['soccer_epl']));
 
@@ -267,8 +267,8 @@ describe('Auditoria Sharp Money - Ponto 3: Filtro de Liga + Cache TTL', () => {
     // 5. Verify fetch was called once
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // 6. Verify sessionStorage now contains cached data
-    const cachedRaw = sessionStorageMock.getItem('scores_cache_soccer_epl');
+    // 6. Verify localStorage now contains cached data
+    const cachedRaw = localStorageMock.getItem('scores_cache_soccer_epl');
     expect(cachedRaw).not.toBeNull();
     const cached = JSON.parse(cachedRaw!);
     expect(cached.data).toEqual(mockGames);

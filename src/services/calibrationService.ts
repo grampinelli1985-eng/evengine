@@ -190,7 +190,7 @@ async function fetchScoresForLeague(liga: string): Promise<any[]> {
 
   const SCORES_CACHE_TTL = 30 * 60 * 1000; // 30 minutos
   const cacheKey = `scores_cache_${liga}`;
-  const cached = sessionStorage.getItem(cacheKey);
+  const cached = localStorage.getItem(cacheKey);
   
   // Gate 2: Usar cache válido se disponível (zero req)
   if (cached) {
@@ -222,7 +222,7 @@ async function fetchScoresForLeague(liga: string): Promise<any[]> {
     const jogos = await res.json();
     
     if (Array.isArray(jogos) && jogos.length > 0) {
-      sessionStorage.setItem(cacheKey, JSON.stringify({
+      localStorage.setItem(cacheKey, JSON.stringify({
         data: jogos,
         timestamp: Date.now()
       }));
