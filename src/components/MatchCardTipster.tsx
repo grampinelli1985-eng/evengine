@@ -381,7 +381,7 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
            </div>
            <div>
               <p className="text-[8px] font-black text-emerald-500/50 uppercase tracking-widest">Stake Kelly</p>
-              <p className="text-xs font-mono font-black text-emerald-400">Max 5% do Capital</p>
+              <p className="text-[10px] font-mono font-black text-emerald-400">Fração Recomendada</p>
            </div>
         </div>
         <div className="text-right">

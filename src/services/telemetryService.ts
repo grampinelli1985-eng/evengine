@@ -18,7 +18,7 @@ function sanitizarPayload(p: any): any {
     league: p.league,
     tier: p.tier ?? null,
     market: p.market ?? 'h2h',
-    odd_manual: p.odd_manual ?? p.odd_bet365_manual ?? null,
+    odd_bet365_manual: p.odd_manual ?? p.odd_bet365_manual ?? null,
     odd_pinnacle: p.odd_pinnacle ?? null,
     odd_betfair: p.odd_betfair ?? null,
     prob_fair: p.prob_fair ?? null,
@@ -68,7 +68,7 @@ export async function logAnalysis(
       league: matchData.sport_title || matchData.sport_key,
       tier: engineResult.tier || (engineResult.sharp_context ? 'A' : null),
       market: engineResult.market || engineResult.mercado_selecionado?.nome || engineResult.mercado?.nome || 'h2h',
-      odd_manual: sanitizarNumerico(oddManual),
+      odd_bet365_manual: sanitizarNumerico(oddManual),
       odd_pinnacle: sanitizarNumerico(engineResult.mercado_selecionado?.odd_referencia || engineResult.marketReference?.rawOdds?.[0]),
       odd_betfair: engineResult.marketReference?.sharpBookmaker === 'betfair_ex_eu'
         ? sanitizarNumerico(engineResult.marketReference.rawOdds[0]) : null,
