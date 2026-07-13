@@ -1414,7 +1414,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           </div>
 
           {/* Mobile Navigation Controls (Visible only under xl screens) */}
-          <div className="xl:hidden flex items-center gap-3 shrink-0">
+          <div className="xl:hidden flex items-center gap-2 sm:gap-3 shrink-0">
             <button
               onClick={() => {
                 setBancaModalOpen(true);
@@ -1428,10 +1428,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-white transition-all active:scale-95 flex items-center justify-center shrink-0"
+              className="p-2 sm:p-2.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 rounded-xl text-blue-400 transition-all active:scale-95 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(37,99,235,0.15)] animate-pulse"
               aria-label="Toggle Menu"
             >
-              {mobileMenuOpen ? <X size={18} className="text-blue-500" /> : <Menu size={18} />}
+              {mobileMenuOpen ? <X size={20} className="text-rose-400" /> : <Menu size={22} />}
             </button>
           </div>
 
