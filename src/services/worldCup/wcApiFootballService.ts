@@ -57,7 +57,7 @@ export interface WCApiFootballData {
 
 // ─── Cache helpers ──────────────────────────────────────────────────────────
 
-function cacheGet<T>(key: string, ttlMs = 30 * 60 * 1000): T | null {
+function cacheGet<T>(key: string, ttlMs = 24 * 60 * 60 * 1000): T | null {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
@@ -76,9 +76,9 @@ function cacheSet(key: string, data: unknown): void {
 const KNOWN_TEAM_IDS: Record<string, number> = {
   'Brazil': 6, 'Argentina': 26, 'France': 2, 'England': 10, 'Spain': 9,
   'Germany': 25, 'Portugal': 38, 'Netherlands': 1118, 'Italy': 768,
-  'Colombia': 239, 'Uruguay': 631, 'Mexico': 16, 'USA': 2415,
+  'Colombia': 239, 'Uruguay': 631, 'Mexico': 16, 'USA': 2415, 'United States': 2415,
   'Belgium': 1, 'Croatia': 3, 'Senegal': 7, 'Morocco': 798,
-  'Japan': 27, 'South Korea': 348, 'Australia': 20, 'Canada': 26 /* placeholder */,
+  'Japan': 27, 'South Korea': 348, 'Australia': 20, 'Canada': 3262,
   'Poland': 23, 'Switzerland': 15, 'Serbia': 22, 'Denmark': 21,
   'Ecuador': 635, 'Cameroon': 44, 'Ghana': 19, 'Tunisia': 7,
   'Qatar': 13, 'Saudi Arabia': 305, 'Iran': 273, 'Wales': 702,
@@ -90,7 +90,7 @@ async function resolveTeamId(teamName: string, leagueId: number): Promise<number
   if (KNOWN_TEAM_IDS[teamName]) return KNOWN_TEAM_IDS[teamName];
 
   const cacheKey = `wc_team_id_${teamName.toLowerCase().replace(/\s/g, '_')}`;
-  const cached = cacheGet<number>(cacheKey, 24 * 60 * 60 * 1000); // 24h for team IDs
+  const cached = cacheGet<number>(cacheKey, 30 * 24 * 60 * 60 * 1000); // 30 days for team IDs since they never change
   if (cached) return cached;
 
   if (!hasQuota(1)) return null;

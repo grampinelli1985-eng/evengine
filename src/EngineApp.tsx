@@ -432,8 +432,14 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   }, []);
 
   const loadMatches = async (silent = false) => {
+    let currentView = view as string;
+    if (currentView === 'worldcup') {
+      setView('main');
+      currentView = 'main';
+    }
+
     // Copa/torneio view usa API-Football exclusivamente — não consome Odds API
-    if (view === 'worldcup') return;
+    if (currentView === 'worldcup') return;
 
     if (!silent) setLoading(true);
     else setIsRefreshing(true);
@@ -559,7 +565,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     });
 
     if (modoOperacao) {
-      filtered = filtered.filter(m => isLigaOperavel(m.sport_title || m.sport_key));
+      filtered = filtered.filter(m => isLigaOperavel(m.sport_key));
     }
 
     // Sort by date
@@ -1367,6 +1373,20 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                     <div className="h-px bg-white/5 my-1" />
 
                     <button
+                      onClick={() => {
+                        setHasStarted(false);
+                        localStorage.setItem('evengine_has_started', 'false');
+                        setIsExtraMenuOpen(false);
+                      }}
+                      className="flex items-center gap-2 px-3 py-2 border border-transparent rounded-lg transition-all text-left cursor-pointer text-yellow-500 hover:bg-yellow-500/10 hover:text-yellow-400"
+                    >
+                      <Trophy size={14} className="shrink-0 text-yellow-500" />
+                      <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Gerenciar Ligas</span>
+                    </button>
+
+                    <div className="h-px bg-white/5 my-1" />
+
+                    <button
                       onClick={async () => {
                         await signOut();
                         setIsExtraMenuOpen(false);
@@ -1394,13 +1414,13 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           </div>
 
           {/* Mobile Navigation Controls (Visible only under xl screens) */}
-          <div className="xl:hidden flex items-center gap-3">
+          <div className="xl:hidden flex items-center gap-3 shrink-0">
             <button
               onClick={() => {
                 setBancaModalOpen(true);
                 setMobileMenuOpen(false);
               }}
-              className="px-3.5 py-1.5 rounded-full bg-[#00e676]/10 border border-[#00e676]/30 text-[#00e676] font-bold text-xs font-mono transition-all hover:bg-[#00e676]/20 active:scale-95 flex items-center gap-1 shadow-[0_0_15px_rgba(0,230,118,0.05)]"
+              className="hidden sm:flex px-3.5 py-1.5 rounded-full bg-[#00e676]/10 border border-[#00e676]/30 text-[#00e676] font-bold text-xs font-mono transition-all hover:bg-[#00e676]/20 active:scale-95 items-center gap-1 shadow-[0_0_15px_rgba(0,230,118,0.05)] shrink-0"
             >
               <span>💰</span>
               <span>R$ {bancaAtual.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
@@ -1408,7 +1428,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-white transition-all active:scale-95 flex items-center justify-center"
+              className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-white transition-all active:scale-95 flex items-center justify-center shrink-0"
               aria-label="Toggle Menu"
             >
               {mobileMenuOpen ? <X size={18} className="text-blue-500" /> : <Menu size={18} />}
@@ -1538,6 +1558,17 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                       <Trophy size={16} className={view === 'worldcup' ? 'text-black' : 'text-yellow-500/60'} />
                       <span className="text-[11px] font-black uppercase tracking-wider">Copa 2026</span>
                     </button>
+
+                    <button
+                      onClick={() => {
+                        setIsSidebarOpen(true);
+                        setMobileMenuOpen(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-3.5 border border-white/5 rounded-xl transition-all text-left bg-white/[0.02] text-white/60 hover:text-white hover:bg-white/[0.05]"
+                    >
+                      <Filter size={16} className="text-blue-500/60" />
+                      <span className="text-[11px] font-black uppercase tracking-wider">Filtro de Ligas</span>
+                    </button>
                   </div>
                 </div>
 
@@ -1604,6 +1635,20 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                         Telemetria Avançada
                       </span>
                       <span className="text-[9px] bg-blue-600/10 px-2 py-0.5 rounded text-blue-400 font-mono">ATIVO</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setHasStarted(false);
+                        localStorage.setItem('evengine_has_started', 'false');
+                        setMobileMenuOpen(false);
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2.5 bg-yellow-500/5 hover:bg-yellow-500/10 border border-yellow-500/10 rounded-xl text-[10px] text-yellow-500 font-black uppercase tracking-wider transition-all"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Trophy size={12} className="text-yellow-500" />
+                        Gerenciar Ligas
+                      </span>
                     </button>
 
                     {/* Refresh page */}
@@ -1929,6 +1974,14 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                     >
                       <Filter size={14} className={filterLeagues.includes('all') ? 'text-black' : 'text-blue-500/60'} />
                       <span>Todas as Ligas</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsSidebarOpen(true)}
+                      className="flex items-center gap-3 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] border border-blue-500/20 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 transition-all whitespace-nowrap"
+                    >
+                      <Filter size={14} className="text-blue-400" />
+                      <span>Filtro de Ligas</span>
                     </button>
 
                     <div className="w-px h-8 bg-white/5 mx-1 flex-shrink-0" />

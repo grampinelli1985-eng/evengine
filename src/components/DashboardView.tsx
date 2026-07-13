@@ -239,7 +239,7 @@ export default function DashboardView({
                 // considera os de hoje pre-jogo ou andamento
                 return d <= hojeMidnight && m.status !== 'completed';
               });
-              const operaveisHoje = jogosHoje.filter(m => isLigaOperavel(m.sport_title || m.sport_key));
+              const operaveisHoje = jogosHoje.filter(m => isLigaOperavel(m.sport_key));
               const naoOperaveisHoje = jogosHoje.length - operaveisHoje.length;
               return (
                 <div className="space-y-1">

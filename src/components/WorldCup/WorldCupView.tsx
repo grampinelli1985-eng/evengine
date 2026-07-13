@@ -116,6 +116,8 @@ export default function WorldCupView({
           break;
         }
         await handleAnalyze(match);
+        // Sleep for 800ms to avoid API rate limit (max 10 req/min on free plan)
+        await new Promise(resolve => setTimeout(resolve, 800));
       }
     }
   }
