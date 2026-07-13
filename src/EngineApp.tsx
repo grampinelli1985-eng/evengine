@@ -1156,17 +1156,17 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       <header className="sticky top-0 z-40 bg-[#0f0f11]/80 backdrop-blur-xl border-b border-white/10">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
 
-          <div className="flex items-center gap-4 shrink-0">
-            <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center font-black text-white shadow-lg shadow-blue-600/20 rotate-3 cursor-pointer shrink-0" onClick={() => { setHasStarted(false); setView('dashboard'); }}>
+          <div className="flex items-center gap-3 sm:gap-4 shrink min-w-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 bg-blue-600 rounded-xl flex items-center justify-center font-black text-white shadow-lg shadow-blue-600/20 rotate-3 cursor-pointer shrink-0" onClick={() => { setHasStarted(false); setView('dashboard'); }}>
               E
             </div>
-            <div className="shrink-0">
-              <h1 className="font-bold text-xl tracking-tight uppercase leading-none text-white whitespace-nowrap">
+            <div className="shrink min-w-0">
+              <h1 className="font-bold text-lg sm:text-xl tracking-tight uppercase leading-none text-white whitespace-nowrap truncate">
                 EVEngine <span className="text-blue-500">AI</span>
               </h1>
-              <div className="flex items-center gap-2 mt-0.5 whitespace-nowrap">
+              <div className="flex items-center gap-1.5 sm:gap-2 mt-0.5 whitespace-nowrap overflow-hidden">
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
-                <p className="text-[9px] text-white/40 font-bold uppercase tracking-widest leading-none">V2.4 Intelligence Engine</p>
+                <p className="text-[8px] sm:text-[9px] text-white/40 font-bold uppercase tracking-widest leading-none truncate">V2.4 Intelligence Engine</p>
               </div>
             </div>
           </div>
