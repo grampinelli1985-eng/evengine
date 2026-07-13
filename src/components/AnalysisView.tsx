@@ -922,10 +922,21 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                           </div>
                         ) : (
                           <div className="flex flex-col items-center sm:items-end gap-2 w-full">
-                            <span className="text-[10px] font-mono font-bold text-rose-400/80 uppercase tracking-widest">— Entrada não recomendada</span>
-                            <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-[9px] font-black text-white/60 uppercase tracking-widest italic text-center w-full max-w-sm">
-                              Riscos acima do limiar estatístico
-                            </div>
+                            {analysis.tipsterEngine?.sharp_context?.mercado_alternativo ? (
+                              <>
+                                <span className="text-[10px] font-mono font-bold text-blue-400/80 uppercase tracking-widest">— Avaliar Oportunidade Alternativa</span>
+                                <div className="px-4 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl text-[9px] font-black text-blue-400/80 uppercase tracking-widest italic text-center w-full max-w-sm">
+                                  Mercado principal reprovado. Consulte alternativa acima.
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-[10px] font-mono font-bold text-rose-400/80 uppercase tracking-widest">— Entrada não recomendada</span>
+                                <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-[9px] font-black text-white/60 uppercase tracking-widest italic text-center w-full max-w-sm">
+                                  Riscos acima do limiar estatístico
+                                </div>
+                              </>
+                            )}
                           </div>
                         )}
                       </div>

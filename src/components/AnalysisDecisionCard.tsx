@@ -507,7 +507,7 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
                     💡 Oportunidade Alternativa Encontrada
                   </span>
                   <p className="text-[11px] text-white/50 font-mono mb-3">
-                    O mercado principal falhou no portão matemático, mas identificamos uma alternativa com EV positivo:
+                    O mercado principal ({decisao.mercado_selecionado?.nome || 'calculado'}) falhou no portão matemático, mas identificamos uma alternativa com EV positivo:
                   </p>
                   <div className="text-lg font-black text-white flex items-center gap-2">
                     <Sparkles className="text-blue-400" size={16} />
