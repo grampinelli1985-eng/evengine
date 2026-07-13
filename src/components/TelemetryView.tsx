@@ -206,7 +206,12 @@ function StatCard({ label, value, sub, icon }: any) {
         {icon}
       </div>
       <span className="text-[10px] text-white/20 uppercase font-black tracking-[0.2em] mb-2 block">{label}</span>
-      <div className="text-3xl font-mono font-black text-white tracking-tighter mb-1">{value}</div>
+      <div 
+        className={`font-mono font-black text-white tracking-tighter mb-1 ${typeof value === 'string' && value.length > 15 ? 'text-base sm:text-lg line-clamp-3 leading-tight mt-2' : 'text-3xl'}`}
+        title={typeof value === 'string' ? value : undefined}
+      >
+        {value}
+      </div>
       <span className="text-[9px] font-bold text-white/10 uppercase tracking-widest italic">{sub}</span>
     </div>
   );
