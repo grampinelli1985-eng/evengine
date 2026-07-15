@@ -148,7 +148,7 @@ async function preloadDailyFixtures() {
   try {
     if (!hasQuota(1)) return;
     const res = await fetch(`${API_BASE_URL}/fixtures?date=${today}`, {
-      signal: AbortSignal.timeout(6000)
+      signal: AbortSignal.timeout(12000)
     });
     if (res.ok) {
       const data = await res.json();
@@ -256,12 +256,16 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
     if (id !== -1 && hasQuota(1)) {
       try {
         const res = await fetch(`${API_BASE_URL}/teams/statistics?league=${leagueId || 71}&season=${season}&team=${id}`, {
-          signal: AbortSignal.timeout(4500)
+          signal: AbortSignal.timeout(12000)
         });
 
         if (!res.ok) throw new Error('Response not ok');
         trackRequest();
         const data = await responseToJson(res);
+        if (data?.errors && Object.keys(data.errors).length > 0) {
+          console.error('[Scout API] Erro no payload da API-Football:', data.errors);
+          throw new Error(`API-Football error: ${JSON.stringify(data.errors)}`);
+        }
         const form = data?.response?.form || '';
         if (form.length >= 3) {
           const results = form.split('').slice(-5).map(normalizeResult);
@@ -282,12 +286,16 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
     try {
       const h2hUrl = `${API_BASE_URL}/fixtures/headtohead?h2h=${h}-${a}&last=10`;
       const res = await fetch(h2hUrl, {
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(12000)
       });
 
       if (!res.ok) throw new Error('Response not ok');
       trackRequest();
       const data = await responseToJson(res);
+      if (data?.errors && Object.keys(data.errors).length > 0) {
+        console.error('[H2H API] Erro no payload da API-Football:', data.errors);
+        throw new Error(`API-Football error: ${JSON.stringify(data.errors)}`);
+      }
       const rawH2H = data?.response || [];
 
       const sortedH2H = [...rawH2H].sort((a: any, b: any) => {
@@ -357,12 +365,16 @@ export async function fetchInjuries(teamName: string, leagueId: number): Promise
 
   try {
     const res = await fetch(`${API_BASE_URL}/injuries?team=${teamId}&league=${leagueId}&season=${season}`, {
-      signal: AbortSignal.timeout(4000)
+      signal: AbortSignal.timeout(12000)
     });
 
     if (!res.ok) return [];
     trackRequest();
     const data = await responseToJson(res);
+    if (data?.errors && Object.keys(data.errors).length > 0) {
+      console.error('[Injuries API] Erro no payload da API-Football:', data.errors);
+      return [];
+    }
     const injuries = (data?.response || []).map((i: any) => i.player.name);
     sessionStorage.setItem(cacheKey, JSON.stringify({ data: injuries, timestamp: Date.now() }));
     return injuries;
@@ -387,17 +399,39 @@ async function buscarResultadosRecentes(
 ): Promise<Array<{ resultado: 'W'|'D'|'L'; placar: string; adversario: string }>> {
   try {
     if (!ODDS_API_KEY) return [];
-    const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${ODDS_API_KEY}&daysFrom=3`;
-    const res = await fetch(url);
+    let jogos: any = [];
+    const cacheKey = `scores_cache_${sportKey}`;
+    const SCORES_CACHE_TTL = 30 * 60 * 1000;
+    const cached = localStorage.getItem(cacheKey);
 
-    if (res.status === 422) {
-      console.warn(`[The Odds API] Erro 422: Janela de dias inválida para ${sportKey}.`);
-      return [];
+    if (cached) {
+      try {
+        const { data, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < SCORES_CACHE_TTL) {
+          jogos = data;
+        }
+      } catch {}
     }
 
-    if (!res.ok) return [];
+    if (!jogos || jogos.length === 0) {
+      const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${ODDS_API_KEY}&daysFrom=3`;
+      const res = await fetch(url);
 
-    const jogos = await res.json();
+      if (res.status === 422) {
+        console.warn(`[The Odds API] Erro 422: Janela de dias inválida para ${sportKey}.`);
+        return [];
+      }
+
+      if (!res.ok) return [];
+
+      jogos = await res.json();
+      if (Array.isArray(jogos) && jogos.length > 0) {
+        localStorage.setItem(cacheKey, JSON.stringify({
+          data: jogos,
+          timestamp: Date.now()
+        }));
+      }
+    }
     const jogosDoTime = jogos
       .filter((j: any) =>
         j.completed === true &&
@@ -503,11 +537,15 @@ export async function getFormaRecente(
       const league_id_calculated = LEAGUE_ID_MAP[sportKey] || 71;
       const season = getSeasonForLeague(league_id_calculated);
       const res = await fetch(`${API_BASE_URL}/teams/statistics?league=${league_id_calculated}&season=${season}&team=${resolvedId}`, {
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(12000)
       });
       // [INC-SC-2 FIX] Verificar res.ok antes de chamar .json()
       if (!res.ok) throw new Error(`API-Football status ${res.status}`);
       const data = await res.json();
+      if (data?.errors && Object.keys(data.errors).length > 0) {
+        console.error('[Scout API] Erro no payload da API-Football:', data.errors);
+        throw new Error(`API-Football error: ${JSON.stringify(data.errors)}`);
+      }
       const formStr = data?.response?.form || '';
       if (formStr.length >= 3) {
         const results = formStr.split('').slice(-5).map((r: string) => {
@@ -752,7 +790,7 @@ async function buscarH2HviaAPIFootball(homeTeam: string, awayTeam: string): Prom
     }
 
     const h2hUrl = `${API_BASE_URL}/fixtures/headtohead?h2h=${homeId}-${awayId}`;
-    const resH2H = await fetch(h2hUrl, { signal: AbortSignal.timeout(5000) });
+    const resH2H = await fetch(h2hUrl, { signal: AbortSignal.timeout(12000) });
 
     // [INC-SC-1 FIX] Verificar res.ok antes de chamar .json() para evitar parse de resposta de erro
     if (!resH2H.ok) {
@@ -761,6 +799,10 @@ async function buscarH2HviaAPIFootball(homeTeam: string, awayTeam: string): Prom
     }
 
     const dataH2H = await resH2H.json();
+    if (dataH2H?.errors && Object.keys(dataH2H.errors).length > 0) {
+      console.error('[H2H API Fallback] Erro no payload da API-Football:', dataH2H.errors);
+      return null;
+    }
     const rawFixtures = dataH2H.response ?? [];
 
     const sortedFixtures = [...rawFixtures].sort((a: any, b: any) => {
@@ -775,10 +817,14 @@ async function buscarH2HviaAPIFootball(homeTeam: string, awayTeam: string): Prom
       try {
         const currentYear = new Date().getFullYear();
         const fixturesUrl = `${API_BASE_URL}/fixtures?team=${homeId}&season=${currentYear}`;
-        const resFixtures = await fetch(fixturesUrl, { signal: AbortSignal.timeout(5000) });
+        const resFixtures = await fetch(fixturesUrl, { signal: AbortSignal.timeout(12000) });
 
         if (resFixtures.ok) {
           const dataFixtures = await resFixtures.json();
+          if (dataFixtures?.errors && Object.keys(dataFixtures.errors).length > 0) {
+            console.error('[H2H Fallback API] Erro no payload da API-Football:', dataFixtures.errors);
+            return null;
+          }
           const rawConfrontos = dataFixtures.response?.filter(
             (f: any) => f.teams.home.id === awayId || f.teams.away.id === awayId
           ) ?? [];
@@ -915,7 +961,7 @@ async function fetchStandingsForSeason(leagueId: number, season: number): Promis
   if (!hasQuota(1)) return { data: null, isRateLimited: false };
   try {
     const res = await fetch(`${API_BASE_URL}/standings?league=${leagueId}&season=${season}`, {
-      signal: AbortSignal.timeout(4500)
+      signal: AbortSignal.timeout(12000)
     });
 
     if (res.status === 429) return { data: null, isRateLimited: true };
