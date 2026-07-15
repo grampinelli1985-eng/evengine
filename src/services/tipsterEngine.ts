@@ -1260,11 +1260,11 @@ export async function runTipsterEngine(
         codigo: 'B-DESVIO',
         motivo: desvioAviso
       };
-    } else if (indisponiveis.length >= 3) {
-      blockObj = {
-        codigo: 'B-DADOS',
-        motivo: `Dado específico ausente: [${indisponiveis.map(item => item.id).join(', ')}] | Segurança acionada`
-      };
+    // } else if (indisponiveis.length >= 3) {
+    //   blockObj = {
+    //     codigo: 'B-DADOS',
+    //     motivo: `Dado específico ausente: [${indisponiveis.map(item => item.id).join(', ')}] | Segurança acionada`
+    //   };
     } else if (isUnderdog && (underdogEloDelta > 8 || underdogPinDelta > 8)) {
       blockObj = {
         codigo: 'B-UNDERDOG-CALIBRATION',

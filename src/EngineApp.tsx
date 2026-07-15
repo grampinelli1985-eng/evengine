@@ -67,7 +67,7 @@ import {
   BancaDB 
 } from './services/bancaService';
 
-const APP_VERSION = "BG_V9_TIPSTER_GATE_V2";
+const APP_VERSION = "BG_V9_TIPSTER_GATE_V3";
 
 const leagueIcons: Record<string, any> = {
   zap: Zap,
