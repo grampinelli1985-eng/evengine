@@ -67,7 +67,7 @@ import {
   BancaDB 
 } from './services/bancaService';
 
-const APP_VERSION = "BG_V9_TIPSTER_GATE";
+const APP_VERSION = "BG_V9_TIPSTER_GATE_V2";
 
 const leagueIcons: Record<string, any> = {
   zap: Zap,
@@ -677,10 +677,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         },
         fixture: { tier: result.tipster?.tier?.name || 'C' },
         ticket: { tipo: 'simples' },
-        odds: { atual: finalReport.melhor_value?.odd_api || 2.0 },
+        odds: { atual: finalReport.melhor_value?.odd_api || 0 },
         clv: {
           sinal: clvSinal,
-          fechamentoEstimado: (finalReport.melhor_value?.odd_api || 2.0) * 0.95,
+          fechamentoEstimado: (finalReport.melhor_value?.odd_api || 0) * 0.95,
           delta: clvSinal === 'POSITIVO' ? 5 : clvSinal === 'NEGATIVO' ? -5 : 0
         },
         lineMovement: {
@@ -691,6 +691,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         probElo: result.elo?.probabilidades ?? result.probabilidades_ml,
         probGemini: result.probabilidades_ml,
         scouting: {
+          ...result.scouting,
           forma,
           motivacao,
           desfalques
@@ -915,7 +916,12 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             lineMovement: { tipo: 'ESTAVEL', direcao: 'NEUTRO', magnitude: 0 },
             probElo: result.elo?.probabilidades ?? result.probabilidades_ml,
             probGemini: result.probabilidades_ml,
-            scouting: { forma: 75, motivacao: 80, desfalques: 85 },
+            scouting: { 
+              ...result.scouting,
+              forma: 75, 
+              motivacao: 80, 
+              desfalques: 85 
+            },
             fixtureStats: { h2h: 70 }
           };
 
