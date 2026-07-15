@@ -1263,7 +1263,7 @@ export async function runTipsterEngine(
     } else if (indisponiveis.length >= 3) {
       blockObj = {
         codigo: 'B-DADOS',
-        motivo: `Dado específico ausente: [${indisponiveis.map(item => item.id).join(', ')}] | impacto estimado no EV: -3.0pp`
+        motivo: `Dado específico ausente: [${indisponiveis.map(item => item.id).join(', ')}] | Segurança acionada`
       };
     } else if (isUnderdog && (underdogEloDelta > 8 || underdogPinDelta > 8)) {
       blockObj = {
