@@ -914,7 +914,7 @@ export async function runTipsterEngine(
     const formaVisitante5j = awayFormArr.length > 0 ? awayFormArr.join('/') : 'N/A';
 
     const homeWins = homeFormArr.filter((r: string) => r.toUpperCase() === 'V' || r.toUpperCase() === 'W').length;
-    const mandanteMenos2Vitorias = homeWins < 2;
+    const mandanteMenos2Vitorias = homeFormArr.length > 0 && !homeFormArr.includes('?') && homeWins < 2;
 
     const summaryText = (analysis.scouting?.scout_summary || '') + ' ' + (analysis.resumo || '');
     const summaryLower = summaryText.toLowerCase();
@@ -1089,7 +1089,7 @@ export async function runTipsterEngine(
     }
 
     // ─── BLOCO 5 — SANIDADE DE ODDS E MAPEAMENTO ───
-    const oddBet365Actual = oddManualBet365 || analysis.odds?.atual;
+    const oddBet365Actual = oddManualBet365 || 0;
     const sanidade = checkOddsSanity(analysis, chosenCandidate, oddBet365Actual);
     const oddBet365Manual = sanidade.desvio_valido ? sanidade.odd_bet365_final : null;
 
@@ -1279,6 +1279,11 @@ export async function runTipsterEngine(
       blockObj = {
         codigo: 'B-EV',
         motivo: `Desvio Bet365 (${(oddBet365Manual ?? 0).toFixed(2)}) vs Pinnacle (${chosenCandidate.odd_api.toFixed(2)}) é < +1.0%. Margem de segurança violada.`
+      };
+    } else if (chosenCandidate.evFinal > 12.0) {
+      blockObj = {
+        codigo: 'B-EDGE',
+        motivo: `EV irrealista (>12%), provável erro de linha/API (EV atual: ${chosenCandidate.evFinal.toFixed(1)}%).`
       };
     } else if (chosenCandidate.evFinal < 3) {
       if (bestAlternative && !isBDesvioBlocked && sanidade.desvio_valido) {
@@ -1697,7 +1702,7 @@ function formatToDecisaoEngine(
       probabilidade_final: mercadoEncontrado.probabilidade_final,
       odd_referencia: mercadoEncontrado.odd_referencia,
       break_even_odd: mercadoEncontrado.break_even_odd,
-      odd_bet365_publica: analysis?.odds?.atual || engineData?.mercado_selecionado?.odd_bet365_publica || undefined,
+      odd_bet365_publica: engineData?.mercado_selecionado?.odd_bet365_publica || undefined,
       odd_bet365_manual: oddManualBet365 || null,
       probabilidade_elo: engineData.mercado?.probabilidade_elo ?? probEloCasa,
       selecionado: true
