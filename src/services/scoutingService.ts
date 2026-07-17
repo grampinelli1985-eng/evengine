@@ -246,7 +246,7 @@ function normalizeResult(res: string): string {
   return '?';
 }
 
-export async function fetchRealScouting(homeTeam: string, awayTeam: string, leagueId?: number): Promise<ScoutingReport> {
+export async function fetchRealScouting(homeTeam: string, awayTeam: string, leagueId?: number, sportKey?: string): Promise<ScoutingReport> {
   const homeId = await getTeamIdAsync(homeTeam);
   const awayId = await getTeamIdAsync(awayTeam);
 
@@ -273,10 +273,21 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
           return results;
         }
       } catch (e) {
-        console.warn(`API-Football form fetch failed for ${teamName}, trying Gemini search...`);
+        console.warn(`API-Football form fetch failed for ${teamName}. Trying TheOddsAPI...`);
       }
     }
 
+    // [FIX] Tenta The Odds API antes de apelar para Gemini Search
+    if (sportKey) {
+      const resultadosAPI = await buscarResultadosRecentes(teamName, sportKey);
+      if (resultadosAPI.length > 0) {
+        const results = resultadosAPI.map(r => r.resultado === 'W' ? 'V' : r.resultado === 'D' ? 'E' : 'D');
+        while (results.length < 5) results.unshift('?');
+        return results;
+      }
+    }
+
+    console.warn(`TheOddsAPI fetch failed for ${teamName}. Trying Gemini search...`);
     return await fetchFormaRecenteViaGeminiSearch(teamName);
   };
 
@@ -468,7 +479,7 @@ export async function fetchFormaRecenteViaGeminiSearch(teamName: string): Promis
   }
 
   const currentYear = new Date().getFullYear();
-  const query = `"${teamName} results last 5 matches ${currentYear}"`;
+  const query = `"${teamName}" futebol ultimos 5 jogos resultados placar ${currentYear}`;
 
   try {
     const systemInstruction = `Você é um agente de busca esportiva (Scout).

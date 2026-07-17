@@ -11,8 +11,8 @@ const ODDS_API_BASE_URL = 'https://api.the-odds-api.com/v4/sports';
 const ACTIVE_SPORTS_CACHE_KEY = 'evengine_active_sports_cache';
 const ACTIVE_SPORTS_TTL = 60 * 60 * 1000; // 1 hora — lista de esportes ativos muda pouco
 const ODDS_CACHE_PREFIX = 'evengine_odds_cache_';
-const ODDS_CACHE_TTL_DEFAULT = 30 * 60 * 1000; // 30 min padrão (localStorage sobrevive reload)
-const ODDS_CACHE_TTL_NEAR_KICKOFF = 5 * 60 * 1000; // 5 min se jogo < 2h
+const ODDS_CACHE_TTL_DEFAULT = 60 * 60 * 1000; // 60 min padrão (localStorage sobrevive reload)
+const ODDS_CACHE_TTL_NEAR_KICKOFF = 30 * 60 * 1000; // 30 min se jogo < 2h
 
 const MOCK_MATCHES: Match[] = [
   {

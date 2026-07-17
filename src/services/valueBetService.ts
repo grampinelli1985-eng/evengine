@@ -113,11 +113,11 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
 
   // EV-05: Reduce model weight when using soft bookmaker — their lines are inefficient,
   // so trusting our model more than the reference would inflate EV artificially.
-  // Cap Bayesian weight at 0.70 without a sharp reference.
+  // Cap Bayesian weight at 0.35 without a sharp reference (punitive shrinkage).
   const wBase = !league ? 0.85 :
     imprevisibilidade === 'muito_alta' ? 0.80 :
       imprevisibilidade === 'alta' ? 0.90 : 1.0;
-  const w = hasSharpRef ? wBase : Math.min(wBase, 0.70);
+  const w = hasSharpRef ? wBase : Math.min(wBase, 0.35);
 
   const ref = extractMarketReference(match);
 

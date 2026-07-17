@@ -50,15 +50,15 @@ const plans = [
   {
     name: 'Free',
     price: 'Grátis',
-    period: '',
+    period: ' (15 dias)',
     description: 'Experimentação e validação inicial',
     features: [
       '3 análises/dia',
-      'Apenas Tier A (Top 5 ligas europeias)',
+      'Ligas Tier A + Brasileirão Série A',
       'Sem Módulo Copa do Mundo',
       'Histórico 7 dias',
     ],
-    cta: 'Começar Grátis',
+    cta: 'Teste Grátis',
     featured: false,
     badge: ''
   },
@@ -227,7 +227,7 @@ export default function LandingPage({ onNavigateToAuth, onNavigateToDemo }: Land
             className="flex flex-col sm:flex-row items-center justify-center gap-4"
           >
             <button onClick={onNavigateToAuth} className="cta-button">
-              Começar Grátis — 3 análises por dia <ArrowRight size={16} />
+              Teste Grátis (15 dias) — 3 análises/dia <ArrowRight size={16} />
             </button>
             {onNavigateToDemo && (
               <button

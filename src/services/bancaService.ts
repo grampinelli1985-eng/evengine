@@ -17,8 +17,17 @@
 
 import { BancaState } from '../types';
 import { supabase } from './supabaseClient';
+import { getCachedProfile } from './planService';
 
-const STORAGE_KEY = 'evengine_banca_state';
+function getStorageKey(): string {
+  const profile = getCachedProfile();
+  return `evengine_banca_state${profile?.id ? `_${profile.id}` : ''}`;
+}
+
+function getResetKey(): string {
+  const profile = getCachedProfile();
+  return `evengine_banca_last_reset${profile?.id ? `_${profile.id}` : ''}`;
+}
 
 export interface BancaDB {
   id: string;
@@ -39,12 +48,12 @@ const DEFAULT_BANCA: BancaState = {
 
 // [INC-BANCA-2 FIX] Separado em função pura (leitura) + checkAndResetDaily (side-effect)
 export function getBanca(): BancaState {
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = localStorage.getItem(getStorageKey());
   return stored ? JSON.parse(stored) : { ...DEFAULT_BANCA };
 }
 
 export function checkAndResetDaily(): void {
-  const lastReset = localStorage.getItem('evengine_banca_last_reset');
+  const lastReset = localStorage.getItem(getResetKey());
   const today = new Date().toISOString().split('T')[0];
 
   if (lastReset !== today) {
@@ -52,25 +61,25 @@ export function checkAndResetDaily(): void {
     state.pnl_diario = 0;
     state.stops = { win: false, loss: false };
     state.apostasHoje = 0;
-    localStorage.setItem('evengine_banca_last_reset', today);
+    localStorage.setItem(getResetKey(), today);
     saveBanca(state);
   }
 }
 
 export function saveBanca(state: BancaState) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(getStorageKey(), JSON.stringify(state));
 }
 
 export function setBancaAtual(valor: number): void {
   const state = getBanca();
   state.bancaAtual = valor;
   state.total = valor;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(getStorageKey(), JSON.stringify(state));
 }
 
 export function getBancaAtual(): number {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getStorageKey());
     if (!raw) return 1000;
     const state = JSON.parse(raw);
     return state.bancaAtual ?? state.total ?? 1000;
@@ -83,7 +92,7 @@ export function resetarContadores(): void {
   const state = getBanca();
   state.apostasHoje = 0;
   state.stops = { win: false, loss: false };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(getStorageKey(), JSON.stringify(state));
   salvarStopLossState(STOP_LOSS_INICIAL);
   window.dispatchEvent(new CustomEvent('evengine_stop_loss_changed', { detail: STOP_LOSS_INICIAL }));
 }
@@ -101,8 +110,13 @@ export function calculateKellyStake(prob: number, odd: number, bancaTotal: numbe
 
   const stakeValue = bancaTotal * kelly * fraction;
 
-  // Arredondar para múltiplo de R$5
-  const roundedStake = Math.round(stakeValue / 5) * 5;
+  // Arredondar para número inteiro
+  let roundedStake = Math.round(stakeValue);
+  
+  // Se o Kelly calculou uma stake positiva, garantir pelo menos R$1
+  if (stakeValue > 0 && roundedStake < 1) {
+    roundedStake = 1;
+  }
 
   // Hard cap: 3% da banca (KELLY_MAX_ABSOLUTO)
   return Math.min(roundedStake, bancaTotal * 0.03);

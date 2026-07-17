@@ -583,6 +583,13 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       window.dispatchEvent(new CustomEvent('evengine_open_auth_modal'));
       return;
     }
+
+    if (analyzedMatches[match.id]) {
+      setSelectedMatch(match);
+      setAnalysis(analyzedMatches[match.id]);
+      setAnalysisLoading(false);
+      return;
+    }
     if (!canAnalyzeToday()) {
       window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
       return;
@@ -866,6 +873,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           }
 
           const result = await analyzeMatch(match);
+          // EV-RATE-LIMIT: 3-second delay to avoid hitting Gemini API rate limits (15 RPM)
+          await new Promise(r => setTimeout(r, 3000));
 
           let statsMedias = null;
           if (!result.escanteios?.probabilidade || !result.finalizacoes?.probabilidade) {
@@ -889,15 +898,43 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           const valueReport = calcularValueBets(match, result);
           const finalReport = validateReport(valueReport);
 
+          // Line Movement + CLV signal (unified — clvSinal from this match's line movement, not global portfolio ROI)
+          let lmTipo: 'STEAM_MOVE' | 'GRADUAL' | 'ESTAVEL' | 'ADVERSO' | 'REVERSE' = 'ESTAVEL';
+          let lmDirecao: 'FAVOR' | 'CONTRA' | 'NEUTRO' = 'NEUTRO';
+          let clvSinal: 'POSITIVO' | 'NEUTRO' | 'NEGATIVO' = 'NEUTRO';
+          try {
+            const lmData = detectLineMovement(match);
+            if (lmData !== null) {
+              const varHome = lmData.variation?.home ?? 0;
+              lmTipo = lmData.tem_steam ? 'STEAM_MOVE' : varHome > 3 ? 'GRADUAL' : varHome < -3 ? 'ADVERSO' : 'ESTAVEL';
+              lmDirecao = varHome > 0 ? 'FAVOR' : varHome < 0 ? 'CONTRA' : 'NEUTRO';
+              if (lmData.tem_steam || varHome > 3) clvSinal = 'POSITIVO';
+              else if (varHome < -3) clvSinal = 'NEGATIVO';
+            }
+          } catch (e) {
+            lmTipo = 'ESTAVEL';
+            lmDirecao = 'NEUTRO';
+            clvSinal = 'NEUTRO';
+          }
+
+          const forma = result.scouting?.forma ?? 50;
+          const motivacao = result.scouting?.motivacao ?? 50;
+          const desfalques = result.scouting?.desfalques ?? 50;
+
           const engineInput = {
             ...result,
-            valueBet: { ev: finalReport.melhor_value?.edge || 0 },
+            valueBet: {
+              ev: finalReport.melhor_value?.edge || 0,
+              report: finalReport
+            },
             banca: {
-              kelly: result.tipster?.kellyStake || 0,
+              kelly: result.tipster?.kellyStake || result.kellyStake || 0,
+              bancaAtual: bancaAtual,
               redsConsecutivos: banca.stops.loss ? 3 : 0,
               apostasHoje: 0,
               drawdownPercentual: 0
             },
+            matchData: match,
             elo: {
               jogosComputados: result.elo?.jogos_minimos_atingidos ? 15 : 5,
               probabilidades: result.elo?.probabilidades ?? result.probabilidades_ml
@@ -908,21 +945,25 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             },
             fixture: { tier: result.tipster?.tier?.name || 'C' },
             ticket: { tipo: 'simples' },
-            odds: { atual: finalReport.melhor_value?.odd_api || 2.0 },
+            odds: { atual: finalReport.melhor_value?.odd_api || 0 },
             clv: {
-              fechamentoEstimado: (finalReport.melhor_value?.odd_api || 2.0) * 0.95,
-              delta: 5
+              sinal: clvSinal,
+              fechamentoEstimado: (finalReport.melhor_value?.odd_api || 0) * 0.95,
+              delta: clvSinal === 'POSITIVO' ? 5 : clvSinal === 'NEGATIVO' ? -5 : 0
             },
-            lineMovement: { tipo: 'ESTAVEL', direcao: 'NEUTRO', magnitude: 0 },
+            lineMovement: {
+              tipo: lmTipo,
+              direcao: lmDirecao,
+              magnitude: 0
+            },
             probElo: result.elo?.probabilidades ?? result.probabilidades_ml,
             probGemini: result.probabilidades_ml,
-            scouting: { 
+            scouting: {
               ...result.scouting,
-              forma: 75, 
-              motivacao: 80, 
-              desfalques: 85 
-            },
-            fixtureStats: { h2h: 70 }
+              forma,
+              motivacao,
+              desfalques
+            }
           };
 
           const tierName = result.tipster?.tier?.name ?? 'C';
@@ -1614,19 +1655,21 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                   </div>
                   <div className="bg-white/[0.01] border border-white/5 rounded-2xl p-4 space-y-4">
                     
-                    {/* API quota indicator */}
-                    <div className="flex items-center justify-between bg-[#141416] border border-white/5 px-3 py-2.5 rounded-xl">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-1.5 h-1.5 rounded-full ${isDemoMode ? 'bg-amber-500 animate-pulse' : 'bg-green-500 animate-pulse'}`} />
-                        <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider">Cota Odds API</span>
+                    {/* API quota indicator - Apenas Admin */}
+                    {user?.email === 'grampinelli1985@gmail.com' && (
+                      <div className="flex items-center justify-between bg-[#141416] border border-white/5 px-3 py-2.5 rounded-xl">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-1.5 h-1.5 rounded-full ${isDemoMode ? 'bg-amber-500 animate-pulse' : 'bg-green-500 animate-pulse'}`} />
+                          <span className="text-[9px] text-white/40 font-bold uppercase tracking-wider">Cota Odds API</span>
+                        </div>
+                        <span className={`text-[9px] font-mono uppercase font-black tracking-widest ${isDemoMode ? 'text-amber-500' : 'text-green-400'}`}>
+                          {isDemoMode ? 'DEMO MODE' : (() => {
+                            const info = getOddsApiQuotaInfo();
+                            return info.remaining ? `REAL: ${info.remaining} REQS` : 'REAL ACTIVE';
+                          })()}
+                        </span>
                       </div>
-                      <span className={`text-[9px] font-mono uppercase font-black tracking-widest ${isDemoMode ? 'text-amber-500' : 'text-green-400'}`}>
-                        {isDemoMode ? 'DEMO MODE' : (() => {
-                          const info = getOddsApiQuotaInfo();
-                          return info.remaining ? `REAL: ${info.remaining} REQS` : 'REAL ACTIVE';
-                        })()}
-                      </span>
-                    </div>
+                    )}
 
                     {/* Telemetry view link */}
                     <button
@@ -2236,9 +2279,9 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       </AnimatePresence>
 
 
-      {/* API-Football error banner */}
+      {/* API-Football error banner (Apenas admin se for erro de cota) */}
       <ApiErrorBanner
-        errorType={apiFootballError}
+        errorType={apiFootballError?.kind === 'quota' && user?.email !== 'grampinelli1985@gmail.com' ? null : apiFootballError}
         onDismiss={() => setApiFootballError(null)}
       />
 

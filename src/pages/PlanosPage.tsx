@@ -14,14 +14,14 @@ export default function PlanosPage() {
     {
       name: 'FREE',
       price: 'R$0',
-      period: 'grátis',
-      cta: 'Começar Grátis',
+      period: '15 dias',
+      cta: 'Teste Grátis',
       link: '/login',
       badge: null,
       borderColor: 'border-[#1e2330]',
       features: [
         { name: 'Análises/dia', val: '3', checked: true },
-        { name: 'Ligas cobertas', val: 'Apenas Tier A (Top 5 ligas europeias)', checked: true },
+        { name: 'Ligas cobertas', val: 'Ligas Tier A + Brasileirão Série A', checked: true },
         { name: 'Módulo Copa do Mundo 2026', val: false, checked: false },
         { name: 'ELO Engine (clubes)', val: 'básico', checked: true },
         { name: 'Filtros B-EV / B-MEFF', val: true, checked: true },

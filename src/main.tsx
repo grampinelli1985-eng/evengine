@@ -5,6 +5,28 @@ import App from './App.tsx';
 import './index.css';
 import { supabase } from './services/supabaseClient';
 
+// Auto-unregistration of old PWA service worker to bypass browser caching issues
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    for (const registration of registrations) {
+      registration.unregister().then((success) => {
+        if (success) {
+          console.log('[PWA] Stale service worker unregistered successfully.');
+          if ('caches' in window) {
+            caches.keys().then((keys) => {
+              Promise.all(keys.map(key => caches.delete(key))).then(() => {
+                window.location.reload();
+              });
+            });
+          } else {
+            window.location.reload();
+          }
+        }
+      });
+    }
+  });
+}
+
 // Intercept window.fetch to automatically append JWT Token for all proxy endpoints (/api/football)
 const originalFetch = window.fetch;
 window.fetch = async (input, init) => {

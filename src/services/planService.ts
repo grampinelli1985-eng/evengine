@@ -19,7 +19,8 @@ const TIER_A_LEAGUES = [
   'soccer_spain_la_liga',
   'soccer_italy_serie_a',
   'soccer_germany_bundesliga',
-  'soccer_france_ligue_one'
+  'soccer_france_ligue_one',
+  'soccer_brazil_campeonato'
 ];
 
 export function getCachedProfile(): UserProfile | null {
@@ -137,17 +138,17 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
 
     // Fallback de segurança: verifica se plano PRO/SHARP expirou
     // (o webhook do ASAAS é o mecanismo principal, este é o safety net)
-    if ((data as UserProfile).plan !== 'demo' && (data as UserProfile).plan !== 'free') {
+    if ((data as UserProfile).plan !== 'demo') {
       const expiresAt = data.plan_expires_at ? new Date(data.plan_expires_at) : null;
       if (expiresAt && expiresAt < new Date()) {
         const { data: downgraded } = await supabase
           .from('profiles')
-          .update({ plan: 'free', plan_expires_at: null })
+          .update({ plan: 'demo', plan_expires_at: null })
           .eq('id', userId)
           .select()
           .single();
         if (downgraded) data = downgraded;
-        console.warn(`[planService] Plano expirado para ${userId} — downgrade para free`);
+        console.warn(`[planService] Plano expirado para ${userId} — downgrade para demo`);
       }
     }
 
@@ -236,14 +237,14 @@ export async function incrementAnalysesToday(): Promise<UserProfile | null> {
  */
 export async function updateUserPlan(userId: string, plan: 'free' | 'pro' | 'sharp'): Promise<UserProfile | null> {
   const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 30);
+  expiresAt.setDate(expiresAt.getDate() + (plan === 'free' ? 15 : 30));
 
   const profile = getCachedProfile();
   if (profile) {
     setCachedProfile({
       ...profile,
       plan,
-      plan_expires_at: plan === 'free' ? null : expiresAt.toISOString(),
+      plan_expires_at: expiresAt.toISOString(),
       analyses_today: 0,
       analyses_reset_at: new Date().toISOString()
     });
@@ -256,7 +257,7 @@ export async function updateUserPlan(userId: string, plan: 'free' | 'pro' | 'sha
       .from('profiles')
       .update({
         plan,
-        plan_expires_at: plan === 'free' ? null : expiresAt.toISOString(),
+        plan_expires_at: expiresAt.toISOString(),
         analyses_today: 0,
         analyses_reset_at: new Date().toISOString()
       })

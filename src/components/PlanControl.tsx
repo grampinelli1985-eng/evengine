@@ -184,7 +184,7 @@ export function UpgradeModal({ isOpen: propIsOpen, onClose: propOnClose }: Upgra
               <div>
                 <h4 className="text-sm font-black text-white uppercase mb-2">Free</h4>
                 <div className="text-2xl font-black text-white mb-1">Grátis</div>
-                <p className="text-[9px] text-white/30 mb-4">Para sempre · sem cartão</p>
+                <p className="text-[9px] text-white/30 mb-4">Teste por 15 dias · sem cartão</p>
                 <ul className="space-y-2.5 text-xs text-white/50 mb-6">
                   <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> 3 análises/dia</li>
                   <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Apenas Tier A (Top 5 ligas)</li>
@@ -203,7 +203,7 @@ export function UpgradeModal({ isOpen: propIsOpen, onClose: propOnClose }: Upgra
                     : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
                 }`}
               >
-                {plan === 'free' ? 'Plano Atual' : isDemoUpgrade ? 'Continuar com Free' : 'Escolher Free'}
+                {plan === 'free' ? 'Plano Atual' : isDemoUpgrade ? 'Teste Grátis (15 d)' : 'Teste Grátis (15 d)'}
               </button>
             </div>
 

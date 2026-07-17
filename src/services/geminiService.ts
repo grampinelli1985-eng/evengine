@@ -157,8 +157,6 @@ const ANALYSIS_SCHEMA = {
       required: ["casa", "empate", "fora"],
     },
     dica_principal: { type: Type.STRING },
-    home_expected_goals: { type: Type.NUMBER },
-    away_expected_goals: { type: Type.NUMBER },
     qualidade_score: { type: Type.NUMBER },
   },
   required: [
@@ -169,8 +167,6 @@ const ANALYSIS_SCHEMA = {
     "dupla_chance",
     "probabilidades_ml",
     "dica_principal",
-    "home_expected_goals",
-    "away_expected_goals",
     "qualidade_score",
   ],
 };
@@ -227,7 +223,7 @@ export async function analyzeMatch(match: Match): Promise<AnalysisResponse> {
 
   // 1. Context gathering in parallel
   const [scouting, homeInjuries, awayInjuries, stats] = await Promise.all([
-    fetchRealScouting(match.home_team, match.away_team, leagueId),
+    fetchRealScouting(match.home_team, match.away_team, leagueId, match.sport_key),
     fetchInjuries(match.home_team, leagueId),
     fetchInjuries(match.away_team, leagueId),
     fetchMatchStats(match.home_team, match.away_team, leagueId),
@@ -300,8 +296,6 @@ ${lineMovementText}
       if (!analysis.probabilidades_ml) {
         analysis.probabilidades_ml = { casa: 33, empate: 34, fora: 33 };
       }
-      if (analysis.home_expected_goals === undefined) analysis.home_expected_goals = 1.4;
-      if (analysis.away_expected_goals === undefined) analysis.away_expected_goals = 1.2;
     } catch (e: any) {
       console.error("Analysis failed, using fallback:", e);
       analysis = generateFallbackAnalysis(match, scouting);
@@ -322,6 +316,18 @@ ${lineMovementText}
   analysis.scouting.away_desfalques = awayInjuries;
   analysis.desfalques = homeInjuries;
   analysis.elo = calculateElo(match);
+  
+  // Determinar Expected Goals (xG) baseados no ELO (determinístico em vez de LLM)
+  const eloDelta = analysis.elo.delta; // Delta positivo favorece o mandante (home)
+  // xG base médio
+  let baseHomeXG = 1.45;
+  let baseAwayXG = 1.15;
+  
+  // Ajuste ELO (a cada 100 pontos de ELO de diferença, altera 0.15 no xG)
+  const eloAdjustment = (eloDelta / 100) * 0.15;
+  analysis.home_expected_goals = Math.max(0.3, parseFloat((baseHomeXG + eloAdjustment).toFixed(2)));
+  analysis.away_expected_goals = Math.max(0.3, parseFloat((baseAwayXG - eloAdjustment).toFixed(2)));
+
   analysis.poisson = calculatePoisson(
     analysis.home_expected_goals,
     analysis.away_expected_goals,
@@ -366,7 +372,10 @@ ${lineMovementText}
 
   analysis.marketReference = marketRef;
 
-  void setCachedAnalysis(fixtureKey, analysis, oddsRecord, match.commence_time);
+  // Não cachear no Supabase se a análise veio do modo de segurança/fallback
+  if (analysis.resumo && !analysis.resumo.startsWith('[MODO DE SEGURANÇA]')) {
+    void setCachedAnalysis(fixtureKey, analysis, oddsRecord, match.commence_time);
+  }
 
   return analysis;
 }
@@ -389,8 +398,24 @@ function formatStatsCompact(stats: any): string {
 }
 
 function generateFallbackAnalysis(match: Match, scouting: any): any {
+  // Try to use ELO to generate reasonable baseline instead of 33/34/33
+  let pHome = 33;
+  let pDraw = 34;
+  let pAway = 33;
+  
+  try {
+    const elo = calculateElo(match);
+    if (elo && elo.probabilidades) {
+      pHome = elo.probabilidades.casa;
+      pDraw = elo.probabilidades.empate;
+      pAway = elo.probabilidades.fora;
+    }
+  } catch (e) {
+    // Ignore and keep 33/34/33
+  }
+
   return {
-    resumo: "[MODO DE SEGURANÇA] API indisponível. Usando modelos estatísticos locais.",
+    resumo: "[MODO DE SEGURANÇA] Falha na IA. Usando modelos determinísticos ELO.",
     gols: {
       over15: { probabilidade: 70, confianca: "media", recomenda: false },
       over25: { probabilidade: 45, confianca: "baixa", recomenda: false },
@@ -399,14 +424,12 @@ function generateFallbackAnalysis(match: Match, scouting: any): any {
     escanteios: { faixa_esperada: "8-10", observacao: "Média da liga", probabilidade: 60 },
     finalizacoes: { faixa_esperada: "22-26", observacao: "Média da liga", probabilidade: 60 },
     dupla_chance: {
-      "1X": { probabilidade: 65, odd_equivalente: 1.5, recomenda: false },
-      X2: { probabilidade: 65, odd_equivalente: 1.5, recomenda: false },
-      "12": { probabilidade: 70, odd_equivalente: 1.4, recomenda: false },
+      "1X": { probabilidade: pHome + pDraw, odd_equivalente: 1.5, recomenda: false },
+      X2: { probabilidade: pAway + pDraw, odd_equivalente: 1.5, recomenda: false },
+      "12": { probabilidade: pHome + pAway, odd_equivalente: 1.4, recomenda: false },
     },
-    probabilidades_ml: { casa: 33, empate: 34, fora: 33 },
+    probabilidades_ml: { casa: pHome, empate: pDraw, fora: pAway },
     dica_principal: "Aguarde retorno da IA para análise profunda",
-    home_expected_goals: 1.2,
-    away_expected_goals: 1.1,
     qualidade_score: 50,
   };
 }
