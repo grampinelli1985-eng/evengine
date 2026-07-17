@@ -39,7 +39,7 @@ export type InvalidationReason = 'line_movement' | 'manual' | 'ttl';
 
 const TTL_NORMAL_MIN   = 240;  // 4h — análise padrão
 const TTL_PREMATCH_MIN = 20;   // 20min — <1h para o jogo
-const LINE_MOVEMENT_THRESHOLD = 0.08; // 8% de variação de odd
+const LINE_MOVEMENT_THRESHOLD = 0.05; // 5% de variação de odd (Gate B7)
 
 // ─── Helpers ─────────────────────────────────────────────────
 
