@@ -1304,15 +1304,15 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               </button>
 
               <button
-                onClick={() => setView('worldcup')}
+                onClick={() => setView('telemetry')}
                 className={`flex items-center gap-1 px-2.5 py-1.5 2xl:gap-2 2xl:px-4 2xl:py-2 border rounded-xl transition-all group shrink-0 whitespace-nowrap ${
-                  view === 'worldcup'
-                    ? 'bg-yellow-500 border-yellow-400 text-black shadow-lg shadow-yellow-500/15'
+                  view === 'telemetry'
+                    ? 'bg-blue-500 border-blue-400 text-white shadow-lg shadow-blue-500/15'
                     : 'bg-transparent border-transparent text-white/50 hover:text-white hover:bg-white/5'
                 }`}
               >
-                <Trophy size={14} className={`shrink-0 ${view === 'worldcup' ? 'text-black' : 'text-yellow-500/60'}`} />
-                <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Copa 2026</span>
+                <Activity size={14} className={`shrink-0 ${view === 'telemetry' ? 'text-white' : 'text-blue-400/70'}`} />
+                <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Telemetria</span>
               </button>
 
               {/* Additional Menus Dropdown */}
@@ -1391,17 +1391,17 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
                     <button
                       onClick={() => {
-                        setView('telemetry');
+                        setView('worldcup');
                         setIsExtraMenuOpen(false);
                       }}
                       className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-all text-left cursor-pointer ${
-                        view === 'telemetry'
-                          ? 'bg-blue-500 border-blue-400 text-white'
+                        view === 'worldcup'
+                          ? 'bg-yellow-500 border-yellow-400 text-black'
                           : 'bg-transparent border-transparent text-white/60 hover:text-white hover:bg-white/5'
                       }`}
                     >
-                      <Activity size={14} className="shrink-0" />
-                      <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Telemetria</span>
+                      <Trophy size={14} className={`shrink-0 ${view === 'worldcup' ? 'text-black' : 'text-yellow-500/60'}`} />
+                      <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Copa 2026</span>
                     </button>
 
                     <button
@@ -1595,17 +1595,17 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
                     <button
                       onClick={() => {
-                        setView('worldcup');
+                        setView('telemetry');
                         setMobileMenuOpen(false);
                       }}
                       className={`flex items-center gap-3 px-4 py-3.5 border rounded-xl transition-all text-left ${
-                        view === 'worldcup'
-                          ? 'bg-yellow-500 border-yellow-400 text-black shadow-lg shadow-yellow-500/20'
+                        view === 'telemetry'
+                          ? 'bg-blue-500 border-blue-400 text-white shadow-lg shadow-blue-500/20'
                           : 'bg-white/[0.02] border-white/5 text-white/60 hover:text-white hover:bg-white/[0.05]'
                       }`}
                     >
-                      <Trophy size={16} className={view === 'worldcup' ? 'text-black' : 'text-yellow-500/60'} />
-                      <span className="text-[11px] font-black uppercase tracking-wider">Copa 2026</span>
+                      <Activity size={16} className={view === 'telemetry' ? 'text-white' : 'text-blue-400/70'} />
+                      <span className="text-[11px] font-black uppercase tracking-wider">Telemetria</span>
                     </button>
 
                     <button
