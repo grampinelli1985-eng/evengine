@@ -114,6 +114,22 @@ export async function getCachedAnalysis(
   fixtureKey: string,
   currentOdds?: Record<string, number>
 ): Promise<any | null> {
+  // 1. Tentar ler do localStorage local primeiro (velocidade máxima + resiliência)
+  try {
+    const localRaw = localStorage.getItem(`ev_cache_${fixtureKey}`);
+    if (localRaw) {
+      const parsed = JSON.parse(localRaw);
+      if (parsed.expiresAt && new Date(parsed.expiresAt).getTime() > Date.now()) {
+        console.info(`[Cache Local] HIT para "${fixtureKey}"`);
+        return parsed.data;
+      } else {
+        localStorage.removeItem(`ev_cache_${fixtureKey}`);
+      }
+    }
+  } catch (e) {
+    // Ignora erros de localStorage (ex: quota excedida)
+  }
+
   if (!supabase) return null;
 
   try {
@@ -125,7 +141,12 @@ export async function getCachedAnalysis(
       .gt('expires_at', new Date().toISOString())
       .maybeSingle();
 
-    if (error || !data) return null;
+    if (error) {
+      console.warn('[Cache Supabase] Erro ao consultar cache:', error.message);
+      return null;
+    }
+
+    if (!data) return null;
 
     const entry = data as CacheEntry;
 
@@ -135,22 +156,24 @@ export async function getCachedAnalysis(
       return null;
     }
 
-    console.info(`[Cache] HIT para "${fixtureKey}" (expira ${entry.expires_at})`);
+    // Salva no localStorage local para chamadas subsequentes instantâneas
+    try {
+      localStorage.setItem(`ev_cache_${fixtureKey}`, JSON.stringify({
+        data: entry.data,
+        expiresAt: entry.expires_at
+      }));
+    } catch (e) {}
+
+    console.info(`[Cache Supabase] HIT para "${fixtureKey}" (expira ${entry.expires_at})`);
     return entry.data;
   } catch (err) {
-    console.warn('[Cache] Erro ao buscar cache:', err);
+    console.warn('[Cache Supabase] Exceção ao buscar cache:', err);
     return null;
   }
 }
 
 /**
- * Salva análise no Supabase.
- * Faz upsert — se já existir entrada para o fixture_key, atualiza.
- *
- * @param fixtureKey  Chave gerada por buildFixtureKey()
- * @param result      Objeto completo da análise
- * @param currentOdds Odds no momento da análise (para detecção futura de line movement)
- * @param matchDatetime ISO datetime da partida (para calcular TTL)
+ * Salva análise no Supabase e no localStorage.
  */
 export async function setCachedAnalysis(
   fixtureKey: string,
@@ -158,8 +181,6 @@ export async function setCachedAnalysis(
   currentOdds?: Record<string, number>,
   matchDatetime?: string
 ): Promise<void> {
-  if (!supabase) return;
-
   const ttlMin = calcTTL(matchDatetime);
   if (ttlMin === 0) {
     console.info(`[Cache] Jogo passado — não cacheando "${fixtureKey}"`);
@@ -167,6 +188,16 @@ export async function setCachedAnalysis(
   }
 
   const expires_at = new Date(Date.now() + ttlMin * 60000).toISOString();
+
+  // 1. Salvar no localStorage local
+  try {
+    localStorage.setItem(`ev_cache_${fixtureKey}`, JSON.stringify({
+      data: result,
+      expiresAt: expires_at
+    }));
+  } catch (e) {}
+
+  if (!supabase) return;
 
   try {
     const { error } = await supabase
@@ -184,12 +215,12 @@ export async function setCachedAnalysis(
       );
 
     if (error) {
-      console.warn('[Cache] Erro ao salvar cache:', error);
+      console.warn('[Cache Supabase] Erro ao salvar no Supabase:', error.message);
     } else {
-      console.info(`[Cache] SALVO "${fixtureKey}" — TTL ${ttlMin}min (expira ${expires_at})`);
+      console.info(`[Cache Supabase] SALVO "${fixtureKey}" — TTL ${ttlMin}min (expira ${expires_at})`);
     }
   } catch (err) {
-    console.warn('[Cache] Exceção ao salvar cache:', err);
+    console.warn('[Cache Supabase] Exceção ao salvar cache:', err);
   }
 }
 
