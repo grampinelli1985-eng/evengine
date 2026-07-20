@@ -86,7 +86,7 @@ export default function PlanosPage() {
     },
     {
       question: 'O que é B-EV e B-MEFF?',
-      answer: 'São filtros de qualidade. B-EV bloqueia apostas com EV fora da faixa 3%–20%. B-MEFF bloqueia quando a vantagem sobre o mercado está abaixo de 2pp ou acima de 20pp (sinal de erro de modelo).'
+      answer: 'São filtros de qualidade. B-EV bloqueia apostas com EV fora da faixa 3%–12%. B-MEFF bloqueia quando a vantagem sobre o mercado está abaixo de 2pp ou acima de 20pp (sinal de erro de modelo).'
     },
     {
       question: 'Posso cancelar quando quiser?',

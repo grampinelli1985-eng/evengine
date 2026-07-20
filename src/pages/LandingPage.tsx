@@ -38,7 +38,7 @@ function PlayIcon() {
 }
 
 const gates = [
-  { code: 'B-EV', title: 'Margem de Valor Esperado', desc: 'Exige EV mínimo de +5% para cobrir a variância e máximo de +20%. Se passar de +20%, indica anomalia ou desvio grave do modelo em relação ao mercado.' },
+  { code: 'B-EV', title: 'Margem de Valor Esperado', desc: 'Exige EV mínimo de +3% para cobrir a variância e máximo de +12%. Se passar de +12%, indica anomalia ou desvio grave do modelo em relação ao mercado.' },
   { code: 'B-CONF', title: 'Confiança Mínima', desc: 'Calibração específica por módulo esportivo. O índice de confiança intrínseco do modelo deve ultrapassar o limiar crítico definido.' },
   { code: 'B-SCORE', title: 'Score Ponderado', desc: 'Pontuação composta gerada pela convergência de múltiplos sub-modelos. Se a convergência falhar, a análise é descartada.' },
   { code: 'B-MEFF', title: 'Market Efficiency Edge', desc: 'Diferença entre a probabilidade do modelo e a odd implícita de mercado deve estar estritamente entre 2pp e 20pp.' },
