@@ -49,7 +49,8 @@ REGRAS RÍGIDAS (sempre aplicam):
    qualitativo (lesões, forma, motivação). Concordância cega não gera value.
 6. Quando houver movimento de linha (steam move) informado, isso é sinal de
    dinheiro sharp entrando — favoreça a direção do movimento, salvo evidência
-   qualitativa forte em contrário, e mencione isso no campo "resumo".`;
+   qualitativa forte em contrário, e mencione isso no campo "resumo".
+7. O campo "resumo" deve ser sucinto e objetivo (no máximo 2 frases, máximo 35 palavras).`;
 
 // ============================================================
 // OTIMIZAÇÃO 2: responseSchema em vez de exemplo JSON no prompt.
@@ -183,15 +184,36 @@ export async function callGeminiAPI(
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: responseFormat === "json" ? "application/json" : "text/plain",
-        ...(schema ? { responseSchema: schema } : {}),
-      },
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [{ role: "user", parts: [{ text: userMessage }] }],
+        config: {
+          systemInstruction: systemPrompt,
+          responseMimeType: responseFormat === "json" ? "application/json" : "text/plain",
+          maxOutputTokens: 350,
+          temperature: 0.2,
+          ...(schema ? { responseSchema: schema } : {}),
+        },
+      });
+    } catch (e: any) {
+      if (e?.message?.includes("not found") || e?.status === 404 || e?.code === 404) {
+        response = await ai.models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: [{ role: "user", parts: [{ text: userMessage }] }],
+          config: {
+            systemInstruction: systemPrompt,
+            responseMimeType: responseFormat === "json" ? "application/json" : "text/plain",
+            maxOutputTokens: 350,
+            temperature: 0.2,
+            ...(schema ? { responseSchema: schema } : {}),
+          },
+        });
+      } else {
+        throw e;
+      }
+    }
 
     const text = response.text || "";
     return text;

@@ -331,17 +331,21 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
               <div>
                 <span className="text-[8px] text-white/30 uppercase font-black tracking-widest block mb-1">Bloco 5: Sanidade Odds</span>
                 <span className="text-[10px] text-white/80 font-bold leading-tight block">
-                  {decisao.sharp_context.sanidade_odds?.desvio_valido ? "✓ Válido" : "❌ Falhou"}
+                  {decisao.sharp_context?.sanidade_odds?.desvio_valido 
+                    ? "✓ Válido" 
+                    : (decisao.sharp_context?.sanidade_odds?.odd_bet365_final > 0 ? "❌ Falhou" : "ℹ️ Automático")}
                 </span>
               </div>
               <span className={`text-[8px] font-black uppercase tracking-wider mt-3 px-2 py-0.5 rounded self-start ${
-                decisao.sharp_context.sanidade_odds?.desvio_valido
+                decisao.sharp_context?.sanidade_odds?.desvio_valido
                   ? (decisao.sharp_context.sanidade_odds.passo3_desvio === 'DESVIO_CONFIRMADO' ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400')
-                  : 'bg-rose-500/10 text-rose-400'
+                  : (decisao.sharp_context?.sanidade_odds?.odd_bet365_final > 0 ? 'bg-rose-500/10 text-rose-400' : 'bg-blue-500/10 text-blue-400')
               }`}>
-                {decisao.sharp_context.sanidade_odds?.desvio_valido
+                {decisao.sharp_context?.sanidade_odds?.desvio_valido
                   ? (decisao.sharp_context.sanidade_odds.passo3_desvio === 'DESVIO_CONFIRMADO' ? 'Confirmado' : 'Íntegro')
-                  : (decisao.sharp_context.sanidade_odds?.passo1_limite === 'ODD_IMPLAUSIVEL' ? 'Implausível' : 'Inversão')}
+                  : (decisao.sharp_context?.sanidade_odds?.odd_bet365_final > 0
+                      ? (decisao.sharp_context?.sanidade_odds?.passo1_limite === 'ODD_IMPLAUSIVEL' ? 'Implausível' : 'Inversão')
+                      : 'Público / Auto')}
               </span>
             </div>
           </div>

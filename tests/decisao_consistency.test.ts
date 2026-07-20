@@ -408,12 +408,27 @@ describe('DecisaoEngine Consistency', () => {
         mercado: {
           nome: 'Dupla Chance 1X',
           probabilidade_ia: 80,
-          odd: 1.30
+          odd: 1.35
         },
         stake: { percentual: 1.5 }
       }));
 
-      const result = await runTipsterEngine(baseInput as any);
+      const testInput = {
+        ...baseInput,
+        analysis: {
+          ...baseInput.analysis,
+          valueBet: {
+            report: {
+              mercados: [
+                { market: 'Dupla Chance 1X', prob_ia: 80, odd_api: 1.35, edge: 0.08 },
+                { market: 'Dupla Chance X2', prob_ia: 55, odd_api: 1.80, edge: -0.01 }
+              ],
+              melhor_value: { market: 'Dupla Chance 1X', prob_ia: 80, odd_api: 1.35, edge: 0.08 }
+            }
+          }
+        }
+      };
+      const result = await runTipsterEngine(testInput as any);
       
       expect(result.todos_mercados).toBeDefined();
       const dc1X = result.todos_mercados.find((m: any) => m.nome === 'Dupla Chance 1X');

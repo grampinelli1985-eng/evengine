@@ -1050,20 +1050,37 @@ export async function runTipsterEngine(
       c.block = null;
     });
 
-    // PASSO 2A — Selecionar mercado com maior EV ajustado; delta G→P é desempate.
-    // Usar menor delta como critério primário produzia falsos positivos: mercados
-    // como Over 0.5 sempre têm delta baixíssimo mas EV negativo. O objetivo sharp
-    // é maximizar retorno esperado, não apenas consenso entre modelos.
-    const candidatesSortedByEV = [...candidates].sort((a, b) => {
+    // PASSO 2A — Selecionar mercado com maior EV ajustado priorizando validez Sharp (+3.0% <= EV <= +12.0% e Odd <= 5.0).
+    // Evita selecionar mercados de odds extremas/distorções com EV irrealista (>12%) quando existem apostas de valor válidas no jogo.
+    const isRealisticValue = (c: any) => c.evFinal >= 3.0 && c.evFinal <= 12.0 && (c.odd_api ?? 2.0) <= 5.0;
+    const isUnderEV = (c: any) => c.evFinal < 3.0;
+
+    const realisticCandidates = candidates.filter(isRealisticValue);
+    const underEvCandidates = candidates.filter(isUnderEV);
+    const overEvCandidates = candidates.filter(c => !isRealisticValue(c) && !isUnderEV(c));
+
+    const sortFn = (a: any, b: any) => {
       const evDiff = b.evFinal - a.evFinal;
       if (Math.abs(evDiff) > 0.5) return evDiff; // diferença relevante → ordena por EV
-      // desempate: menor divergência Gemini↔ELO indica mais consenso
       const deltaA = Math.abs(a.probabilidadeIaCalibrada - a.prob_elo);
       const deltaB = Math.abs(b.probabilidadeIaCalibrada - b.prob_elo);
       return deltaA - deltaB;
-    });
+    };
 
-    const chosenCandidate = candidatesSortedByEV[0] || candidates[0];
+    let chosenCandidate: any;
+    if (realisticCandidates.length > 0) {
+      realisticCandidates.sort(sortFn);
+      chosenCandidate = realisticCandidates[0];
+    } else if (underEvCandidates.length > 0) {
+      underEvCandidates.sort(sortFn);
+      chosenCandidate = underEvCandidates[0];
+    } else if (overEvCandidates.length > 0) {
+      // Quando só existem candidatos >12%, ordena do menor para o maior excesso de EV
+      overEvCandidates.sort((a, b) => a.evFinal - b.evFinal);
+      chosenCandidate = overEvCandidates[0];
+    } else {
+      chosenCandidate = candidates[0];
+    }
 
     // ─── BLOCO 6 — ATUALIZAÇÃO E VALIDAÇÃO DE LINHA ───
     const bloco6 = processBloco6(analysis, chosenCandidate, adjustedConfianca, analysis?.currentLocalTime);
