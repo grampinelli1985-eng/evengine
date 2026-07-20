@@ -273,17 +273,12 @@ export async function analyzeGoalsMarket(
       over2_5_prob: (geminiPoisson.over_2_5 ?? 0) / 100
     };
   } else {
-    const hStats = {
-      goalsFor: homeAttackPower,
-      goalsAgainst: homeDefensePower,
-      form: scoutingHome?.home_form?.join('') || 'E',
+    const totalGoals = parseFloat((lambdaHome + lambdaAway).toFixed(2));
+    geminiEstimate = {
+      totalGoals,
+      confidence: 0.80,
+      over2_5_prob: parseFloat(((finalPoissonProbs.over2_5 ?? 50) / 100).toFixed(2))
     };
-    const aStats = {
-      goalsFor: awayAttackPower,
-      goalsAgainst: awayDefensePower,
-      form: scoutingAway?.away_form?.join('') || 'E',
-    };
-    geminiEstimate = await estimateGoalsWithGemini(homeTeam, awayTeam, hStats, aStats);
   }
 
   // B3: Divergência Poisson vs Gemini em Over 2.5

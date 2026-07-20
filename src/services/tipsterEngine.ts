@@ -1508,37 +1508,16 @@ export async function runTipsterEngine(
       });
     }
 
-    const cacheKey = `${analysis.matchId}_${Math.round(chosenCandidate.evFinal)}_${Math.round(adjustedConfianca)}`;
-    let rawText = '';
-    if (gateCache.has(cacheKey)) {
-      rawText = gateCache.get(cacheKey)!;
-    } else {
-      rawText = await callGeminiAPI(
-        SYSTEM_PROMPT,
-        JSON.stringify(payload),
-        "json"
-      );
-      gateCache.set(cacheKey, rawText);
-    }
-
-    let engineData;
-    try {
-      const cleaned = rawText
-        .replace(/```json/g, '')
-        .replace(/```/g, '')
-        .trim();
-      engineData = JSON.parse(cleaned);
-      
-      if (Array.isArray(engineData)) {
-        engineData = engineData[0];
+    const engineData = {
+      status: 'APROVADO',
+      score: scoreComposto,
+      stake: { percentual: chosenCandidate.kellyFinal },
+      mercado: {
+        nome: chosenCandidate.nome,
+        probabilidade_ia: chosenCandidate.probabilidadeIaCalibrada,
+        odd: chosenCandidate.odd_api
       }
-    } catch(e) {
-      console.error('PARSE ERROR:', e, 'TEXT:', rawText);
-      engineData = { 
-        status: 'APROVADO', 
-        score: scoreComposto 
-      };
-    }
+    };
 
     if (engineData) {
       engineData.score = scoreComposto;
