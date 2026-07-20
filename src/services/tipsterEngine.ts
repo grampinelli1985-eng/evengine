@@ -1688,6 +1688,8 @@ function formatToDecisaoEngine(
   const evRecalculado = oddManualBet365 ? ((probIA / 100) * oddManualBet365 - 1) : null;
   const isAudit = !!(userConfirmedAudit && evRecalculado !== null && evRecalculado < 0.03);
 
+  const calculatedEV = engineData.evExecution ?? engineData.mercado?.ev ?? engineData.ev ?? engineData.sharp_context?.ev_ajustado ?? 0;
+
   const decisaoFormatada: DecisaoEngine = {
     decisao: {
       status: isApproved ? 'APROVADO' : 'BLOQUEADO'
@@ -1705,7 +1707,8 @@ function formatToDecisaoEngine(
       odd_bet365_publica: engineData?.mercado_selecionado?.odd_bet365_publica || undefined,
       odd_bet365_manual: oddManualBet365 || null,
       probabilidade_elo: engineData.mercado?.probabilidade_elo ?? probEloCasa,
-      selecionado: true
+      selecionado: true,
+      ev: calculatedEV
     },
     todos_mercados,
     stake: {

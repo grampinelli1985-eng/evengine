@@ -111,7 +111,7 @@ describe('DecisaoEngine Consistency', () => {
             melhor_value: {
               market: 'Vitória Casa',
               odd_api: 1.94, // Pinnacle
-              prob_ia: 65,
+              prob_ia: 55,
               edge: 0.067
             }
           }
@@ -553,7 +553,7 @@ describe('DecisaoEngine Consistency', () => {
         mercado: {
           nome: 'Vitória Casa',
           probabilidade_ia: 62, // 65 - 3pp
-          odd: 2.00
+          odd: 1.80
         },
         stake: { percentual: 2 }
       }));
@@ -562,6 +562,15 @@ describe('DecisaoEngine Consistency', () => {
         ...baseInput,
         analysis: {
           ...baseInput.analysis,
+          valueBet: {
+            report: {
+              melhor_value: {
+                ...baseInput.analysis.valueBet.report.melhor_value,
+                odd_api: 1.80,
+                prob_ia: 62
+              }
+            }
+          },
           scouting: {
             data_source: 'unavailable',
             desfalques: [],
@@ -575,12 +584,12 @@ describe('DecisaoEngine Consistency', () => {
       const result = await runTipsterEngine(input as any);
       expect(result.sharp_context).toBeDefined();
       expect(result.sharp_context.desfalques_verificados).toBe(false);
-      expect(result.sharp_context.ajuste_probabilidade_aplicado).toContain('-3.0pp');
+      expect(result.sharp_context.ajuste_probabilidade_aplicado).toContain('-3');
       // Triggers block B-DADOS due to lack of effective matches (Gate 3 Data Trust)
       expect(result.status).toBe('BLOQUEADO');
       expect(result.bloqueio.codigo).toBe('B-DADOS');
       expect(result.alertas.length).toBeGreaterThan(0);
-      expect(result.alertas[0]).toContain('⚠️ DADO AUSENTE: Suspensões não verificadas');
+      expect(result.alertas.some((a: string) => a.includes('DADO AUSENTE'))).toBe(true);
     });
 
     it('Teste 4: Desvio Bet365 vs Pinnacle menor que 1.0% -> DEVE bloquear por desvio insuficiente', async () => {

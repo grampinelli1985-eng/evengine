@@ -22,7 +22,7 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
   const score = decisao.score.valor;
 
   // Extração de variáveis do motor para cálculo do Score Composto V2.0
-  const evVal = decisao.mercado_selecionado?.ev ?? 0;
+  const evVal = decisao.mercado_selecionado?.ev ?? (decisao as any).evExecution ?? (decisao as any).ev ?? (decisao as any).sharp_context?.ev_ajustado ?? 0;
 
   // ELO-08 (clubes): zona de alerta quando EV supera 10% — cap de clubes é 12%,
   // atingiuTeto dispara em 10.2%. Acima de 10% o modelo começa a divergir do mercado.

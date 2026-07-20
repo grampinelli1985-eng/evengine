@@ -112,8 +112,9 @@ export interface ScoutingReport {
 
 export interface TipsterEngineResult {
   status: 'APROVADO' | 'BLOQUEADO';
+  decisao?: { status: 'APROVADO' | 'BLOQUEADO' | 'ALERTA' };
   bloqueio?: { codigo: string; motivo: string; };
-  score: number;
+  score: any;
   ev?: number;
   evExecution?: number;
   evMarketDeviation?: number | null;
@@ -122,13 +123,27 @@ export interface TipsterEngineResult {
     nome: string; ev: number; odd: number;
     probabilidade_ia: number; probabilidade_elo: number;
   };
+  mercado_selecionado?: {
+    nome: string;
+    probabilidade_final: number;
+    odd_referencia: number;
+    break_even_odd: number;
+    odd_bet365_publica?: number;
+    odd_bet365_manual?: number | null;
+    probabilidade_elo: number;
+    selecionado: boolean;
+    ev?: number;
+  };
+  sharp_context?: any;
+  todos_mercados?: any[];
+  linha?: any;
   clv?: { sinal: 'POSITIVO'|'NEUTRO'|'NEGATIVO'; valor: number; impacto: string; };
   lineMovement?: {
     tipo: 'STEAM_MOVE'|'GRADUAL'|'ESTAVEL'|'ADVERSO'|'REVERSE';
     direcao: 'FAVOR'|'CONTRA'|'NEUTRO';
     magnitude: number; interpretacao: string;
   };
-  stake?: { kelly_base: number; modificador: number; stake_final: number; valor_reais: number; };
+  stake?: any;
   convergencia?: { elo_prob: number; gemini_prob: number; delta: number; status: 'CONVERGENTE'|'DIVERGENTE'; };
   alertas: string[];
   regras_protecao?: {
@@ -143,6 +158,7 @@ export interface TipsterEngineResult {
   compositeScore?: number;
   gateStatus?: string;
   blockReasons?: string[];
+  [key: string]: any;
 }
 
 export interface AnalysisResponse {

@@ -604,7 +604,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
     const fixtureKey = buildFixtureKey(match.home_team, match.away_team, match.commence_time);
     const cached = await getCachedAnalysis(fixtureKey).catch(() => null);
-    if (cached) {
+    if (cached && cached.tipsterEngine) {
       setAnalysis(cached);
       setAnalyzedMatches(prev => ({ ...prev, [match.id]: cached }));
       setAnalysisLoading(false);
@@ -612,7 +612,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     }
 
     try {
-      const result = await analyzeMatch(match);
+      const result = cached ? { ...cached } : await analyzeMatch(match);
       let statsMedias = null;
       if (!result.escanteios?.probabilidade || !result.finalizacoes?.probabilidade) {
         statsMedias = await buscarEstatisticasMedias(
@@ -792,7 +792,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       if (engineVerdict.status === 'APROVADO') {
         const oddAnalise = melhorMarket?.odd_api || result.tipster?.odds || 1.85;
         const mercadoAnalise = melhorMarket
-          ? (melhorMarket.mercado || 'Mercado Principal')
+          ? ((melhorMarket as any).mercado || melhorMarket.market || 'Mercado Principal')
           : (result.tipster?.market?.name || 'Mercado Principal');
 
         registrarPrevisao({
@@ -866,15 +866,17 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
           const fKey = buildFixtureKey(match.home_team, match.away_team, match.commence_time);
           const cachedBilhete = await getCachedAnalysis(fKey).catch(() => null);
-          if (cachedBilhete) {
+          if (cachedBilhete && cachedBilhete.tipsterEngine) {
             setAnalyzedMatches(prev => ({ ...prev, [match.id]: cachedBilhete }));
             await new Promise(r => setTimeout(r, 100));
             continue;
           }
 
-          const result = await analyzeMatch(match);
-          // EV-RATE-LIMIT: 3-second delay to avoid hitting Gemini API rate limits (15 RPM)
-          await new Promise(r => setTimeout(r, 3000));
+          const result = cachedBilhete ? { ...cachedBilhete } : await analyzeMatch(match);
+          if (!cachedBilhete) {
+            // EV-RATE-LIMIT: 3-second delay to avoid hitting Gemini API rate limits (15 RPM)
+            await new Promise(r => setTimeout(r, 3000));
+          }
 
           let statsMedias = null;
           if (!result.escanteios?.probabilidade || !result.finalizacoes?.probabilidade) {
