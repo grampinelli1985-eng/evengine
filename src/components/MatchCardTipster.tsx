@@ -395,13 +395,18 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
         {estado !== 'aguardando_resultado' && (
           <button
             onClick={() => {
-              setLocalSelected(!localSelected);
-              onToggleSelection?.(match.id, !localSelected);
+              if (deepAnalysis?.tipsterEngine?.status === 'APROVADO') {
+                setLocalSelected(!localSelected);
+                onToggleSelection?.(match.id, !localSelected);
+              }
             }}
+            disabled={deepAnalysis?.tipsterEngine?.status !== 'APROVADO'}
             className={`h-12 w-12 rounded-2xl flex items-center justify-center transition-all duration-300 border ${
-              localSelected 
-                ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_20px_-5px_rgba(59,130,246,0.5)]' 
-                : 'bg-white/5 border-white/10 text-white/30 hover:border-white/20 hover:bg-white/10'
+              deepAnalysis?.tipsterEngine?.status !== 'APROVADO'
+                ? 'bg-white/5 border-white/5 cursor-not-allowed opacity-50'
+                : localSelected 
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_20px_-5px_rgba(59,130,246,0.5)]' 
+                  : 'bg-white/5 border-white/10 text-white/30 hover:border-white/20 hover:bg-white/10'
             }`}
           >
             <div className={`w-4 h-4 rounded-md border-2 transition-all ${
