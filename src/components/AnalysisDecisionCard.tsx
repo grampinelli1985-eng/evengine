@@ -152,7 +152,7 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
           {/* 1. EV (30%) */}
           <div className="bg-white/[0.01] border border-white/[0.03] p-4 rounded-2xl flex flex-col justify-between hover:bg-white/[0.03] transition-all">
             <div className="flex justify-between items-center mb-2">
-              <span className="text-white/60 font-bold uppercase tracking-wider">1. Vantagem EV</span>
+              <span className="text-white/60 font-bold uppercase tracking-wider">1. Vantagem EV (Raw: {typeof evValRaw === 'number' ? evValRaw.toFixed(4) : JSON.stringify(evValRaw)} | Val: {typeof evVal === 'number' ? evVal.toFixed(4) : JSON.stringify(evVal)})</span>
               <span className="text-[9px] text-purple-400 font-bold">Peso 30%</span>
             </div>
             <div className="flex items-center gap-3">
