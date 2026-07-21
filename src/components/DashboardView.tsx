@@ -74,11 +74,16 @@ export default function DashboardView({
           data.forEach(d => {
             const reasons = d.block_reasons || [];
             reasons.forEach((r: string) => {
-              const mapped = r === 'B8_convergencia' ? 'B3_convergencia' : r;
+              const rUpper = r.toUpperCase();
+              let mapped = rUpper;
+              if (rUpper.includes('[B-EV]') || rUpper.includes('B1')) mapped = 'B1_ev_baixo';
+              else if (rUpper.includes('[B-CONV]') || rUpper.includes('[B-G=P]') || rUpper.includes('B3') || rUpper.includes('B8')) mapped = 'B3_convergencia';
+              else if (rUpper.includes('[B-DADOS]') || rUpper.includes('DADOS')) mapped = 'B-DADOS';
+              else if (rUpper.includes('[B-NO-REF]') || rUpper.includes('REF')) mapped = 'B-NO-REF';
+              
               if (mapped in blockReasons) {
                 blockReasons[mapped]++;
               } else {
-                // Outros motivos
                 blockReasons[mapped] = (blockReasons[mapped] || 0) + 1;
               }
             });
@@ -113,10 +118,13 @@ export default function DashboardView({
     localAnalyses.forEach(a => {
       const status = a?.tipsterEngine?.status;
       if (status !== 'APROVADO' && a?.tipsterEngine?.bloqueio?.codigo) {
-        const codigo = a.tipsterEngine.bloqueio.codigo;
-        const mappedKey = codigo === 'B1' ? 'B1_ev_baixo' :
-                          (codigo === 'B3' || codigo === 'B8') ? 'B3_convergencia' :
-                          codigo;
+        const codigo = a.tipsterEngine.bloqueio.codigo.toUpperCase();
+        let mappedKey = codigo;
+        if (codigo.includes('B-EV') || codigo.includes('B1')) mappedKey = 'B1_ev_baixo';
+        else if (codigo.includes('B-CONV') || codigo.includes('G=P') || codigo.includes('B3') || codigo.includes('B8')) mappedKey = 'B3_convergencia';
+        else if (codigo.includes('B-DADOS') || codigo.includes('DADOS')) mappedKey = 'B-DADOS';
+        else if (codigo.includes('B-NO-REF') || codigo.includes('REF')) mappedKey = 'B-NO-REF';
+        
         if (mappedKey in blockReasons) {
           blockReasons[mappedKey]++;
         }
