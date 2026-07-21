@@ -214,7 +214,7 @@ export default function TelemetryView({ onBack }: TelemetryViewProps) {
                         </td>
                       </tr>
                     ))}
-                    {analyses.length === 0 && (
+                    {displayAnalyses.length === 0 && (
                       <tr>
                         <td colSpan={9} className="px-6 py-20 text-center text-white/10 text-xs font-black uppercase tracking-widest">
                           Nenhuma análise registrada no Supabase.
