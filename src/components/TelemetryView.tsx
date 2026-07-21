@@ -36,7 +36,7 @@ export default function TelemetryView({ onBack }: TelemetryViewProps) {
   }
 
   const displayAnalyses = rawAnalyses
-    .filter(a => filter === 'TODOS' || a.status === filter)
+    .filter(a => filter === 'TODOS' || a.gate_status === filter)
     .slice(0, 50);
 
   useEffect(() => {
