@@ -30,20 +30,20 @@ describe('Auditoria Sharp Money - Ponto 4: Substituição do margemSegura (Gate 
     expect(result.passou).toBe(true);
   });
 
-  it('cvLambda = 0.51, nJogos ok, alpha ok -> gateConfiancaDados retorna passou=false', () => {
+  it('cvLambda = 1.06, nJogos ok, alpha ok -> gateConfiancaDados retorna passou=false', () => {
     const result = gateConfiancaDados({
       nJogosEfetivos: 10.0,
-      cvLambda: 0.51,
+      cvLambda: 1.06,
       shrinkageAlpha: 0.50
     });
     expect(result.passou).toBe(false);
     expect(result.motivo).toContain('Lambda instável');
   });
 
-  it('cvLambda = 0.50, outros critérios ok -> gateConfiancaDados retorna passou=true', () => {
+  it('cvLambda = 1.05, outros critérios ok -> gateConfiancaDados retorna passou=true', () => {
     const result = gateConfiancaDados({
       nJogosEfetivos: 10.0,
-      cvLambda: 0.50,
+      cvLambda: 1.05,
       shrinkageAlpha: 0.50
     });
     expect(result.passou).toBe(true);

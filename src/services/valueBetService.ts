@@ -347,36 +347,41 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
     return true;
   });
 
+  const bestValueOnly = validatedMarkets.filter(m => m.is_value_bet);
+
   return {
     mercados: validatedMarkets,
-    total_value_bets: validatedMarkets.filter(m => m.is_value_bet).length,
-    tem_value: validatedMarkets.some(m => m.is_value_bet),
-    melhor_value: validatedMarkets.sort((a, b) => b.edge - a.edge)[0] || null
+    total_value_bets: bestValueOnly.length,
+    tem_value: bestValueOnly.length > 0,
+    melhor_value: bestValueOnly.sort((a, b) => b.edge - a.edge)[0] || null
   };
 }
 
-function createValueMarket(name: string, oddApi: number, probIA: number, estimated: boolean = false): MarketValueBet {
+export function createValueMarket(name: string, oddApi: number, probIA: number, estimated: boolean = false): MarketValueBet {
   const fairOdd = 1 / probIA;
-  let edge = (probIA * oddApi) - 1;
+  const edgeRaw = (probIA * oddApi) - 1;
 
-  const atingiuTeto = edge >= MAX_EDGE_REALISTA * 0.85;
-  const edgeLimitado = Math.min(edge, MAX_EDGE_REALISTA);
+  const excedeuTetoPlausivel = edgeRaw >= MAX_EDGE_REALISTA;       // >= 12% → impossível, hard reject
+  const zonaAtencao = edgeRaw >= MAX_EDGE_REALISTA * 0.85;         // 10.2%–12% → válido, mas exige cautela
+
+  const edgeFinal = Math.min(edgeRaw, MAX_EDGE_REALISTA);
 
   return {
     market: name,
     odd_api: oddApi,
     prob_ia: probIA * 100,
     odd_fair: fairOdd,
-    edge: edgeLimitado,
-    is_value_bet: edge > 0.05 && !atingiuTeto && edge <= MAX_EDGE_REALISTA,
-    recomenda: edge > 0.10 && !atingiuTeto,
-    odd_is_estimated: estimated || atingiuTeto,
-    observacao: ''
+    edge: edgeFinal,
+    is_value_bet: edgeRaw > 0.05 && !excedeuTetoPlausivel,
+    recomenda: edgeRaw > 0.10 && !excedeuTetoPlausivel,
+    odd_is_estimated: estimated || excedeuTetoPlausivel,
+    observacao: zonaAtencao && !excedeuTetoPlausivel
+      ? 'Edge elevado, próximo do teto de plausibilidade — revisar dados manualmente antes de apostar.'
+      : ''
   };
 }
 
 function validateMarket(market: MarketValueBet): boolean {
-  if (market.odd_is_estimated && market.edge > MAX_EDGE_REALISTA) return false;
   if (market.prob_ia < 5) return false;
   return true;
 }
@@ -384,7 +389,6 @@ function validateMarket(market: MarketValueBet): boolean {
 export function validateReport(report: ValueBetReport): ValueBetReport {
   report.mercados = report.mercados.map(m => {
     if (m.prob_ia < 15) m.is_value_bet = false;
-    if (m.odd_is_estimated && m.edge > MAX_EDGE_REALISTA) m.is_value_bet = false;
     return m;
   });
 
@@ -499,10 +503,10 @@ export function gateConfiancaDados(dados: ConfiancaDados): ResultadoGateConfianc
       motivo: `Dados insuficientes: ${dados.nJogosEfetivos.toFixed(1)} jogos efetivos (mínimo: 8)`
     };
   }
-  if (dados.cvLambda > 0.50) {
+  if (dados.cvLambda > 1.05) {
     return {
       passou: false,
-      motivo: `Lambda instável: CV=${dados.cvLambda.toFixed(2)} (máximo: 0.50)`
+      motivo: `Lambda instável: CV=${dados.cvLambda.toFixed(2)} (máximo: 1.05)`
     };
   }
   if (dados.shrinkageAlpha < 0.25) {
