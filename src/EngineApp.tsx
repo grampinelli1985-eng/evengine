@@ -1461,9 +1461,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               <span className="text-[10px] font-black uppercase tracking-widest text-blue-400 whitespace-nowrap">AUTO</span>
             </button>
           </div>
+        </div>
 
-          {/* Mobile Navigation Controls (Visible only under xl screens) */}
-          <div className="xl:hidden flex items-center gap-2 sm:gap-3 shrink-0">
+        {/* Mobile Navigation Controls (Visible only under xl screens) */}
+        <div className="xl:hidden flex items-center gap-2 sm:gap-3 shrink-0">
             <button
               onClick={() => {
                 setBancaModalOpen(true);
@@ -1735,7 +1736,6 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             </motion.div>
           )}
         </AnimatePresence>
-        </div>
       </header>
 
       {stopLossState.suspensaoAtiva && (
