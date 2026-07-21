@@ -522,7 +522,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                   <div className="bg-red-950/20 p-4 rounded-2xl border border-red-900/30 space-y-2">
                     {teEngine?.evExecution !== undefined && (
                       <p className="font-bold text-red-300 text-xs uppercase tracking-wider">
-                        EV Recalculado: <span className="font-mono text-sm text-white">{teEngine.evExecution.toFixed(1)}%</span>
+                        EV Recalculado: <span className="font-mono text-sm text-white">{(Math.abs(teEngine.evExecution) > 0 && Math.abs(teEngine.evExecution) <= 1.0 ? teEngine.evExecution * 100 : teEngine.evExecution).toFixed(1)}%</span>
                       </p>
                     )}
                     <p className="text-red-400 text-[11px] uppercase tracking-wider">
