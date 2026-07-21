@@ -9,20 +9,35 @@ interface TelemetryViewProps {
 }
 
 export default function TelemetryView({ onBack }: TelemetryViewProps) {
-  const [analyses, setAnalyses] = useState<any[]>([]);
+  const [rawAnalyses, setRawAnalyses] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<'TODOS' | 'APROVADO' | 'BLOQUEADO'>('TODOS');
 
   async function loadData() {
     setLoading(true);
     const [recent, statsData] = await Promise.all([
-      fetchRecentAnalyses(50),
+      fetchRecentAnalyses(300), // fetch more to allow deduplication and filtering
       fetchStats(7)
     ]);
-    setAnalyses(recent);
+    
+    // Remove duplicates (keep only the most recent analysis per match)
+    const uniqueMatches = new Map();
+    recent.forEach((row: any) => {
+      const matchKey = `${row.home_team}-${row.away_team}`;
+      if (!uniqueMatches.has(matchKey)) {
+        uniqueMatches.set(matchKey, row);
+      }
+    });
+
+    setRawAnalyses(Array.from(uniqueMatches.values()));
     setStats(statsData);
     setLoading(false);
   }
+
+  const displayAnalyses = rawAnalyses
+    .filter(a => filter === 'TODOS' || a.status === filter)
+    .slice(0, 50);
 
   useEffect(() => {
     loadData();
@@ -105,17 +120,35 @@ export default function TelemetryView({ onBack }: TelemetryViewProps) {
 
             {/* Main Table */}
             <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] overflow-hidden shadow-2xl">
-              <div className="px-8 py-6 border-b border-white/5 flex justify-between items-center">
+              <div className="px-8 py-6 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="flex items-center gap-3">
                   <Clock size={16} className="text-white/40" />
                   <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Log de Análises (Últimas 50)</h3>
                 </div>
-                <button 
-                  onClick={() => loadData()}
-                  className="text-[9px] font-black text-white/20 hover:text-white uppercase tracking-widest transition-colors"
-                >
-                  Atualizar
-                </button>
+                
+                <div className="flex items-center gap-2">
+                  <div className="flex bg-white/5 rounded-lg p-1 mr-4">
+                    {(['TODOS', 'APROVADO', 'BLOQUEADO'] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setFilter(f)}
+                        className={`px-3 py-1.5 rounded-md text-[9px] font-black uppercase tracking-widest transition-all ${
+                          filter === f 
+                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' 
+                            : 'text-white/40 hover:text-white/80 hover:bg-white/5'
+                        }`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                  <button 
+                    onClick={() => loadData()}
+                    className="text-[9px] font-black text-white/20 hover:text-white uppercase tracking-widest transition-colors flex items-center gap-2"
+                  >
+                    Atualizar
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -134,7 +167,7 @@ export default function TelemetryView({ onBack }: TelemetryViewProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {analyses.map((row) => (
+                    {displayAnalyses.map((row) => (
                       <tr key={row.id} className="hover:bg-white/[0.01] transition-colors">
                         <td className="px-6 py-4 text-[10px] font-mono text-white/40">
                           {new Date(row.created_at).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
