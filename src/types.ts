@@ -31,6 +31,7 @@ export interface Bookmaker {
 }
 
 export interface Match {
+  _isMockData?: boolean;
   id: string;
   sport_key: string;
   sport_title: string;
@@ -91,6 +92,11 @@ export interface PoissonData {
   over_3_5?: number;
 }
 
+export interface JogoComData {
+  gols_for: number;
+  gols_against: number;
+  data: string; // ISO date
+}
 
 
 export interface ScoutingReport {
@@ -107,6 +113,8 @@ export interface ScoutingReport {
   forma?: number;
   motivacao?: number;
   desfalques?: number;
+  home_goals?: { jogos: JogoComData[] };
+  away_goals?: { jogos: JogoComData[] };
 }
 
 

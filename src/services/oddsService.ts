@@ -17,6 +17,7 @@ const ODDS_CACHE_TTL_NEAR_KICKOFF = 30 * 60 * 1000; // 30 min se jogo < 2h
 const MOCK_MATCHES: Match[] = [
   {
     id: 'mock_match_1',
+    _isMockData: true,
     sport_key: 'soccer_epl',
     sport_title: 'Premier League',
     commence_time: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
@@ -59,6 +60,7 @@ const MOCK_MATCHES: Match[] = [
   },
   {
     id: 'mock_match_2',
+    _isMockData: true,
     sport_key: 'soccer_spain_la_liga',
     sport_title: 'La Liga',
     commence_time: new Date(Date.now() + 1000 * 60 * 60 * 48).toISOString(),
@@ -101,6 +103,7 @@ const MOCK_MATCHES: Match[] = [
   },
   {
     id: 'mock_match_3',
+    _isMockData: true,
     sport_key: 'soccer_italy_serie_a',
     sport_title: 'Serie A',
     commence_time: new Date(Date.now() + 1000 * 60 * 60 * 36).toISOString(),
@@ -143,6 +146,7 @@ const MOCK_MATCHES: Match[] = [
   },
   {
     id: 'mock_match_4',
+    _isMockData: true,
     sport_key: 'soccer_epl',
     sport_title: 'Premier League',
     commence_time: new Date(Date.now() + 1000 * 60 * 60 * 72).toISOString(),
@@ -185,6 +189,7 @@ const MOCK_MATCHES: Match[] = [
   },
   {
     id: 'mock_match_5',
+    _isMockData: true,
     sport_key: 'soccer_brazil_campeonato',
     sport_title: 'Brasileirão',
     commence_time: new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString(),
@@ -414,7 +419,10 @@ export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Pr
     r => r.status === 'rejected' &&
     ['QUOTA_EXCEEDED', 'RATE_LIMITED', 'API_KEY_INVALID'].includes(r.reason?.message)
   );
-  if (hasQuotaIssue) return MOCK_MATCHES;
+  if (hasQuotaIssue) {
+    console.error('[OddsAPI] Cota/autenticação falhou — retornando MOCK_MATCHES sinalizados. NÃO usar para decisões reais.');
+    return MOCK_MATCHES;
+  }
 
   const allMatches: Match[] = results
     .filter((r): r is PromiseFulfilledResult<Match[]> => r.status === 'fulfilled' && Array.isArray(r.value))

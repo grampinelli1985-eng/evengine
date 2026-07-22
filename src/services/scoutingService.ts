@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ScoutingReport } from '../types';
+import { ScoutingReport, JogoComData } from '../types';
 import { GEMINI_MODEL } from '../config/ai';
 import { hasQuota, trackRequest } from './apiQuotaService';
 import { getSportmonksTeamId, getSeasonId, getTeamXgLast5, getTeamPpdaLast5, SPORTMONKS_LEAGUE_BY_NAME } from './sportmonksService';
@@ -246,6 +246,56 @@ function normalizeResult(res: string): string {
   return '?';
 }
 
+async function fetchGolsRecentes(teamId: number): Promise<{ jogos: JogoComData[] } | null> {
+  if (teamId === -1 || !hasQuota(1)) return null;
+  try {
+    const res = await fetch(`${API_BASE_URL}/fixtures?team=${teamId}&last=5`, {
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!res.ok) return null;
+    trackRequest();
+    const data = await responseToJson(res);
+    if (data?.errors && Object.keys(data.errors).length > 0) return null;
+
+    const fixtures = data?.response || [];
+    const jogos: JogoComData[] = [];
+
+    fixtures.forEach((f: any) => {
+      const isHome = f.teams?.home?.id === teamId;
+      const golsFor = isHome ? f.goals?.home : f.goals?.away;
+      const golsAgainst = isHome ? f.goals?.away : f.goals?.home;
+      const dataJogo = f.fixture?.date; // já vem no payload, ISO 8601
+      if (golsFor != null && golsAgainst != null && dataJogo) {
+        jogos.push({ gols_for: Number(golsFor), gols_against: Number(golsAgainst), data: dataJogo });
+      }
+    });
+
+    if (jogos.length < 3) return null;
+    return { jogos };
+  } catch (e) {
+    console.warn(`[Scout API] Falha ao buscar gols recentes para team ${teamId}:`, e);
+    return null;
+  }
+}
+
+function extrairGolsDoPlacar(
+  resultados: Array<{ resultado: 'W'|'D'|'L', placar: string }>
+): { jogos: JogoComData[] } | null {
+  const jogos: JogoComData[] = [];
+  resultados.forEach(r => {
+    const match = r.placar.match(/^(\d+)-(\d+)$/);
+    if (match) {
+      const g1 = parseInt(match[1], 10);
+      const g2 = parseInt(match[2], 10);
+      const golsFor = r.resultado === 'W' ? Math.max(g1, g2) : r.resultado === 'L' ? Math.min(g1, g2) : g1;
+      const golsAgainst = r.resultado === 'W' ? Math.min(g1, g2) : r.resultado === 'L' ? Math.max(g1, g2) : g2;
+      jogos.push({ gols_for: golsFor, gols_against: golsAgainst, data: '' }); // sem data confiável
+    }
+  });
+  if (jogos.length < 3) return null;
+  return { jogos };
+}
+
 export async function fetchRealScouting(homeTeam: string, awayTeam: string, leagueId?: number, sportKey?: string): Promise<ScoutingReport> {
   const homeId = await getTeamIdAsync(homeTeam);
   const awayId = await getTeamIdAsync(awayTeam);
@@ -325,11 +375,28 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
     }
   };
 
+  const fetchGoalsForTeam = async (id: number, teamName: string) => {
+    // 1ª tentativa: API-Football fixtures reais
+    const viaApiFootball = await fetchGolsRecentes(id);
+    if (viaApiFootball) return viaApiFootball;
+
+    // 2ª tentativa: parsear placar do The Odds API scores
+    if (sportKey) {
+      const resultadosAPI = await buscarResultadosRecentes(teamName, sportKey);
+      const viaOddsApi = extrairGolsDoPlacar(resultadosAPI);
+      if (viaOddsApi) return viaOddsApi;
+    }
+
+    return null; // sem dado real — tipsterEngine cairá em mapFormToGoals corretamente
+  };
+
   try {
-    const [homeForm, awayForm, h2h] = await Promise.all([
+    const [homeForm, awayForm, h2h, homeGoals, awayGoals] = await Promise.all([
       fetchForm(homeId, homeTeam),
       fetchForm(awayId, awayTeam),
-      fetchH2H(homeId, awayId)
+      fetchH2H(homeId, awayId),
+      fetchGoalsForTeam(homeId, homeTeam),
+      fetchGoalsForTeam(awayId, awayTeam)
     ]);
 
     const hasRealForm = homeForm.some(r => r !== '?') || awayForm.some(r => r !== '?');
@@ -339,6 +406,8 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
       home_form: homeForm,
       away_form: awayForm,
       h2h: h2h,
+      home_goals: homeGoals ?? undefined,
+      away_goals: awayGoals ?? undefined,
       scout_summary: `Confronto analisado. Forma H: ${homeForm.join('')}, A: ${awayForm.join('')}.`,
       data_source: hasRealForm ? 'real' : 'unavailable',
       confiavel: isConfiavel

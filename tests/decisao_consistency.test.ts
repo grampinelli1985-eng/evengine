@@ -143,18 +143,18 @@ describe('DecisaoEngine Consistency', () => {
       bancaTotal: 1000
     };
 
-    it('Teste 1: Movimento pequeno (Chelsea Pinnacle 1.94 vs Bet365 2.00, desvio +3.1%) -> DEVE PASSAR', async () => {
+    it('Teste 1: Movimento pequeno (Chelsea Pinnacle 1.94 vs Bet365 2.00, desvio +3.1%) -> DEVE BLOQUEAR por B-DADOS (falta gols reais)', async () => {
       const input = {
         ...baseInput,
         oddManualBet365: 2.00 // +3.1% deviation
       };
       
       const result = await runTipsterEngine(input as any);
-      expect(result.status).toBe('APROVADO');
-      expect(result.bloqueio).toBeUndefined();
+      expect(result.status).toBe('BLOQUEADO');
+      expect(result.bloqueio?.codigo).toBe('B-DADOS');
     });
 
-    it('Teste 2: Movimento médio (Pinnacle 2.00 vs Bet365 2.08, desvio +4.0%) -> DEVE PASSAR', async () => {
+    it('Teste 2: Movimento médio (Pinnacle 2.00 vs Bet365 2.08, desvio +4.0%) -> DEVE BLOQUEAR por B-DADOS (falta gols reais)', async () => {
       const input = {
         ...baseInput,
         analysis: {
@@ -172,8 +172,8 @@ describe('DecisaoEngine Consistency', () => {
       };
       
       const result = await runTipsterEngine(input as any);
-      expect(result.status).toBe('APROVADO');
-      expect(result.bloqueio).toBeUndefined();
+      expect(result.status).toBe('BLOQUEADO');
+      expect(result.bloqueio?.codigo).toBe('B-DADOS');
     });
 
     it('Teste 3: Movimento dramático (Pinnacle 2.00 vs Bet365 2.15, desvio +7.5%) -> DEVE BLOQUEAR', async () => {
@@ -199,7 +199,7 @@ describe('DecisaoEngine Consistency', () => {
       expect(result.bloqueio.motivo).toContain('Linha moveu dramaticamente contra sua posição (+7.5%)');
     });
 
-    it('Teste 4: Movimento a seu favor (Pinnacle 2.00 vs Bet365 1.95, desvio -2.5%) -> DEVE PASSAR', async () => {
+    it('Teste 4: Movimento a seu favor (Pinnacle 2.00 vs Bet365 1.95, desvio -2.5%) -> DEVE BLOQUEAR por B-DADOS (falta gols reais)', async () => {
       const input = {
         ...baseInput,
         analysis: {
@@ -214,6 +214,51 @@ describe('DecisaoEngine Consistency', () => {
           }
         },
         oddManualBet365: 1.95 // -2.5% deviation (favorable)
+      };
+      
+      const result = await runTipsterEngine(input as any);
+      expect(result.status).toBe('BLOQUEADO');
+      expect(result.bloqueio?.codigo).toBe('B-DADOS');
+    });
+
+    it('Teste 10 (Adicional): B7 isolado — com gols reais fornecidos pela API -> DEVE PASSAR para validar que o Gate B7 aprova movimentos pequenos quando há dados reais', async () => {
+      // Importar função real
+      const { fetchRealScouting } = await import('../src/services/scoutingService');
+      
+      // Mock da rede para simular API-Football funcionando com fixtures recentes
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/teams/statistics')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ response: { form: 'VVVDD' } }) });
+        }
+        if (url.includes('/fixtures/headtohead')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ response: [] }) });
+        }
+        if (url.includes('/fixtures?team=')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              response: [
+                { fixture: { date: '2026-07-20T00:00:00Z' }, teams: { home: { id: 42 }, away: { id: 49 } }, goals: { home: 2, away: 1 } },
+                { fixture: { date: '2026-07-10T00:00:00Z' }, teams: { home: { id: 42 }, away: { id: 49 } }, goals: { home: 1, away: 0 } },
+                { fixture: { date: '2026-07-01T00:00:00Z' }, teams: { home: { id: 49 }, away: { id: 42 } }, goals: { home: 0, away: 3 } },
+                { fixture: { date: '2026-06-20T00:00:00Z' }, teams: { home: { id: 42 }, away: { id: 49 } }, goals: { home: 1, away: 1 } },
+                { fixture: { date: '2026-06-10T00:00:00Z' }, teams: { home: { id: 42 }, away: { id: 49 } }, goals: { home: 2, away: 0 } }
+              ]
+            })
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+
+      const realScouting = await fetchRealScouting('Arsenal', 'Chelsea', 39);
+
+      const input = {
+        ...baseInput,
+        analysis: {
+          ...baseInput.analysis,
+          scouting: realScouting
+        },
+        oddManualBet365: 2.00 // +3.1% deviation (movimento pequeno)
       };
       
       const result = await runTipsterEngine(input as any);

@@ -13,7 +13,9 @@ import AnalysisView from './components/AnalysisView';
 import TicketModal from './components/TicketModal';
 import LiveNotification from './components/LiveNotification';
 import LeagueSidebar from './components/LeagueSidebar';
-import { getBanca, calculateKellyStake, carregarStopLossState } from './services/bancaService';
+import { getBanca, calculateKellyStake, carregarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada } from './services/bancaService';
+import { fetchActiveMatches, syncApiEplFixtureToMatch, syncApiFootballFixtureToMatch, carregarLigasUsuario } from './services/oddsService';
+import { fetchBets, fetchAnalysisByMatchId, saveAnalysis, setCachedAnalysis, registrarPrevisao } from './services/betService';
 import { Trophy, Filter, RefreshCw, Search, AlertCircle, TrendingUp, Ticket, Menu, X, Zap, Flame, Shield, Activity, Crown, Star, Sun, Compass, Award, Home, BookOpen, ShieldOff, AlertTriangle, LogOut, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
@@ -199,6 +201,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   const isDemoMode = isPreviewMode && !user;
   const isDemoUser = !!user && plan === 'demo';
   const [apiFootballError, setApiFootballError] = useState<ApiErrorType>(null);
+  const [hasMockData, setHasMockData] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onApiError((type) => {
@@ -448,6 +451,9 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     try {
       const activeApiKey = (plan === 'sharp' && apiKeyOwn) ? apiKeyOwn : ODDS_API_KEY;
       const data = await fetchAllMatches(activeApiKey, selectedLeagues);
+      
+      const isMock = data.some(m => m._isMockData);
+      setHasMockData(isMock);
 
       // Register initial data for advanced services
       registerOpeningOdds(data);
@@ -729,6 +735,31 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       if (melhorMarket && melhorMarket.edge > 0) {
         kellyReaisValue = calculateKellyStake(melhorMarket.prob_ia, melhorMarket.odd_api, bancaAtualTotal, 0.25);
       }
+
+      // Buscar histórico para aplicar proteções
+      let pendentesCount = 0;
+      let stakeAnterior: number | null = null;
+      if (user) {
+        try {
+          const pendentes = await fetchBets({ status: 'pending' });
+          pendentesCount = pendentes.length;
+          
+          const resolvidas = await fetchBets({ status: 'resolved' });
+          if (resolvidas.length > 0) {
+            stakeAnterior = resolvidas[0].stake_amount || null;
+          }
+        } catch (e) {
+          console.warn('Falha ao buscar histórico de apostas para limites', e);
+        }
+      }
+
+      // Aplicar limite de stake pós-RED e multiplicar pelo modo conservador
+      if (stakeAnterior !== null && !podeAumentarStake(stakeAnterior, kellyReaisValue)) {
+        kellyReaisValue = Math.min(kellyReaisValue, stakeAnterior);
+        console.warn(`[Proteção de Capital] Stake cap aplicada: R$ ${kellyReaisValue} (aguardando 2 wins)`);
+      }
+      kellyReaisValue = aplicarModoConservador(kellyReaisValue);
+
       const kellyPercentualValue = parseFloat(
         Math.min((kellyReaisValue / bancaAtualTotal) * 100, 3).toFixed(2)
       );
@@ -775,7 +806,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           confianca: confiancaPercentualValue,
           convergenciaOk: convergenciaOk
         },
-        bancaTotal: banca.total
+        bancaTotal: banca.total,
+        pendentesCount
       });      // Attach engine result to analysis
       result.tipsterEngine = engineVerdict;
 
@@ -790,6 +822,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
       // 🚀 CALIBRATION: Registrar se aprovado
       if (engineVerdict.status === 'APROVADO') {
+        registrarEntradaAprovada();
+        
         const oddAnalise = melhorMarket?.odd_api || result.tipster?.odds || 1.85;
         const mercadoAnalise = melhorMarket
           ? ((melhorMarket as any).mercado || melhorMarket.market || 'Mercado Principal')
@@ -1801,6 +1835,22 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           </div>
         );
       })()}
+
+      {hasMockData && (
+        <div className="bg-red-500/10 border-b border-red-500/20 py-2.5 transition-all">
+          <div className="max-w-[1600px] mx-auto px-6 flex items-center justify-center flex-wrap gap-x-4 gap-y-1">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={14} className="text-red-500 shrink-0" />
+              <p className="text-[10px] text-red-500/80 font-bold uppercase tracking-widest leading-none">
+                DADOS DE DEMONSTRAÇÃO
+              </p>
+            </div>
+            <p className="text-[10px] text-red-400/90 font-medium">
+              API indisponível. NÃO usar para decisões reais.
+            </p>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8 sm:py-10 overflow-x-hidden relative">
         <AnimatePresence mode="wait" initial={false}>

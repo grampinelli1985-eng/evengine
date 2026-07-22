@@ -173,7 +173,7 @@ const PRESET_RATINGS: Record<string, number> = {
   'Guinea-Bissau': 1490, 'Equatorial Guinea': 1480,
 };
 
-function getStoredRatings(): EloRatings {
+export function getStoredRatings(): EloRatings {
   const base: EloRatings = {};
   // ELO-04 fix: seed lastPlayed so applyTemporalDecay fires correctly for preset teams
   Object.entries(PRESET_RATINGS).forEach(([team, rating]) => {
@@ -244,6 +244,8 @@ export function seedEloFromOdds(match: Match) {
 
   if (homeOdd && awayOdd) {
     const ratings = getStoredRatings();
+    const homeKey = resolveTeamName(match.home_team);
+    const awayKey = resolveTeamName(match.away_team);
 
     const drawOdd = outcomes.find(o => o.name === 'Draw')?.price;
     let probHome = 1 / homeOdd;
@@ -266,15 +268,15 @@ export function seedEloFromOdds(match: Match) {
     }
 
     let changed = false;
-    if (!ratings[match.home_team]) {
+    if (!ratings[homeKey]) {
       const impliedRating = 1500 + 400 * Math.log10(probHome / (1 - probHome)) - HOME_ADVANTAGE;
-      ratings[match.home_team] = { rating: Math.min(Math.max(impliedRating, 1200), 1900), matches: 5, lastPlayed: Date.now() };
+      ratings[homeKey] = { rating: Math.min(Math.max(impliedRating, 1200), 1900), matches: 5, lastPlayed: Date.now() };
       changed = true;
     }
-    if (!ratings[match.away_team]) {
+    if (!ratings[awayKey]) {
       const clampedAway = Math.max(0.05, Math.min(0.95, probAway));
       const impliedRatingAway = 1500 + 400 * Math.log10(clampedAway / (1 - clampedAway));
-      ratings[match.away_team] = { rating: Math.min(Math.max(impliedRatingAway, 1200), 1900), matches: 5, lastPlayed: Date.now() };
+      ratings[awayKey] = { rating: Math.min(Math.max(impliedRatingAway, 1200), 1900), matches: 5, lastPlayed: Date.now() };
       changed = true;
     }
     if (changed) localStorage.setItem(STORAGE_KEY, JSON.stringify(ratings));

@@ -85,7 +85,8 @@ import {
   calcCVLambda,
   calcShrinkageAlpha,
   gateConfiancaDados,
-  JogoPonderado
+  JogoPonderado,
+  pesoTemporalJogo
 } from './valueBetService';
 
 const gateCache = new Map<string, string>();
@@ -95,7 +96,7 @@ const gateCache = new Map<string, string>();
 // When form IS available, uses league-average goal distributions per result
 // (win ~1.8 GF / 0.7 GA, draw ~1.1 / 1.1, loss ~0.6 GF / 1.9 GA) so that
 // the lambda estimates are statistically grounded, not fixed proxies.
-function mapFormToGoals(form: string[] | undefined, _isHome: boolean): { lastGoalsFor: number[]; lastGoalsAgainst: number[] } | null {
+function mapFormToGoals(form: string[] | undefined, _isHome: boolean): { lastGoalsFor: number[]; lastGoalsAgainst: number[]; isSynthetic?: boolean } | null {
   if (!form || form.length === 0) return null;
 
   const lastGoalsFor: number[] = [];
@@ -121,7 +122,7 @@ function mapFormToGoals(form: string[] | undefined, _isHome: boolean): { lastGoa
     }
   });
 
-  return { lastGoalsFor, lastGoalsAgainst };
+  return { lastGoalsFor, lastGoalsAgainst, isSynthetic: true };
 }
 
 export interface SanidadeOddsResult {
@@ -707,7 +708,7 @@ export async function runTipsterEngine(
 ): Promise<DecisaoEngine & any> {
   const { analysis, matchCardValues: inputMatchCard, oddManualBet365, bancaTotal, userConfirmedAudit, currentLocalTime } = input;
   
-  if (!podeEntrarNovaAposta()) {
+  if (!podeEntrarNovaAposta(input.pendentesCount)) {
     const estado = carregarStopLossState();
     return {
       status: 'BLOQUEADO',
@@ -738,8 +739,8 @@ export async function runTipsterEngine(
     // Helper for mapping Win/Draw/Loss form to goal arrays
     const homeForm = analysis.scouting?.home_form;
     const awayForm = analysis.scouting?.away_form;
-    const homeGoals = mapFormToGoals(homeForm, true);
-    const awayGoals = mapFormToGoals(awayForm, false);
+    const homeGoals = analysis.scouting?.home_goals || mapFormToGoals(homeForm, true);
+    const awayGoals = analysis.scouting?.away_goals || mapFormToGoals(awayForm, false);
     const goalsDataUnavailable = homeGoals === null || awayGoals === null;
     // Fallback neutral power when form is unavailable; goals markets will be
     // excluded from candidates below to avoid Poisson estimates from null data.
@@ -1220,17 +1221,33 @@ export async function runTipsterEngine(
     let blockObj: { codigo: string; motivo: string } | null = null;
 
     // ─── GATE 3: CONFIANÇA DE DADOS (v8.3) ───
-    const dataPool: JogoPonderado[] = [];
-    if (homeGoals?.lastGoalsFor) {
-      homeGoals.lastGoalsFor.forEach(g => {
-        dataPool.push({ pesoTotal: 1.0, golsMarcados: g });
-      });
+    function montarPoolComPeso(
+      fonte: any // { jogos: JogoComData[] } | { lastGoalsFor: number[]; lastGoalsAgainst: number[]; isSynthetic?: boolean } | null
+    ): JogoPonderado[] {
+      if (!fonte) return [];
+    
+      // Caso real (com data por jogo)
+      if ('jogos' in fonte) {
+        const agora = Date.now();
+        return fonte.jogos.map((j: any) => {
+          const peso = j.data
+            ? pesoTemporalJogo((agora - new Date(j.data).getTime()) / (1000 * 60 * 60 * 24))
+            : 1.0; // sem data confiável → peso neutro, sem decaimento
+          return { pesoTotal: peso, golsMarcados: j.gols_for, fonteSintetica: false };
+        });
+      }
+    
+      // Caso sintético (mapFormToGoals)
+      if (fonte.lastGoalsFor) {
+        return fonte.lastGoalsFor.map((g: number) => ({ pesoTotal: 1.0, golsMarcados: g, fonteSintetica: fonte.isSynthetic }));
+      }
+      return [];
     }
-    if (awayGoals?.lastGoalsFor) {
-      awayGoals.lastGoalsFor.forEach(g => {
-        dataPool.push({ pesoTotal: 1.0, golsMarcados: g });
-      });
-    }
+
+    const dataPool: JogoPonderado[] = [
+      ...montarPoolComPeso(homeGoals),
+      ...montarPoolComPeso(awayGoals),
+    ];
 
     const nJogosEfetivos = calcNJogosEfetivos(dataPool);
     const cvLambda = calcCVLambda(dataPool);

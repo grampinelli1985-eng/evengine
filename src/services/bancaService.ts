@@ -138,11 +138,27 @@ export function registrarResultadoDiario(valor: number) {
   const bancaBase = banca.total; // captura antes de modificar
   banca.pnl_diario += valor;
   banca.total += valor;
+  banca.picoHistorico = Math.max(banca.picoHistorico || bancaBase, banca.total);
 
   const stops = getStopStatus({ ...banca, total: bancaBase });
   banca.stops = stops;
 
   saveBanca(banca);
+}
+
+export function getDrawdownAtual(): number {
+  const state = getBanca();
+  const pico = state.picoHistorico || state.total;
+  if (pico <= 0) return 0;
+  return (pico - state.total) / pico;
+}
+
+export function emModoConservador(): boolean {
+  return getDrawdownAtual() > 0.20;
+}
+
+export function aplicarModoConservador(stakeCalculada: number): number {
+  return emModoConservador() ? stakeCalculada * 0.50 : stakeCalculada;
 }
 
 export function getEstadoProtecao() {
@@ -162,6 +178,7 @@ export interface StopLossState {
   suspensaoAtiva: boolean;
   timestampUltimoRed: number;
   historicoStreak: number[];
+  winsDesdeUltimoRed: number;
 }
 
 const STOP_LOSS_INICIAL: StopLossState = {
@@ -169,6 +186,7 @@ const STOP_LOSS_INICIAL: StopLossState = {
   suspensaoAtiva: false,
   timestampUltimoRed: 0,
   historicoStreak: [],
+  winsDesdeUltimoRed: 0,
 };
 
 const STOP_LOSS_KEY = 'evengine_stop_loss_state';
@@ -183,6 +201,7 @@ export function carregarStopLossState(): StopLossState {
       suspensaoAtiva: parsed.suspensaoAtiva ?? false,
       timestampUltimoRed: parsed.timestampUltimoRed ?? 0,
       historicoStreak: parsed.historicoStreak ?? [],
+      winsDesdeUltimoRed: parsed.winsDesdeUltimoRed ?? 0,
     };
   } catch {
     return { ...STOP_LOSS_INICIAL };
@@ -206,6 +225,7 @@ export function registrarResultado(aposta: Aposta): StopLossState {
       ...estado,
       redStreakAtual: 0,
       suspensaoAtiva: false,
+      winsDesdeUltimoRed: (estado.winsDesdeUltimoRed || 0) + 1,
     };
     salvarStopLossState(novoEstado);
     window.dispatchEvent(new CustomEvent('evengine_stop_loss_changed', { detail: novoEstado }));
@@ -221,6 +241,7 @@ export function registrarResultado(aposta: Aposta): StopLossState {
       suspensaoAtiva: suspender,
       timestampUltimoRed: Date.now(),
       historicoStreak: [...(estado.historicoStreak || []), novoStreak],
+      winsDesdeUltimoRed: 0,
     };
 
     salvarStopLossState(novoEstado);
@@ -229,23 +250,48 @@ export function registrarResultado(aposta: Aposta): StopLossState {
     if (suspender) {
       dispararAlertaStopLoss(novoStreak);
     }
-
     return novoEstado;
   }
 
   return estado;
 }
 
-// [INC-BANCA-1 FIX] Verifica streak de reds E stops diários (stop-win e stop-loss)
-export function podeEntrarNovaAposta(): boolean {
+export function podeAumentarStake(stakeAnterior: number, stakeCalculada: number): boolean {
+  if (stakeCalculada <= stakeAnterior) return true;
+  const estado = carregarStopLossState();
+  return (estado.winsDesdeUltimoRed || 0) >= 2;
+}
+
+export function registrarEntradaAprovada(): void {
+  const state = getBanca();
+  state.apostasHoje = (state.apostasHoje || 0) + 1;
+  saveBanca(state);
+}
+
+export function limiteEntradasAtingido(): boolean {
+  const state = getBanca();
+  return (state.apostasHoje || 0) >= 3;
+}
+
+export function limiteJogosSimultaneosAtingido(pendentesCount: number): boolean {
+  return pendentesCount >= 2;
+}
+
+export function podeEntrarNovaAposta(pendentesCount?: number): boolean {
   const streak = carregarStopLossState();
   if (streak.suspensaoAtiva) return false;
 
   const protecao = getEstadoProtecao();
   if (protecao.stop_loss_ativo || protecao.stop_win_ativo) return false;
 
+  if (limiteEntradasAtingido()) return false;
+  if (pendentesCount !== undefined && limiteJogosSimultaneosAtingido(pendentesCount)) return false;
+
   return true;
 }
+
+
+
 
 export function dispararAlertaStopLoss(streak: number): void {
   localStorage.setItem('evengine_stop_loss_alert_dismissed', 'false');

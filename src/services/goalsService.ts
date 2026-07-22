@@ -99,15 +99,16 @@ export function poissonDistribution(
  */
 export function calculateTeamPower(
   team: {
-    lastGoalsFor: number[];
-    lastGoalsAgainst: number[];
+    lastGoalsFor?: number[];
+    lastGoalsAgainst?: number[];
+    jogos?: { gols_for: number; gols_against: number }[];
   }
 ): {
   attackPower: number;
   defensePower: number;
 } {
-  const lastFor = team?.lastGoalsFor || [];
-  const lastAgainst = team?.lastGoalsAgainst || [];
+  const lastFor = team?.jogos ? team.jogos.map(j => j.gols_for) : (team?.lastGoalsFor || []);
+  const lastAgainst = team?.jogos ? team.jogos.map(j => j.gols_against) : (team?.lastGoalsAgainst || []);
 
   const attackPower = lastFor.length > 0
     ? parseFloat((lastFor.reduce((sum, g) => sum + g, 0) / lastFor.length).toFixed(2))

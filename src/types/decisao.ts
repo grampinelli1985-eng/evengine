@@ -104,4 +104,5 @@ export type EngineInput = {
   bancaTotal?: number; // valor total da banca em reais para calculo
   userConfirmedAudit?: boolean; // Confirmação de auditoria do usuário
   currentLocalTime?: string;
+  pendentesCount?: number;
 };

@@ -464,6 +464,7 @@ export function orderOutcomes(outcomes: any[], homeTeam: string, awayTeam: strin
 export interface JogoPonderado {
   pesoTotal: number;
   golsMarcados: number;
+  fonteSintetica?: boolean;
 }
 
 export interface ConfiancaDados {
@@ -477,6 +478,12 @@ export interface ResultadoGateConfianca {
   motivo?: string;
 }
 
+const LAMBDA_DECAY = Math.log(2) / 90;
+
+export function pesoTemporalJogo(diasDesdeJogo: number): number {
+  return Math.exp(-LAMBDA_DECAY * diasDesdeJogo);
+}
+
 export function calcNJogosEfetivos(pool: JogoPonderado[]): number {
   return pool
     .filter(j => j.pesoTotal > 0.05)
@@ -484,11 +491,11 @@ export function calcNJogosEfetivos(pool: JogoPonderado[]): number {
 }
 
 export function calcCVLambda(pool: JogoPonderado[]): number {
-  const gols = pool.map(j => j.golsMarcados);
-  if (gols.length < 2) return 999;
-  const media = gols.reduce((a, b) => a + b, 0) / gols.length;
+  const golsReais = pool.filter(j => !j.fonteSintetica).map(j => j.golsMarcados);
+  if (golsReais.length < 2) return 999;
+  const media = golsReais.reduce((a, b) => a + b, 0) / golsReais.length;
   if (media === 0) return 999;
-  const variancia = gols.reduce((acc, g) => acc + Math.pow(g - media, 2), 0) / gols.length;
+  const variancia = golsReais.reduce((acc, g) => acc + Math.pow(g - media, 2), 0) / golsReais.length;
   return Math.sqrt(variancia) / media;
 }
 
