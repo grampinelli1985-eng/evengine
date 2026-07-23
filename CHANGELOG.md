@@ -1,5 +1,9 @@
 # Changelog
 
+
+## [8.19.0] - 2026-07-23 - RemoÁ„o do Multiplicador Silencioso 0.70x (Underdogs)
+### Corrigido (Nota de TransparÍncia HistÛrica)
+Entre o lanÁamento original do sistema (18/06/2026) e o v8.19 (23/07/2026), todo mercado Moneyline com probabilidade da IA abaixo de 30% teve sua probabilidade artificialmente reduzida em 30% (multiplicador de 0.70x) antes do c·lculo de EV, sem indicaÁ„o visual disso ao usu·rio. Isso foi corrigido no v8.19, removendo a distorÁ„o silenciosa e exibindo o EV real para os underdogs.
 ## [1.2.0] - 2026-05-29 - Reestrutura√ß√£o Quantitativa e Matem√°tica Sharp
 
 ### Adicionado
@@ -36,3 +40,4 @@
 ### Corrigido
 - **Bug de Regress√£o na Renderiza√ß√£o da Lista EV:** O m√©todo `recalculateTipsterMetrics` foi corrigido para passar o estado anterior e restaurar corretamente a listagem de `todos_mercados` durante re-renderiza√ß√µes (onde antes resultava numa quebra ou apagamento).
 - **Vazamento de Aninhamento:** O formatador mestre `formatToDecisaoEngine` agora trata aninhamentos duplos na key `score`, evitando falhas cr√≠ticas do React render (objetos como child nodes).
+

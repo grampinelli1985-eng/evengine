@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Match, LEAGUES, AnalysisResponse } from './types';
 import { fetchAllMatches, getOddsApiQuotaInfo } from './services/oddsService';
 import { analyzeMatch } from './services/geminiService';
+import { resetGeminiCallCounter, getGeminiCallCount } from './services/telemetryService';
 import MatchCardTipster from './components/MatchCardTipster';
 import SkeletonMatch from './components/SkeletonMatch';
 import AnalysisView from './components/AnalysisView';
@@ -618,6 +619,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     }
 
     try {
+      resetGeminiCallCounter();
       const result = cached ? { ...cached } : await analyzeMatch(match);
       let statsMedias = null;
       if (!result.escanteios?.probabilidade || !result.finalizacoes?.probabilidade) {
@@ -872,6 +874,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       console.error(err);
       // AnalysisView will handle showing error if analysis is null
     } finally {
+      const calls = getGeminiCallCount();
+      console.info(`[EngineApp] Análise da partida ${match.home_team} x ${match.away_team} consumiu ${calls} chamadas Gemini.`);
       setAnalysisLoading(false);
     }
   };
@@ -906,6 +910,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             continue;
           }
 
+          resetGeminiCallCounter();
           const result = cachedBilhete ? { ...cachedBilhete } : await analyzeMatch(match);
           if (!cachedBilhete) {
             // EV-RATE-LIMIT: 3-second delay to avoid hitting Gemini API rate limits (15 RPM)
@@ -1057,6 +1062,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
           setAnalyzedMatches(prev => ({ ...prev, [match.id]: result }));
           await incrementAnalysesToday();
+          const calls = getGeminiCallCount();
+          console.info(`[EngineApp] Lote (bilhete) para a partida ${match.home_team} x ${match.away_team} consumiu ${calls} chamadas Gemini.`);
+
+          // Delay adicional caso tenha consultado APIs externas
           await new Promise(r => setTimeout(r, 500));
         } catch (err) {
           console.error(`Failed to analyze ${match.id}:`, err);

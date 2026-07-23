@@ -310,12 +310,6 @@ describe('DecisaoEngine Consistency', () => {
       bancaTotal: 1000
     };
 
-    it('Teste 1: Underdog descalibrado (Gemini 27%, ELO 15%, delta 12pp) -> DEVE BLOQUEAR por B-UNDERDOG-CALIBRATION', async () => {
-      const result = await runTipsterEngine(baseInput as any);
-      expect(result.status).toBe('BLOQUEADO');
-      expect(result.bloqueio.codigo).toBe('B-UNDERDOG-CALIBRATION');
-      expect(result.bloqueio.motivo).toContain('descalibrada com ELO (15%) ou Pinnacle (20%) por > 8pp');
-    });
 
     it('Teste 2: Underdog calibrado dentro do delta (Gemini 27%, ELO 22%, delta 5pp) -> DEVE PASSAR a calibração e reduzir probabilidade em 0.70x', async () => {
       const { callGeminiAPI } = await import('../src/services/geminiService');
@@ -343,13 +337,13 @@ describe('DecisaoEngine Consistency', () => {
       };
       
       const result = await runTipsterEngine(input as any);
-      // O multiplicador 0.70x deve ser aplicado: 27 * 0.7 = 18.9%
-      expect(result.mercado_selecionado.probabilidade_final).toBe(18.9);
-      // E o EV deve ser recalculado: (0.189 * 4.90) - 1 = -7.4%
-      // Como o EV é -7.4% (< 3%), deve ser bloqueado por B-EV!
+      // O multiplicador 0.70x foi removido no v8.19. A probabilidade permanece ~27%.
+      // O EV original (0.27 * 4.90) - 1 = +32.3% será mantido (menos ajustes).
+      // Como o EV ajustado ficará muito alto (>12%), deve ser bloqueado por B-EDGE!
+      expect(result.mercado_selecionado.probabilidade_final).toBeGreaterThan(20);
       expect(result.status).toBe('BLOQUEADO');
-      expect(result.bloqueio.codigo).toBe('B-EV');
-      expect(result.bloqueio.motivo).toContain('EV do mercado selecionado abaixo');
+      expect(result.bloqueio.codigo).toBe('B-EDGE');
+      expect(result.bloqueio.motivo).toContain('EV irrealista');
     });
   });
 

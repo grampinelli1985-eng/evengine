@@ -166,7 +166,7 @@ export function checkOddsSanity(
   }
 
   const nameLower = chosenCandidate.nome.toLowerCase();
-  
+
   // ─── PASSO 1: LIMITES DE ODD POR MERCADO ───
   let maxOddLimit = Infinity;
   let minOddLimit = 1.01;
@@ -194,7 +194,7 @@ export function checkOddsSanity(
     const isMLCasa = chosenCandidate.nome === 'Vitória Casa';
     const isMLFora = chosenCandidate.nome === 'Vitória Fora';
     const isFavSelected = (isMLCasa && isCasaFav) || (isMLFora && !isCasaFav);
-    
+
     if (isFavSelected) {
       if (eloDelta > 150) maxOddLimit = 1.50;
       else if (eloDelta >= 100) maxOddLimit = 1.80;
@@ -214,21 +214,21 @@ export function checkOddsSanity(
   } else if (analysis?.odds?.bet365_market_name) {
     const bet365Name = analysis.odds.bet365_market_name.toLowerCase();
     const pinnName = chosenCandidate.nome.toLowerCase();
-    
+
     const isOverP = pinnName.includes('over');
     const isUnderP = pinnName.includes('under');
     const isOverB = bet365Name.includes('over');
     const isUnderB = bet365Name.includes('under');
-    
+
     if ((isOverP && isUnderB) || (isUnderP && isOverB)) {
       passo2_simetria = 'COMPARACAO_INVERTIDA';
     }
-    
+
     const isCasaP = pinnName.includes('casa') || pinnName.includes('1');
     const isForaP = pinnName.includes('fora') || pinnName.includes('2');
     const isCasaB = bet365Name.includes('casa') || bet365Name.includes('1');
     const isForaB = bet365Name.includes('fora') || bet365Name.includes('2');
-    
+
     if ((isCasaP && isForaB) || (isForaP && isCasaB)) {
       passo2_simetria = 'COMPARACAO_INVERTIDA';
     }
@@ -269,7 +269,7 @@ export function checkOddsSanity(
 
   if (result.passo1_limite !== 'OK' || result.passo2_simetria !== 'OK' || result.passo3_desvio !== 'OK') {
     result.retry_executado = true;
-    
+
     // Check if backup odd resolves the issues
     const backupOdd = analysis?.odds?.retry_odd ?? analysis?.odds?.backup_odd;
     if (backupOdd && backupOdd !== oddBet365) {
@@ -278,7 +278,7 @@ export function checkOddsSanity(
       if (backupOdd > maxOddLimit || backupOdd < minOddLimit) {
         backupPasso1 = 'ODD_IMPLAUSIVEL';
       }
-      
+
       // Re-run Passo 3 check for backupOdd
       let backupPasso3: 'OK' | 'DESVIO_IMPLAUSIVEL' = 'OK';
       const backupDesvio = ((backupOdd - chosenCandidate.odd_api) / chosenCandidate.odd_api) * 100;
@@ -303,7 +303,7 @@ export function checkOddsSanity(
   result.odd_bet365_final = finalOddBet365;
   result.passo1_limite = finalPasso1;
   result.passo2_simetria = finalPasso2;
-  
+
   const finalDesvio = ((finalOddBet365 - chosenCandidate.odd_api) / chosenCandidate.odd_api) * 100;
   result.desvio_final = parseFloat(finalDesvio.toFixed(1));
 
@@ -340,11 +340,11 @@ export function checkOddsSanity(
 export function parseTimestamp(ts: string | any, currentLocalTime?: string): Date | null {
   if (!ts) return null;
   if (ts instanceof Date) return ts;
-  
+
   const baseDate = currentLocalTime
     ? new Date(currentLocalTime)
     : new Date();
-  
+
   if (typeof ts === 'string') {
     if (ts.includes('T') || ts.includes('-')) {
       const parsed = new Date(ts);
@@ -404,7 +404,7 @@ export function processBloco6(
   const now = currentLocalTime
     ? new Date(currentLocalTime)
     : (analysis?.currentLocalTime ? new Date(analysis.currentLocalTime) : new Date());
-    
+
   const formatHHMM = (d: Date) => {
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
@@ -449,8 +449,8 @@ export function processBloco6(
       if (parsedTs && isTimestampWithin15Mins(parsedTs, currentLocalTime)) {
         odd_atual = pinnacle_direto_odd;
         fonte = 'pinnacle_direto';
-        timestamp = typeof pinnacle_direto_timestamp === 'string' && pinnacle_direto_timestamp.match(/^\d{1,2}:\d{2}$/) 
-          ? pinnacle_direto_timestamp 
+        timestamp = typeof pinnacle_direto_timestamp === 'string' && pinnacle_direto_timestamp.match(/^\d{1,2}:\d{2}$/)
+          ? pinnacle_direto_timestamp
           : formatHHMM(parsedTs);
         timestamp_valido = true;
         isFonte1Valid = true;
@@ -497,7 +497,7 @@ export function processBloco6(
       if (fallbackOdd && !isNaN(fallbackOdd)) {
         odd_atual = fallbackOdd;
         fonte = fallbackFonte;
-        
+
         const parsedTs = parseTimestamp(fallbackTs, currentLocalTime);
         if (parsedTs) {
           timestamp_valido = isTimestampWithin15Mins(parsedTs, currentLocalTime);
@@ -619,7 +619,7 @@ export function processBloco6(
       const f1 = pinnacle_direto_odd;
       const f2 = oddschecker_odd ?? betfair_odd;
       diff_cruzada = Math.abs(f1 - f2) / f1 * 100;
-      
+
       if (diff_cruzada <= 2) {
         validacao_cruzada = 'CONSISTENTE';
         odd_atual = (f1 + f2) / 2;
@@ -649,16 +649,16 @@ export function processBloco6(
     const kickoffMs = new Date(commence_time).getTime();
     const nowMs = now.getTime();
     const diffHours = (kickoffMs - nowMs) / (1000 * 60 * 60);
-    
+
     if (diffHours > 0 && diffHours < 2) {
       if (mag_pts > 0.15) {
         alerta_movimento = true;
         const dirText = movimento_direcao === 'caiu' ? 'caiu' : 'subiu';
         const novoEV = ev_real;
         const statusPos = novoEV >= 3 ? 'APROVADO MANTIDO' : 'RECLASSIFICADO';
-        
+
         alerta_mensagem = `⚡ LINHA MOVEU: ${chosenCandidate.nome}\nOdd anterior: ${odd_abertura.toFixed(2)} → Odd atual: ${odd_atual.toFixed(2)}\nMovimento: ${mag_pts.toFixed(2)} pts (${dirText})\nEV recalculado: ${novoEV.toFixed(1)}%\n[${statusPos}]`;
-        
+
         if (novoEV < 3) {
           blockObj = {
             codigo: 'B-EV',
@@ -707,7 +707,7 @@ export async function runTipsterEngine(
   legacyMatchCardValues?: any // Mantido para compatibilidade temporária
 ): Promise<DecisaoEngine & any> {
   const { analysis, matchCardValues: inputMatchCard, oddManualBet365, bancaTotal, userConfirmedAudit, currentLocalTime } = input;
-  
+
   if (!podeEntrarNovaAposta(input.pendentesCount)) {
     const estado = carregarStopLossState();
     return {
@@ -894,10 +894,10 @@ export async function runTipsterEngine(
       if (!Array.isArray(injuriesList)) return false;
       const summaryLower = (teamSummary || '').toLowerCase();
       const hasKeywords = summaryLower.includes('artilheiro') ||
-                          summaryLower.includes('goleador') ||
-                          summaryLower.includes('assistente') ||
-                          summaryLower.includes('principal desfalque') ||
-                          summaryLower.includes('top scorer');
+        summaryLower.includes('goleador') ||
+        summaryLower.includes('assistente') ||
+        summaryLower.includes('principal desfalque') ||
+        summaryLower.includes('top scorer');
       if (hasKeywords) return true;
 
       // Lista de referência — atualizar por temporada conforme transfers e impacto real.
@@ -920,33 +920,33 @@ export async function runTipsterEngine(
     const summaryText = (analysis.scouting?.scout_summary || '') + ' ' + (analysis.resumo || '');
     const summaryLower = summaryText.toLowerCase();
 
-    const isPlayoff = summaryLower.includes('playoff') || 
-                      summaryLower.includes('ida/volta') || 
-                      summaryLower.includes('jogo 2') || 
-                      summaryLower.includes('volta') || 
-                      summaryLower.includes('eliminatorio') || 
-                      summaryLower.includes('mata-mata');
-                      
-    const isPlayoffGame2_0_0 = isPlayoff && 
-                               (summaryLower.includes('jogo 2') || summaryLower.includes('volta') || summaryLower.includes('second leg')) && 
-                               (summaryLower.includes('0-0') || summaryLower.includes('empate sem gols') || summaryLower.includes('zero a zero'));
+    const isPlayoff = summaryLower.includes('playoff') ||
+      summaryLower.includes('ida/volta') ||
+      summaryLower.includes('jogo 2') ||
+      summaryLower.includes('volta') ||
+      summaryLower.includes('eliminatorio') ||
+      summaryLower.includes('mata-mata');
 
-        const isEndSeasonPressure = summaryLower.includes('rebaixamento') || 
-                                 summaryLower.includes('relegation') || 
-                                 summaryLower.includes('acesso') || 
-                                 summaryLower.includes('promotion') || 
-                                 summaryLower.includes('fim de temporada');
+    const isPlayoffGame2_0_0 = isPlayoff &&
+      (summaryLower.includes('jogo 2') || summaryLower.includes('volta') || summaryLower.includes('second leg')) &&
+      (summaryLower.includes('0-0') || summaryLower.includes('empate sem gols') || summaryLower.includes('zero a zero'));
 
-    const isCupFinal = summaryLower.includes('final de copa') || 
-                       summaryLower.includes('final da copa') || 
-                       summaryLower.includes('cup final') || 
-                       summaryLower.includes('final de taça') || 
-                       summaryLower.includes('final da taça') ||
-                       summaryLower.includes('decisão da taça');
+    const isEndSeasonPressure = summaryLower.includes('rebaixamento') ||
+      summaryLower.includes('relegation') ||
+      summaryLower.includes('acesso') ||
+      summaryLower.includes('promotion') ||
+      summaryLower.includes('fim de temporada');
 
-    const desfalquesVerificados = analysis.scouting?.data_source === 'real' || 
-                                  analysis.scouting?.data_source === 'api-football' || 
-                                  (Array.isArray(analysis.scouting?.desfalques) && analysis.scouting.desfalques.length > 0);
+    const isCupFinal = summaryLower.includes('final de copa') ||
+      summaryLower.includes('final da copa') ||
+      summaryLower.includes('cup final') ||
+      summaryLower.includes('final de taça') ||
+      summaryLower.includes('final da taça') ||
+      summaryLower.includes('decisão da taça');
+
+    const desfalquesVerificados = analysis.scouting?.data_source === 'real' ||
+      analysis.scouting?.data_source === 'api-football' ||
+      (Array.isArray(analysis.scouting?.desfalques) && analysis.scouting.desfalques.length > 0);
 
     const alertsList: string[] = [];
 
@@ -955,11 +955,11 @@ export async function runTipsterEngine(
     const homeHasCriticalInjury = desfalquesVerificados && checkTopPlayerAbsent(homeInjuriesList, summaryText);
     const awayHasCriticalInjury = desfalquesVerificados && checkTopPlayerAbsent(awayInjuriesList, summaryText);
 
-    const visitanteSemMotivo = summaryLower.includes('eliminado') || 
-                               summaryLower.includes('sem motivo') || 
-                               summaryLower.includes('cumprir tabela') || 
-                               summaryLower.includes('sem ambições') || 
-                               summaryLower.includes('desmotivado');
+    const visitanteSemMotivo = summaryLower.includes('eliminado') ||
+      summaryLower.includes('sem motivo') ||
+      summaryLower.includes('cumprir tabela') ||
+      summaryLower.includes('sem ambições') ||
+      summaryLower.includes('desmotivado');
 
     const homeTeamName = (analysis.matchData?.home_team || '').toLowerCase();
     const awayTeamName = (analysis.matchData?.away_team || '').toLowerCase();
@@ -1028,20 +1028,6 @@ export async function runTipsterEngine(
         c.adjustmentAppliedText = "Nenhum";
       }
 
-      // Bias de underdog: aplicado UMA ÚNICA VEZ aqui.
-      // recalculateTipsterMetrics recebe a prob já calibrada e NÃO deve
-      // reaplicar este multiplicador (corrige o double-bias 0.70×0.70).
-      let appliedBias = false;
-      if (c.type === '1x2' && c.probabilidadeIaCalibrada < 30) {
-        c.probabilidadeIaCalibrada = parseFloat((c.probabilidadeIaCalibrada * 0.70).toFixed(2));
-        appliedBias = true;
-      }
-
-      c.biasCalibrationApplied = appliedBias;
-
-      if (appliedBias) {
-        c.evFinal = parseFloat((((c.probabilidadeIaCalibrada / 100) * c.odd_api - 1) * 100).toFixed(1));
-      }
 
       // Quarter Kelly (0.25x) com teto rígido de 3.0% para preservação de capital sharp
       const fullKellyVal = (((c.probabilidadeIaCalibrada / 100) * c.odd_api - 1) / (c.odd_api - 1) * 100);
@@ -1178,7 +1164,7 @@ export async function runTipsterEngine(
       scoreEV = 0;
     }
 
-    // 2. Convergência G→P (20%)
+    // 2. Convergência Modelo vs Referência (ELO/Poisson) (20%)
     const chosenDelta = Math.abs(chosenCandidate.probabilidadeIaCalibrada - chosenCandidate.prob_elo);
     const scoreGP = Math.max(0, 100 - (chosenDelta * 5));
 
@@ -1221,11 +1207,11 @@ export async function runTipsterEngine(
     let blockObj: { codigo: string; motivo: string } | null = null;
 
     // ─── GATE 3: CONFIANÇA DE DADOS (v8.3) ───
-    function montarPoolComPeso(
+    var montarPoolComPeso = function (
       fonte: any // { jogos: JogoComData[] } | { lastGoalsFor: number[]; lastGoalsAgainst: number[]; isSynthetic?: boolean } | null
     ): JogoPonderado[] {
       if (!fonte) return [];
-    
+
       // Caso real (com data por jogo)
       if ('jogos' in fonte) {
         const agora = Date.now();
@@ -1236,7 +1222,7 @@ export async function runTipsterEngine(
           return { pesoTotal: peso, golsMarcados: j.gols_for, fonteSintetica: false };
         });
       }
-    
+
       // Caso sintético (mapFormToGoals)
       if (fonte.lastGoalsFor) {
         return fonte.lastGoalsFor.map((g: number) => ({ pesoTotal: 1.0, golsMarcados: g, fonteSintetica: fonte.isSynthetic }));
@@ -1266,11 +1252,6 @@ export async function runTipsterEngine(
     ];
     const indisponiveis = criteriosFactuais.filter(item => item.val === 'unavailable');
 
-    // Hard check B-UNDERDOG-CALIBRATION
-    const isUnderdog = chosenCandidate.type === '1x2' && chosenCandidate.prob_ia < 30;
-    const underdogEloDelta = isUnderdog ? Math.abs(chosenCandidate.prob_ia - chosenCandidate.prob_elo) : 0;
-    const underdogPinDelta = isUnderdog ? Math.abs(chosenCandidate.prob_ia - (1 / chosenCandidate.odd_api * 100)) : 0;
-
     // Hard check B7 (Line Movement > 5%)
     let isLineMovementBlocked = false;
     let lineMoveDesvio = 0;
@@ -1286,6 +1267,9 @@ export async function runTipsterEngine(
     if (sanidade.desvio_valido && oddBet365Manual && chosenCandidate.odd_api && oddBet365Manual > chosenCandidate.odd_api && oddBet365Manual < chosenCandidate.odd_api * 1.01) {
       isDeviationInsufficient = true;
     }
+    const DIVERGENCIA_ELO_MAXIMA = 45; // era 20 — recalibrado com base no P90 real (48.3pp), ver v8.16/v8.17
+    const DIVERGENCIA_ELO_MAXIMA_UNCALIBRATED = 60; // era 35
+    const currentDivergenciaMaxima = isEloCalibrated ? DIVERGENCIA_ELO_MAXIMA : DIVERGENCIA_ELO_MAXIMA_UNCALIBRATED;
 
     if (bloco6Veto) {
       blockObj = bloco6Veto;
@@ -1294,16 +1278,11 @@ export async function runTipsterEngine(
         codigo: 'B-DESVIO',
         motivo: desvioAviso
       };
-    // } else if (indisponiveis.length >= 3) {
-    //   blockObj = {
-    //     codigo: 'B-DADOS',
-    //     motivo: `Dado específico ausente: [${indisponiveis.map(item => item.id).join(', ')}] | Segurança acionada`
-    //   };
-    } else if (isUnderdog && (underdogEloDelta > 8 || underdogPinDelta > 8)) {
-      blockObj = {
-        codigo: 'B-UNDERDOG-CALIBRATION',
-        motivo: `Probabilidade da IA está descalibrada com ELO (${chosenCandidate.prob_elo}%) ou Pinnacle (${Math.round(1 / chosenCandidate.odd_api * 100)}%) por > 8pp`
-      };
+      // } else if (indisponiveis.length >= 3) {
+      //   blockObj = {
+      //     codigo: 'B-DADOS',
+      //     motivo: `Dado específico ausente: [${indisponiveis.map(item => item.id).join(', ')}] | Segurança acionada`
+      //   };
     } else if (isLineMovementBlocked) {
       blockObj = {
         codigo: 'B7',
@@ -1314,6 +1293,11 @@ export async function runTipsterEngine(
         codigo: 'B-EV',
         motivo: `Desvio Bet365 (${(oddBet365Manual ?? 0).toFixed(2)}) vs Pinnacle (${chosenCandidate.odd_api.toFixed(2)}) é < +1.0%. Margem de segurança violada.`
       };
+    } else if (chosenDelta > currentDivergenciaMaxima) {
+      blockObj = {
+        codigo: 'B-DIVERGENCIA-ELO',
+        motivo: `Divergência ELO vs. Modelo excede limite: Δ${chosenDelta.toFixed(1)}pp (máximo: ${currentDivergenciaMaxima}pp). ELO confiável: ${isEloCalibrated ? 'Sim' : 'Não'}`
+      };
     } else if (chosenCandidate.evFinal > 12.0) {
       blockObj = {
         codigo: 'B-EDGE',
@@ -1321,8 +1305,8 @@ export async function runTipsterEngine(
       };
     } else if (chosenCandidate.evFinal < 3) {
       if (bestAlternative && !isBDesvioBlocked && sanidade.desvio_valido) {
-        const breakEvenOdd = bestAlternative.probabilidadeIaCalibrada > 0 
-          ? parseFloat((1 / (bestAlternative.probabilidadeIaCalibrada / 100)).toFixed(2)) 
+        const breakEvenOdd = bestAlternative.probabilidadeIaCalibrada > 0
+          ? parseFloat((1 / (bestAlternative.probabilidadeIaCalibrada / 100)).toFixed(2))
           : bestAlternative.odd_api;
         blockObj = {
           codigo: 'B-EV',
@@ -1371,13 +1355,13 @@ export async function runTipsterEngine(
     const casaCand = candidates.find(c => c.nome === 'Vitória Casa' || c.nome.includes('Casa'));
     const homeProbFinal = casaCand ? casaCand.probabilidadeIaCalibrada : (analysis.probabilidades_ml?.casa ?? 40);
 
-    const contextoCompeticaoText = isPlayoffGame2_0_0 
+    const contextoCompeticaoText = isPlayoffGame2_0_0
       ? "playoff_jogo2 | jogo1_resultado: 0-0"
-      : isPlayoff 
+      : isPlayoff
         ? "playoff"
-        : isCupFinal 
+        : isCupFinal
           ? "final_copa"
-          : isEndSeasonPressure 
+          : isEndSeasonPressure
             ? "rebaixamento/acesso"
             : "regular_season";
 
@@ -1497,11 +1481,11 @@ export async function runTipsterEngine(
         direcao: analysis.lineMovement?.direcao || 'NEUTRO',
         magnitude: analysis.lineMovement?.magnitude || 0
       },
-      probElo: chosenCandidate.type === 'goals' 
-        ? { casa: chosenCandidate.prob_elo, empate: 0, fora: 0 } 
+      probElo: chosenCandidate.type === 'goals'
+        ? { casa: chosenCandidate.prob_elo, empate: 0, fora: 0 }
         : analysis.elo?.probabilidades,
-      probGemini: chosenCandidate.type === 'goals' 
-        ? { casa: chosenCandidate.prob_ia, empate: 0, fora: 0 } 
+      probGemini: chosenCandidate.type === 'goals'
+        ? { casa: chosenCandidate.prob_ia, empate: 0, fora: 0 }
         : analysis.gemini?.probabilidades,
       qualidade: {
         forma: analysis.scouting?.forma || 50,
@@ -1568,7 +1552,7 @@ export async function runTipsterEngine(
         perfil: 'CONSERVADOR',
         justificativa: engineData.mercado?.justificativa || mercadoObj.justificativa
       };
-      
+
       engineData.market = chosenCandidate.nome;
       engineData.sharp_context = sharpContextObj;
       engineData.alertas = alertsList;
@@ -1594,7 +1578,7 @@ export async function runTipsterEngine(
       geminiKey: !!import.meta.env.VITE_GEMINI_API_KEY,
       oddsKey: !!import.meta.env.VITE_ODDS_API_KEY
     });
-    
+
     const fallbackError = {
       status: 'BLOQUEADO',
       bloqueio: {
@@ -1610,7 +1594,7 @@ export async function runTipsterEngine(
         limite_diario_atingido: false
       }
     };
-    
+
     const finalOutputError = formatToDecisaoEngine(fallbackError, analysis, oddManualBet365, bancaTotal, userConfirmedAudit);
     return finalOutputError;
   }
@@ -1624,23 +1608,23 @@ function formatToDecisaoEngine(
   userConfirmedAudit?: boolean
 ): DecisaoEngine & any {
   if (import.meta.env.VITE_DEBUG_ENGINE === 'true') {
-    console.log('[FORMAT] formatToDecisaoEngine CHAMADA:', { 
+    console.log('[FORMAT] formatToDecisaoEngine CHAMADA:', {
       input_status: engineData?.status,
       has_decisao: !!engineData?.decisao,
-      caller: new Error().stack?.split('\n')[2] 
+      caller: new Error().stack?.split('\n')[2]
     });
   }
-  
+
   const isApproved = engineData.status === 'APROVADO';
-  const scoreVal = typeof engineData.score === 'object' && engineData.score !== null 
-    ? (engineData.score.valor ?? 0) 
+  const scoreVal = typeof engineData.score === 'object' && engineData.score !== null
+    ? (engineData.score.valor ?? 0)
     : (engineData.score || 0);
-  
+
   const todos_mercados: any[] = [];
-  
+
   const probCasa = analysis?.probabilidades_ml?.casa ?? analysis?.gemini?.probabilidades?.casa ?? 40;
   const probEloCasa = analysis?.elo?.probabilidades?.casa ?? 40;
-  
+
   if (Array.isArray(engineData?.todos_mercados)) {
     engineData.todos_mercados.forEach((m: any) => {
       todos_mercados.push({ ...m, selecionado: m.selecionado || false });
@@ -1657,10 +1641,10 @@ function formatToDecisaoEngine(
       });
     });
   }
-  
+
   const mercadoNome = engineData.mercado?.nome || 'Vitória Casa';
   let mercadoEncontrado = todos_mercados.find(m => m.nome === mercadoNome);
-  
+
   if (!mercadoEncontrado) {
     const probIa = engineData.mercado?.probabilidade_ia ?? probCasa;
     mercadoEncontrado = {
@@ -1675,15 +1659,15 @@ function formatToDecisaoEngine(
     mercadoEncontrado.selecionado = true;
     if (engineData.mercado?.probabilidade_ia !== undefined) {
       mercadoEncontrado.probabilidade_final = engineData.mercado.probabilidade_ia;
-      mercadoEncontrado.break_even_odd = mercadoEncontrado.probabilidade_final > 0 
-        ? parseFloat((1 / (mercadoEncontrado.probabilidade_final / 100)).toFixed(2)) 
+      mercadoEncontrado.break_even_odd = mercadoEncontrado.probabilidade_final > 0
+        ? parseFloat((1 / (mercadoEncontrado.probabilidade_final / 100)).toFixed(2))
         : 0;
     }
   }
 
   const eloCalibradoFlag = analysis?.elo?.jogos_minimos_atingidos;
   const isEloCalibrated = eloCalibradoFlag !== undefined ? eloCalibradoFlag : true;
-  
+
   let stakeMultiplier = 1.0;
   if (isApproved && !isEloCalibrated) {
     stakeMultiplier = 0.60;
@@ -1752,7 +1736,7 @@ export function calcularEVExecucao(
 ): number | null {
   if (probIA == null || probIA <= 0 || probIA > 100) return null;
   if (oddBet365 == null || oddBet365 < 1.01) return null;
-  
+
   const probDecimal = probIA > 1 ? probIA / 100 : probIA;
   const ev = (probDecimal * oddBet365) - 1;
   return parseFloat((ev * 100).toFixed(1));
@@ -1768,7 +1752,7 @@ export function recalculateTipsterMetrics(
   userConfirmedAudit?: boolean
 ): any {
   // Deep copy to prevent React state mutation bugs
-  const result = { 
+  const result = {
     ...baseResult,
     mercado: baseResult.mercado ? { ...baseResult.mercado } : null,
     stake: baseResult.stake ? { ...baseResult.stake } : null,
@@ -1776,7 +1760,7 @@ export function recalculateTipsterMetrics(
     sharp_context: baseResult.sharp_context ? { ...baseResult.sharp_context } : null,
   };
 
-  // CALIBRATION: Se a Gemini estimar probabilidade do time < 30% (Underdog), aplica multiplicador 0.70x (Apenas para ML)
+
   const isGoalsMarket = result.mercado?.nome?.includes('Gols') || result.mercado?.nome?.includes('Ambos') || result.mercado?.nome?.includes('Over') || result.mercado?.nome?.includes('btb');
 
   // ─── BLOCO 6 — ATUALIZAÇÃO E VALIDAÇÃO DE LINHA ───
@@ -1797,8 +1781,7 @@ export function recalculateTipsterMetrics(
   let bloco6Veto = bloco6.block;
 
   // probIA recebida aqui já é a probabilidadeIaCalibrada produzida em
-  // runTipsterEngine (inclui o bias 0.70× de underdog quando aplicável).
-  // NÃO reaplicar o multiplicador — faria 0.70 × 0.70 = 0.49× sobre o original.
+  // runTipsterEngine.
   const calibratedProbIA = probIA;
 
   if (result.mercado) {
@@ -1812,17 +1795,17 @@ export function recalculateTipsterMetrics(
     type: isGoalsMarket ? 'goals' : '1x2',
     odd_api: pinnOdd
   }, oddManualBet365);
-  
+
   if (oddManualBet365 === null || isNaN(oddManualBet365)) {
     result.evExecution = result.mercado ? result.mercado.ev : null;
     result.evMarketDeviation = null;
     return formatToDecisaoEngine(result, analysis || {}, oddManualBet365, bancaTotal, userConfirmedAudit);
   }
-  
+
   const probDecimal = calibratedProbIA > 1 ? calibratedProbIA / 100 : calibratedProbIA;
   const evExec = calcularEVExecucao(calibratedProbIA, oddManualBet365);
   result.evExecution = evExec;
-  
+
   if (result.mercado) {
     result.mercado.ev = evExec;
   }
@@ -1847,19 +1830,19 @@ export function recalculateTipsterMetrics(
   const summaryText = (analysis?.scouting?.scout_summary || '') + ' ' + (analysis?.resumo || '');
   const summaryLower = summaryText.toLowerCase();
 
-  const isPlayoff = summaryLower.includes('playoff') || 
-                    summaryLower.includes('ida/volta') || 
-                    summaryLower.includes('jogo 2') || 
-                    summaryLower.includes('volta') || 
-                    summaryLower.includes('eliminatorio') || 
-                    summaryLower.includes('mata-mata');
+  const isPlayoff = summaryLower.includes('playoff') ||
+    summaryLower.includes('ida/volta') ||
+    summaryLower.includes('jogo 2') ||
+    summaryLower.includes('volta') ||
+    summaryLower.includes('eliminatorio') ||
+    summaryLower.includes('mata-mata');
 
-  const isCupFinal = summaryLower.includes('final de copa') || 
-                     summaryLower.includes('final da copa') || 
-                     summaryLower.includes('cup final') || 
-                     summaryLower.includes('final de taça') || 
-                     summaryLower.includes('final da taça') ||
-                     summaryLower.includes('decisão da taça');
+  const isCupFinal = summaryLower.includes('final de copa') ||
+    summaryLower.includes('final da copa') ||
+    summaryLower.includes('cup final') ||
+    summaryLower.includes('final de taça') ||
+    summaryLower.includes('final da taça') ||
+    summaryLower.includes('decisão da taça');
 
   const isSingleLegPlayoff = isPlayoff && (summaryLower.includes('jogo único') || summaryLower.includes('jogo unico') || summaryLower.includes('single match') || summaryLower.includes('single leg') || summaryLower.includes('decisão') || summaryLower.includes('decisao') || summaryLower.includes('final'));
   const isDecisiveMatch = isCupFinal || isSingleLegPlayoff || summaryLower.includes('playoff_jogo_unico') || summaryLower.includes('playoff_jogo_1');
@@ -1927,12 +1910,12 @@ export function recalculateTipsterMetrics(
       result.sharp_context.desvio_calculado = null;
       result.sharp_context.recomendacao = sanidade.recomendacao;
     }
-    
+
     if (isBDesvioBlocked || !sanidade.desvio_valido) {
       result.sharp_context.mercado_alternativo = null;
     }
   }
-  
+
   // Recalcule o Score Composto se o EV mudou (GATE V2.0)
   if (evExec !== null && result.sharp_context) {
     let scoreEV = 0;
@@ -1989,19 +1972,19 @@ export function recalculateTipsterMetrics(
     }
     const kellyNew = (((probDecimal * oddManualBet365 - 1) / (oddManualBet365 - 1)) * 100) * 0.25;
     const kellyBaseVal = Math.min(3.0, Math.max(0, parseFloat(kellyNew.toFixed(2))));
-    
+
     // Se o modificador é 0 (veio de um veto de bloqueio original), recuperamos para 1.0
     const mod = result.stake.modificador === 0 ? 1.0 : (result.stake.modificador ?? 1.0);
-    
+
     result.stake.modificador = mod;
     result.stake.kelly_base = kellyBaseVal;
     result.stake.stake_final = Math.max(0, parseFloat((kellyBaseVal * mod).toFixed(2)));
   }
-  
+
   if (marketReference && marketReference.hasReference && marketReference.fairProbs && result.mercado?.nome) {
     let fairProb = null;
     const nome = result.mercado.nome.toLowerCase();
-    
+
     if (nome.includes('casa') || nome.includes('1x') || nome.includes('12')) {
       fairProb = marketReference.fairProbs[0];
     } else if (nome === 'empate') {
@@ -2009,7 +1992,7 @@ export function recalculateTipsterMetrics(
     } else if (nome.includes('fora') || nome.includes('x2')) {
       fairProb = marketReference.fairProbs[marketReference.fairProbs.length - 1]; // Away é o último
     }
-    
+
     if (nome.includes('1x') && marketReference.fairProbs.length === 3) {
       fairProb = marketReference.fairProbs[0] + marketReference.fairProbs[1];
     } else if (nome.includes('x2') && marketReference.fairProbs.length === 3) {
@@ -2017,7 +2000,7 @@ export function recalculateTipsterMetrics(
     } else if (nome.includes('12') && marketReference.fairProbs.length === 3) {
       fairProb = marketReference.fairProbs[0] + marketReference.fairProbs[2];
     }
-    
+
     if (fairProb && fairProb > 0) {
       const fairOdd = 1 / fairProb;
       const deviationRaw = (oddManualBet365 / fairOdd) - 1;
@@ -2028,11 +2011,11 @@ export function recalculateTipsterMetrics(
   } else {
     result.evMarketDeviation = null;
   }
-  
+
   // Atualizar Gate Status com base nas novas métricas de execução
   let currentStatus = baseResult.status;
   let currentBloqueio = baseResult.bloqueio;
- 
+
   if (evExec !== null) {
     if (bloco6Veto) {
       currentStatus = 'BLOQUEADO';

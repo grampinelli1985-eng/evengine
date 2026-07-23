@@ -108,6 +108,14 @@ export default function MatchCard({
               <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest">STEAM</span>
             </div>
           )}
+
+          {/* Analysis Marker */}
+          {analysis && (
+            <div className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full flex items-center gap-1.5">
+              <Check size={12} className="text-emerald-500" strokeWidth={3} />
+              <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">ANALISADO</span>
+            </div>
+          )}
         </div>
         
         <div className="flex items-center gap-3 text-[10px] font-mono font-bold tracking-widest">

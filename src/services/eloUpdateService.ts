@@ -167,11 +167,11 @@ export async function autoUpdateEloFromResults(force = false): Promise<EloUpdate
 
     try {
       const resultado = scoreToResultado(homeGoals, awayGoals);
-      atualizarEloPartida(apiHome, apiAway, resultado, 'copa');
+      atualizarEloPartida(canonHome, canonAway, resultado, 'copa');
       processed.add(fixtureId);
       report.updatedCount++;
     } catch (err) {
-      report.errors.push(`Fixture ${fixtureId} (${apiHome} vs ${apiAway}): ${String(err)}`);
+      report.errors.push(`Fixture ${fixtureId} (${canonHome} vs ${canonAway}): ${String(err)}`);
     }
   }
 

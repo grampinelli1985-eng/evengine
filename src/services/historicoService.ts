@@ -1,3 +1,5 @@
+import { registrarResultadoDiario, registrarResultado, registrarEntradaAprovada } from './bancaService';
+
 interface RegistroAposta {
   id: string;
   data: string;
@@ -70,6 +72,7 @@ export function registrarAposta(dados: {
 
   state.registros.push(registro);
   salvarState(state);
+  registrarEntradaAprovada(); // NOVO — conta para o limite de 3/dia
   return id;
 }
 
@@ -94,6 +97,11 @@ export function resolverAposta(
   } else {
     reg.lucro = 0;
   }
+
+  // NOVO — conecta ao bancaService, mesmo mapeamento de status usado em betService.resolveBet
+  const statusBanca = resultado === 'WIN' ? 'green' : resultado === 'RED' ? 'red' : 'void';
+  registrarResultadoDiario(reg.lucro);
+  registrarResultado({ resultado: statusBanca });
 
   recalcularStats(state);
   salvarState(state);

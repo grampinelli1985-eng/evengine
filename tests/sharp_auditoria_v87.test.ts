@@ -3,15 +3,20 @@ import { fetchRealScouting } from '../src/services/scoutingService';
 import { runTipsterEngine } from '../src/services/tipsterEngine';
 
 describe('Auditoria v8.7 - Hotfix B-DADOS Gols (Scouting)', () => {
+  let oldKey: string | undefined;
+
   beforeEach(() => {
     vi.resetAllMocks();
     if (typeof localStorage !== 'undefined') {
       localStorage.clear();
     }
+    oldKey = process.env.ODDS_API_KEY;
+    process.env.ODDS_API_KEY = 'test_key';
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.env.ODDS_API_KEY = oldKey;
   });
 
   it('1. Deve extrair home_goals e away_goals da API-Football quando disponível e não ser bloqueado por Lambda', async () => {

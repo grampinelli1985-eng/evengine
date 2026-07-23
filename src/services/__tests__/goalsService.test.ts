@@ -11,11 +11,13 @@ import {
 // Mock callGeminiAPI
 vi.mock('../geminiService', () => {
   return {
-    callGeminiAPI: vi.fn().mockResolvedValue(JSON.stringify({
-      totalGoals: 2.5,
-      confidence: 85,
-      over2_5_prob: 58
-    }))
+    callGeminiAPI: vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        totalGoals: 2.5,
+        confidence: 85,
+        over2_5_prob: 58
+      })
+    })
   };
 });
 

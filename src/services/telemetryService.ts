@@ -1,6 +1,25 @@
 import { supabase } from './supabaseClient';
 import type { TipsterEngineResult } from '../types';
 
+let geminiCallCountThisAnalysis = 0;
+
+export function resetGeminiCallCounter(): void {
+  geminiCallCountThisAnalysis = 0;
+}
+
+export function trackGeminiCall(origem: string): void {
+  geminiCallCountThisAnalysis++;
+  console.info(`[Gemini Telemetry] Chamada #${geminiCallCountThisAnalysis} — origem: ${origem}`);
+}
+
+export function getGeminiCallCount(): number {
+  return geminiCallCountThisAnalysis;
+}
+
+export function trackPrecheckSkip(motivo: string): void {
+  console.info(`[Telemetry] Fallback Gemini evitado via pre-check: ${motivo}`);
+}
+
 function sanitizarNumerico(valor: any, max = 999.99, casas = 2): number | null {
   if (valor === null || valor === undefined) return null;
   const n = Number(valor);

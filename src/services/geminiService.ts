@@ -15,6 +15,7 @@ import { removeOverround, extractMarketReference } from "./valueBetService";
 import { detectLineMovement } from "./lineMovementService";
 import { GEMINI_MODEL } from "../config/ai";
 import { getCachedAnalysis, setCachedAnalysis, buildFixtureKey } from "./analysisCacheService";
+import { trackGeminiCall } from './telemetryService';
 
 
 const tipsterService = new TipsterAnalysisService();
@@ -50,7 +51,8 @@ REGRAS RÍGIDAS (sempre aplicam):
 6. Quando houver movimento de linha (steam move) informado, isso é sinal de
    dinheiro sharp entrando — favoreça a direção do movimento, salvo evidência
    qualitativa forte em contrário, e mencione isso no campo "resumo".
-7. O campo "resumo" deve ser sucinto e objetivo (no máximo 2 frases, máximo 35 palavras).`;
+7. O campo "resumo" deve ser sucinto e objetivo (no máximo 2 frases, máximo 35 palavras).
+8. Responda EXCLUSIVAMENTE com o objeto JSON puro. Não inclua nenhum texto antes ou depois, nem blocos de código markdown.`;
 
 // ============================================================
 // OTIMIZAÇÃO 2: responseSchema em vez de exemplo JSON no prompt.
@@ -172,12 +174,17 @@ const ANALYSIS_SCHEMA = {
   ],
 };
 
+function extrairJSON(text: string): string {
+  const match = text.match(/\{[\s\S]*\}/);
+  return match ? match[0] : text;
+}
+
 export async function callGeminiAPI(
   systemPrompt: string,
   userMessage: string,
   responseFormat: "json" | "text" = "json",
   schema?: object
-) {
+): Promise<{ text: string; usouFallbackEstatistico: boolean }> {
   const ai = getAI();
   if (!ai) {
     throw new Error("Gemini AI instance not initialized. Check your API key.");
@@ -186,27 +193,33 @@ export async function callGeminiAPI(
   try {
     let response;
     try {
+      trackGeminiCall('callGeminiAPI - Principal');
       response = await ai.models.generateContent({
         model: GEMINI_MODEL,
         contents: [{ role: "user", parts: [{ text: userMessage }] }],
         config: {
           systemInstruction: systemPrompt,
           responseMimeType: responseFormat === "json" ? "application/json" : "text/plain",
-          maxOutputTokens: 350,
+          maxOutputTokens: 1200,
           temperature: 0.2,
+          thinkingConfig: { thinkingBudget: 0 },
           ...(schema ? { responseSchema: schema } : {}),
         },
       });
     } catch (e: any) {
       if (e?.message?.includes("not found") || e?.status === 404 || e?.code === 404) {
+        const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
+        console.warn(`[Gemini] Modelo "${GEMINI_MODEL}" indisponível, tentando fallback "${GEMINI_MODEL_FALLBACK}"`);
+        trackGeminiCall('callGeminiAPI - Fallback');
         response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: GEMINI_MODEL_FALLBACK,
           contents: [{ role: "user", parts: [{ text: userMessage }] }],
           config: {
             systemInstruction: systemPrompt,
             responseMimeType: responseFormat === "json" ? "application/json" : "text/plain",
-            maxOutputTokens: 350,
+            maxOutputTokens: 1200,
             temperature: 0.2,
+            thinkingConfig: { thinkingBudget: 0 },
             ...(schema ? { responseSchema: schema } : {}),
           },
         });
@@ -216,7 +229,7 @@ export async function callGeminiAPI(
     }
 
     const text = response.text || "";
-    return text;
+    return { text, usouFallbackEstatistico: false };
   } catch (error) {
     console.error("Gemini API call failed:", error);
     throw error;
@@ -303,27 +316,28 @@ ${lineMovementText}
 
   if (ai) {
     try {
-      const rawText = await callGeminiAPI(
-        SYSTEM_INSTRUCTION,
-        prompt,
-        "json",
-        ANALYSIS_SCHEMA
-      );
-      // Com responseSchema, a resposta já vem como JSON válido — mas
-      // mantemos a limpeza de fences por segurança (defensivo, custo zero).
-      const cleaned = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-      analysis = JSON.parse(cleaned);
+        const { text } = await callGeminiAPI(
+          SYSTEM_INSTRUCTION,
+          prompt,
+          "json",
+          ANALYSIS_SCHEMA
+        );
+        // Usando o parser defensivo para garantir a extração do JSON
+        const cleanedText = extrairJSON(text);
+        analysis = JSON.parse(cleanedText);
 
-      // Validação de segurança para garantir que campos vitais existam
+        // Validação de segurança para garantir que campos vitais existam
       if (!analysis.probabilidades_ml) {
         analysis.probabilidades_ml = { casa: 33, empate: 34, fora: 33 };
       }
     } catch (e: any) {
       console.error("Analysis failed, using fallback:", e);
       analysis = generateFallbackAnalysis(match, scouting);
+      analysis.dados_ia_indisponivel = true;
     }
   } else {
     analysis = generateFallbackAnalysis(match, scouting);
+    analysis.dados_ia_indisponivel = true;
   }
 
   // Sanitização em sequência

@@ -166,8 +166,8 @@ Retorne um objeto JSON exatamente no seguinte formato, sem formatações adicion
 }`;
 
   try {
-    const rawResponse = await callGeminiAPI(systemPrompt, userMessage, "json");
-    const cleaned = rawResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+    const { text } = await callGeminiAPI(systemPrompt, userMessage, "json");
+    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
 
     const over2_5_prob = parsed.over2_5_prob > 1 ? parsed.over2_5_prob / 100 : parsed.over2_5_prob;

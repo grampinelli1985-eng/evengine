@@ -5,8 +5,10 @@
 
 import { ScoutingReport, JogoComData } from '../types';
 import { GEMINI_MODEL } from '../config/ai';
+import { trackGeminiCall, trackPrecheckSkip } from "./telemetryService";
 import { hasQuota, trackRequest } from './apiQuotaService';
 import { getSportmonksTeamId, getSeasonId, getTeamXgLast5, getTeamPpdaLast5, SPORTMONKS_LEAGUE_BY_NAME } from './sportmonksService';
+import { supabase } from './supabaseClient';
 
 import { GoogleGenAI } from "@google/genai";
 
@@ -78,10 +80,14 @@ export const TEAM_NAME_MAP: Record<string, number> = {
   // Brasileirão (20 times)
   'Flamengo': 127, 'Palmeiras': 121, 'Corinthians': 131,
   'São Paulo': 126, 'Santos': 128, 'Grêmio': 130,
-  'Internacional': 119, 'Atlético Mineiro': 1062,
-  'Fluminense': 124, 'Vasco da Gama': 133, 'Botafogo': 129,
+  'Internacional': 119, 
+  'Atlético Mineiro': 1062, 'Atlético-MG': 1062, 'Atletico MG': 1062,
+  'Fluminense': 124, 
+  'Vasco da Gama': 133, 'Vasco': 133, 
+  'Botafogo': 129,
   'Bahia': 118, 'Fortaleza': 1025, 'Cruzeiro': 120,
-  'Athletico Paranaense': 123, 'Bragantino': 2376,
+  'Athletico Paranaense': 123, 'Athletico-PR': 123, 'Athletico PR': 123,
+  'Bragantino': 2376, 'Bragantino-SP': 2376, 'Red Bull Bragantino': 2376, 'RB Bragantino': 2376,
   'Vitória': 1932, 'Juventude': 1165, 'Cuiabá': 2472,
   'Mirassol': 2541,
 
@@ -235,7 +241,36 @@ export async function getTeamIdAsync(teamName: string): Promise<number> {
   }
 
   console.warn(`Time não encontrado na Grade/API-Football: ${teamName}`);
+  registrarTimeNaoMapeado(teamName, 'getTeamIdAsync');
   return -1;
+}
+
+export async function registrarTimeNaoMapeado(nomeTentado: string, contexto: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data: existing } = await supabase
+      .from('unmapped_teams')
+      .select('id, ocorrencias')
+      .eq('nome_tentado', nomeTentado)
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
+        .from('unmapped_teams')
+        .update({
+          ocorrencias: existing.ocorrencias + 1,
+          ultima_ocorrencia: new Date().toISOString()
+        })
+        .eq('id', existing.id);
+    } else {
+      await supabase
+        .from('unmapped_teams')
+        .insert({ nome_tentado: nomeTentado, contexto });
+    }
+  } catch (e) {
+    // Não deixar essa telemetria quebrar o fluxo principal — falha aqui é silenciosa
+    console.warn('[Telemetry] Falha ao registrar time não mapeado:', e);
+  }
 }
 
 function normalizeResult(res: string): string {
@@ -296,11 +331,54 @@ function extrairGolsDoPlacar(
   return { jogos };
 }
 
+interface PreCheckResultado {
+  prosseguirComGemini: boolean;
+  motivo?: string;
+  homeGols?: { jogos: JogoComData[] } | null;
+  awayGols?: { jogos: JogoComData[] } | null;
+}
+
+async function precheckSuficienciaDados(
+  homeId: number,
+  awayId: number,
+  homeTeam: string,
+  awayTeam: string,
+  sportKey?: string
+): Promise<PreCheckResultado> {
+  let [homeGols, awayGols] = await Promise.all([
+    fetchGolsRecentes(homeId),
+    fetchGolsRecentes(awayId)
+  ]);
+
+  if ((!homeGols || homeGols.jogos.length < 3) && sportKey) {
+     const res = await buscarResultadosRecentes(homeTeam, sportKey);
+     const oddsAPI = extrairGolsDoPlacar(res);
+     if (oddsAPI) homeGols = oddsAPI;
+  }
+
+  if ((!awayGols || awayGols.jogos.length < 3) && sportKey) {
+     const res = await buscarResultadosRecentes(awayTeam, sportKey);
+     const oddsAPI = extrairGolsDoPlacar(res);
+     if (oddsAPI) awayGols = oddsAPI;
+  }
+
+  const homeTemDadoMinimo = homeGols && homeGols.jogos.length >= 3;
+  const awayTemDadoMinimo = awayGols && awayGols.jogos.length >= 3;
+
+  if (!homeTemDadoMinimo && !awayTemDadoMinimo) {
+    return { prosseguirComGemini: false, motivo: 'Ambos os times sem histórico mínimo na API-Football', homeGols, awayGols };
+  }
+
+  return { prosseguirComGemini: true, homeGols, awayGols };
+}
+
 export async function fetchRealScouting(homeTeam: string, awayTeam: string, leagueId?: number, sportKey?: string): Promise<ScoutingReport> {
   const homeId = await getTeamIdAsync(homeTeam);
   const awayId = await getTeamIdAsync(awayTeam);
 
-  const fetchForm = async (id: number, teamName: string) => {
+  const precheck = await precheckSuficienciaDados(homeId, awayId, homeTeam, awayTeam, sportKey);
+
+  const fetchForm = async (id: number, teamName: string, allowGeminiFallback: boolean = true) => {
     const season = getSeasonForLeague(leagueId);
 
     if (id !== -1 && hasQuota(1)) {
@@ -337,11 +415,15 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
       }
     }
 
+    if (!allowGeminiFallback) {
+      return ['?', '?', '?', '?', '?'];
+    }
+
     console.warn(`TheOddsAPI fetch failed for ${teamName}. Trying Gemini search...`);
     return await fetchFormaRecenteViaGeminiSearch(teamName);
   };
 
-  const fetchH2H = async (h: number, a: number) => {
+  const fetchH2H = async (h: number, a: number, allowGeminiFallback: boolean = true) => {
     if (h === -1 || a === -1) return [];
     if (!hasQuota(1)) return [];
     try {
@@ -375,10 +457,14 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
     }
   };
 
-  const fetchGoalsForTeam = async (id: number, teamName: string) => {
-    // 1ª tentativa: API-Football fixtures reais
-    const viaApiFootball = await fetchGolsRecentes(id);
-    if (viaApiFootball) return viaApiFootball;
+  const fetchGoalsForTeam = async (id: number, teamName: string, precheckedGols?: { jogos: JogoComData[] } | null) => {
+    // 1ª tentativa: API-Football fixtures reais (reaproveitada do pre-check se existir)
+    if (precheckedGols !== undefined) {
+      if (precheckedGols) return precheckedGols;
+    } else {
+      const viaApiFootball = await fetchGolsRecentes(id);
+      if (viaApiFootball) return viaApiFootball;
+    }
 
     // 2ª tentativa: parsear placar do The Odds API scores
     if (sportKey) {
@@ -390,13 +476,34 @@ export async function fetchRealScouting(homeTeam: string, awayTeam: string, leag
     return null; // sem dado real — tipsterEngine cairá em mapFormToGoals corretamente
   };
 
+  if (!precheck.prosseguirComGemini) {
+    trackPrecheckSkip(precheck.motivo || 'Dado insuficiente');
+    
+    const [homeForm, awayForm, h2h] = await Promise.all([
+      fetchForm(homeId, homeTeam, false),
+      fetchForm(awayId, awayTeam, false),
+      fetchH2H(homeId, awayId, false)
+    ]);
+    
+    return {
+      home_form: homeForm,
+      away_form: awayForm,
+      h2h: h2h,
+      home_goals: undefined,
+      away_goals: undefined,
+      scout_summary: 'Dado insuficiente — análise seguirá com nível de confiança reduzido.',
+      data_source: 'unavailable',
+      confiavel: false
+    };
+  }
+
   try {
     const [homeForm, awayForm, h2h, homeGoals, awayGoals] = await Promise.all([
-      fetchForm(homeId, homeTeam),
-      fetchForm(awayId, awayTeam),
-      fetchH2H(homeId, awayId),
-      fetchGoalsForTeam(homeId, homeTeam),
-      fetchGoalsForTeam(awayId, awayTeam)
+      fetchForm(homeId, homeTeam, true),
+      fetchForm(awayId, awayTeam, true),
+      fetchH2H(homeId, awayId, true),
+      fetchGoalsForTeam(homeId, homeTeam, precheck.homeGols),
+      fetchGoalsForTeam(awayId, awayTeam, precheck.awayGols)
     ]);
 
     const hasRealForm = homeForm.some(r => r !== '?') || awayForm.some(r => r !== '?');
@@ -569,15 +676,38 @@ Responda APENAS com o JSON, sem markdown ou explicações.`;
 
     const userMessage = `Por favor, encontre a forma recente dos últimos 5 jogos do time "${teamName}" em 2026 usando a busca: ${query}`;
 
-    const response = await genAI.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        tools: [{ googleSearch: {} }]
+    let response;
+    try {
+      trackGeminiCall('fetchFormaRecenteViaGeminiSearch - Principal');
+      response = await genAI.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: 0 },
+          tools: [{ googleSearch: {} }]
+        }
+      });
+    } catch (e: any) {
+      if (e?.message?.includes("not found") || e?.status === 404 || e?.code === 404) {
+        const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
+        console.warn(`[Scout] Modelo "${GEMINI_MODEL}" indisponível, tentando fallback "${GEMINI_MODEL_FALLBACK}"`);
+        trackGeminiCall('fetchFormaRecenteViaGeminiSearch - Fallback');
+        response = await genAI.models.generateContent({
+          model: GEMINI_MODEL_FALLBACK,
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+        config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            thinkingConfig: { thinkingBudget: 0 },
+            tools: [{ googleSearch: {} }]
+          }
+        });
+      } else {
+        throw e;
       }
-    });
+    }
 
     const text = response.text || '';
     const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -609,7 +739,8 @@ export async function getFormaRecente(
   teamName: string,
   sportKey: string,
   liga: string,
-  teamId?: number
+  teamId?: number,
+  allowGeminiFallback: boolean = false
 ): Promise<FormResult> {
   const resolvedId = teamId && teamId !== -1 ? teamId : await getTeamIdAsync(teamName);
   if (resolvedId && resolvedId !== -1) {
@@ -644,16 +775,18 @@ export async function getFormaRecente(
   }
 
   try {
-    const geminiForm = await fetchFormaRecenteViaGeminiSearch(teamName);
-    if (geminiForm.some(r => r !== '?')) {
-      const mapped = geminiForm
-        .filter(r => r !== '?')
-        .map(r => ({
-          resultado: (r === 'V' ? 'W' : r === 'E' ? 'D' : 'L') as 'W'|'D'|'L',
-          placar: 'N/A',
-          adversario: 'N/A'
-        }));
-      return { data: mapped, source: 'gemini_search', confiavel: true };
+    if (allowGeminiFallback) {
+      const geminiForm = await fetchFormaRecenteViaGeminiSearch(teamName);
+      if (geminiForm.some(r => r !== '?')) {
+        const mapped = geminiForm
+          .filter(r => r !== '?')
+          .map(r => ({
+            resultado: (r === 'V' ? 'W' : r === 'E' ? 'D' : 'L') as 'W'|'D'|'L',
+            placar: 'N/A',
+            adversario: 'N/A'
+          }));
+        return { data: mapped, source: 'gemini_search', confiavel: true };
+      }
     }
   } catch (e) {
     console.warn(`Gemini Search agent failed for ${teamName}:`, e);
@@ -977,14 +1110,36 @@ ${homeTeam} e ${awayTeam} e retorne APENAS este JSON:
 Use dados reais conhecidos. Vencedor: "home", "away" ou "draw".
 Retorne APENAS o JSON, sem markdown.`;
 
-    const response = await genAI.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        systemInstruction: 'Responda APENAS com JSON válido. Sem markdown.',
-        responseMimeType: 'application/json'
+    let response;
+    try {
+      trackGeminiCall('buscarH2HviaGemini - Principal');
+      response = await genAI.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          systemInstruction: 'Responda APENAS com JSON válido. Sem markdown.',
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: 0 }
+        }
+      });
+    } catch (e: any) {
+      if (e?.message?.includes("not found") || e?.status === 404 || e?.code === 404) {
+        const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
+        console.warn(`[H2H] Modelo "${GEMINI_MODEL}" indisponível, tentando fallback "${GEMINI_MODEL_FALLBACK}"`);
+        trackGeminiCall('buscarH2HviaGemini - Fallback');
+        response = await genAI.models.generateContent({
+          model: GEMINI_MODEL_FALLBACK,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            systemInstruction: 'Responda APENAS com JSON válido. Sem markdown.',
+            responseMimeType: 'application/json',
+            thinkingConfig: { thinkingBudget: 0 }
+          }
+        });
+      } else {
+        throw e;
       }
-    });
+    }
 
     const text = response.text || '';
     const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();

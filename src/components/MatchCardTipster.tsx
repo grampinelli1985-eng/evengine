@@ -263,6 +263,13 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
             </div>
           )}
 
+          {deepAnalysis?.dados_ia_indisponivel && (
+            <div className="mb-2 flex items-center gap-1.5 px-2 py-1 bg-amber-500/10 border border-amber-500/30 rounded-md w-fit">
+              <span className="text-[10px] text-amber-500">⚠️</span>
+              <span className="text-[9px] font-black uppercase tracking-widest text-amber-500/90">Safety Mode (IA Offline)</span>
+            </div>
+          )}
+
           <h3 className="text-lg font-black text-white leading-tight uppercase tracking-tight flex flex-wrap items-center gap-x-1.5">
             <span>{match.homeTeam}</span>
             {homeRank !== null && (

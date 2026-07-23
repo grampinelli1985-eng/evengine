@@ -10,7 +10,7 @@ import {
   Check, PieChart, Zap, UserMinus, BarChart3, InfoIcon, Ban,
   RefreshCw, Ticket
 } from 'lucide-react';
-import { getBanca, calculateKellyStake } from '../services/bancaService';
+import { getBanca, calculateKellyStake, podeEntrarNovaAposta, registrarEntradaAprovada } from '../services/bancaService';
 import { motion, AnimatePresence } from 'motion/react';
 import { useState, useEffect, useMemo } from 'react';
 import { calcularValueBets, validateReport } from '../services/valueBetService';
@@ -22,6 +22,7 @@ import { AnalysisDecisionCard } from './AnalysisDecisionCard';
 import { recalculateTipsterMetrics } from '../services/tipsterEngine';
 import { poissonDistribution } from '../services/goalsService';
 import { getFormaRecente } from '../services/scoutingService';
+import { GEMINI_MODEL } from '../config/ai';
 import AHCard from './Analysis/AHCard';
 import { createBet } from '../services/betService';
 
@@ -116,7 +117,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
   const [formaHome, setFormaHome] = useState<any>({ data: [], source: 'unavailable' });
   const [formaAway, setFormaAway] = useState<any>({ data: [], source: 'unavailable' });
 
-  
+
   const [oddManualText, setOddManualText] = useState('');
   const [oddManual, setOddManual] = useState<number | null>(null);
   const [engineResult, setEngineResult] = useState<any>(analysis?.tipsterEngine);
@@ -129,7 +130,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
   const [ticketGerado, setTicketGerado] = useState(false);
   const [betRegistrada, setBetRegistrada] = useState(false);
   const [registrandoBet, setRegistrandoBet] = useState(false);
-  
+
   // Initial sync when analysis loads
   useEffect(() => {
     if (analysis?.tipsterEngine) {
@@ -140,7 +141,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
       }
     }
   }, [analysis]);
-  
+
   useEffect(() => {
     if (match) {
       const stored = localStorage.getItem(`bet365_odd_${match.id}`);
@@ -159,7 +160,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
       }
     }
   }, [match]);
-  
+
   useEffect(() => {
     const handler = setTimeout(() => {
       if (!oddManualText) {
@@ -168,9 +169,9 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
         if (match) localStorage.removeItem(`bet365_odd_${match.id}`);
         return;
       }
-      
+
       const val = parseFloat(oddManualText);
-      
+
       // Evita disparar validação chata de erro se o usuário estiver no meio da digitação (ex: "1" ou termina com ".")
       if (oddManualText === '1' || oddManualText.endsWith('.')) {
         return;
@@ -195,15 +196,15 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
       if (analysis.tipsterEngine.mercado && !mercadoLocked.current) {
         mercadoLocked.current = analysis.tipsterEngine.mercado;
       }
-      
+
       const lockedMercado = mercadoLocked.current || analysis.tipsterEngine.mercado;
       const probIA = lockedMercado?.probabilidade_ia || 0;
-      
+
       const evRecalculado = oddManual ? ((probIA / 100) * oddManual - 1) : null;
       if (oddManual && evRecalculado !== null && evRecalculado < 0.03 && !userConfirmedAudit) {
         setShowAuditWarning(true);
       }
-      
+
       const newResult = recalculateTipsterMetrics(
         analysis.tipsterEngine,
         oddManual,
@@ -213,12 +214,12 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
         analysis,
         userConfirmedAudit
       );
-      
+
       // Preserve the locked mercado on stateful new result
       if (newResult && lockedMercado) {
         newResult.mercado = lockedMercado;
       }
-      
+
       setEngineResult(newResult);
 
       // 🚀 Telemetry: Gravar no Supabase (com deduplicação)
@@ -229,7 +230,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
           .then(id => {
             if (id) setLoggedAnalysisId(id);
           })
-          .catch(err => 
+          .catch(err =>
             console.warn('[Telemetry] Silently failed to log:', err)
           );
       }
@@ -238,14 +239,37 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
 
   useEffect(() => {
     if (match) {
-      getFormaRecente(match.home_team, match.sport_key, match.sport_title).then(setFormaHome);
-      getFormaRecente(match.away_team, match.sport_key, match.sport_title).then(setFormaAway);
+      if (analysis?.scouting?.home_form && analysis.scouting.home_form.length > 0) {
+        setFormaHome({ 
+          data: analysis.scouting.home_form.map((r: string) => ({ 
+            resultado: (r === 'V' ? 'W' : r === 'E' ? 'D' : r === 'D' ? 'L' : r) as 'W'|'D'|'L', 
+            placar: 'N/A', 
+            adversario: 'N/A' 
+          })), 
+          source: 'unavailable', confiavel: false 
+        });
+      } else {
+        getFormaRecente(match.home_team, match.sport_key, match.sport_title, undefined, false).then(setFormaHome);
+      }
+
+      if (analysis?.scouting?.away_form && analysis.scouting.away_form.length > 0) {
+        setFormaAway({ 
+          data: analysis.scouting.away_form.map((r: string) => ({ 
+            resultado: (r === 'V' ? 'W' : r === 'E' ? 'D' : r === 'D' ? 'L' : r) as 'W'|'D'|'L', 
+            placar: 'N/A', 
+            adversario: 'N/A' 
+          })), 
+          source: 'unavailable', confiavel: false 
+        });
+      } else {
+        getFormaRecente(match.away_team, match.sport_key, match.sport_title, undefined, false).then(setFormaAway);
+      }
     }
-  }, [match]);
+  }, [match, analysis]);
 
   // ── VALORES SINCRONIZADOS COM MATCHCARD (Protegidos) ────────────────
   const matchOdds = match.bookmakers?.[0]?.markets.find(m => m.key === 'h2h')?.outcomes.find(o => o.name === match.home_team)?.price || 1.8;
-  
+
   const syncResult = useMemo(() => {
     try {
       return tipsterService.analyzePick({
@@ -305,14 +329,14 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
   else if (hasReference && !oddManual) uiState = 'B';
   else if (!hasReference && oddManual) uiState = 'C';
   else if (!hasReference && !oddManual) uiState = 'D';
-  const evExibido   = teEngine?.evExecution !== undefined ? teEngine.evExecution : (teEngine?.ev !== undefined ? teEngine.ev : evSyncBruto);
+  const evExibido = teEngine?.evExecution !== undefined ? teEngine.evExecution : (teEngine?.ev !== undefined ? teEngine.ev : evSyncBruto);
   const kellyExibido = teEngine?.stake?.stake_final !== undefined
     ? parseFloat(teEngine.stake.stake_final.toFixed(1))
     : kellySyncBruto;
-  const confExibido  = teEngine?.confianca !== undefined
+  const confExibido = teEngine?.confianca !== undefined
     ? Math.round(teEngine.confianca)
     : confSyncBruto;
-  const tierExibido  = teEngine?.tier !== undefined
+  const tierExibido = teEngine?.tier !== undefined
     ? (teEngine.tier === 'S' ? 'A' : teEngine.tier)
     : tierSyncBruto;
 
@@ -324,8 +348,8 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
 
 
   const poissonDisponivel = !!(probPoisson && (
-    (probPoisson.casa ?? 0) > 0 || 
-    (probPoisson.empate ?? 0) > 0 || 
+    (probPoisson.casa ?? 0) > 0 ||
+    (probPoisson.empate ?? 0) > 0 ||
     (probPoisson.fora ?? 0) > 0
   ));
 
@@ -343,9 +367,9 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
     ? Math.max(deltaCasa, deltaEmpate, deltaFora)
     : 0;
 
-  const dadosCompletos = 
-    poissonDisponivel && 
-    probGemini.casa > 0 && 
+  const dadosCompletos =
+    poissonDisponivel &&
+    probGemini.casa > 0 &&
     probPoisson !== null;
 
   const convergenciaOk = dadosCompletos && deltaMaximo <= 15;
@@ -364,19 +388,19 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
 
   // ── CRITÉRIOS DO GATE ─────────────────────────────────
   const criteriosRender = {
-    ev: { 
-      valor: evExibido === null || evExibido === undefined ? 'Aguardando dados' : `${evExibido}%`, 
-      passa: evExibido === null || evExibido === undefined ? true : (evExibido >= 3 || userConfirmedAudit), 
-      label: 'EV DO MERCADO', 
-      exige: '≥ 3%', 
-      bloqueante: true 
+    ev: {
+      valor: evExibido === null || evExibido === undefined ? 'Aguardando dados' : `${evExibido}%`,
+      passa: evExibido === null || evExibido === undefined ? true : (evExibido >= 3 || userConfirmedAudit),
+      label: 'EV DO MERCADO',
+      exige: '≥ 3%',
+      bloqueante: true
     },
-    kelly: { 
-      valor: kellyExibido === null || kellyExibido === undefined ? 'Aguardando dados' : `${kellyExibido}%`, 
-      passa: kellyExibido === null || kellyExibido === undefined ? true : (kellyExibido >= 0.5 || userConfirmedAudit), 
-      label: 'KELLY STAKE', 
-      exige: '≥ 0.5%', 
-      bloqueante: true 
+    kelly: {
+      valor: kellyExibido === null || kellyExibido === undefined ? 'Aguardando dados' : `${kellyExibido}%`,
+      passa: kellyExibido === null || kellyExibido === undefined ? true : (kellyExibido >= 0.5 || userConfirmedAudit),
+      label: 'KELLY STAKE',
+      exige: '≥ 0.5%',
+      bloqueante: true
     },
     convergenciaModelos: {
       valor: `${convergenciaLabel} (Δ${deltaMaximo.toFixed(1)}pp)`,
@@ -494,14 +518,14 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
               >
                 {/* Glow Effect */}
                 <div className="absolute -top-10 -left-10 w-40 h-40 bg-yellow-500/10 rounded-full blur-3xl pointer-events-none" />
-                
+
                 <div className="flex items-center gap-3 mb-6 pb-4 border-b border-white/5">
                   <span className="text-2xl">⚠️</span>
                   <h3 className="text-lg font-black text-yellow-500 uppercase tracking-widest leading-none">
                     ODD COM EV INSUFICIENTE
                   </h3>
                 </div>
-                
+
                 <div className="space-y-4">
                   <div className="bg-red-950/20 p-4 rounded-2xl border border-red-900/30 space-y-2">
                     <p className="font-bold text-red-300 text-xs uppercase tracking-wider">
@@ -518,7 +542,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                       </p>
                     )}
                   </div>
-                  
+
                   <div className="bg-red-950/20 p-4 rounded-2xl border border-red-900/30 space-y-2">
                     {teEngine?.evExecution !== undefined && (
                       <p className="font-bold text-red-300 text-xs uppercase tracking-wider">
@@ -532,7 +556,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                       ❌ Esta odd NÃO atende critérios operacionais
                     </p>
                   </div>
-                  
+
                   <p className="text-white/70 text-[11px] leading-relaxed">
                     Esta odd NÃO será aprovada para operação real, mas você pode usar para AUDITORIA/TESTE.
                     <br />
@@ -541,7 +565,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                     </span>
                   </p>
                 </div>
-                
+
                 <div className="mt-8 flex gap-3 justify-end">
                   <button
                     onClick={() => {
@@ -586,19 +610,17 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
           </div>
           <div className="flex items-center gap-4">
             {/* Badge de Cobertura */}
-            <div 
-              className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
-                cobertura.resolvidos >= 4 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
+            <div
+              className={`flex items-center gap-2 px-3 py-1 rounded-full border ${cobertura.resolvidos >= 4 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
                 cobertura.resolvidos >= 2 ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' :
-                'bg-red-500/10 border-red-500/20 text-red-400'
-              } cursor-help transition-all hover:scale-105`}
+                  'bg-red-500/10 border-red-500/20 text-red-400'
+                } cursor-help transition-all hover:scale-105`}
               title={cobertura.criterios.map(c => `${c.status ? '✅' : '❌'} ${c.nome} (${c.fonte || 'indisponível'})`).join('\n')}
             >
-              <div className={`w-1.5 h-1.5 rounded-full ${
-                cobertura.resolvidos >= 4 ? 'bg-emerald-400' :
+              <div className={`w-1.5 h-1.5 rounded-full ${cobertura.resolvidos >= 4 ? 'bg-emerald-400' :
                 cobertura.resolvidos >= 2 ? 'bg-amber-400' :
-                'bg-red-400'
-              } animate-pulse`} />
+                  'bg-red-400'
+                } animate-pulse`} />
               <span className="text-[10px] font-black uppercase tracking-wider">
                 Cobertura: {cobertura.resolvidos}/{cobertura.total}
               </span>
@@ -630,7 +652,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                     <Target size={16} className="text-white/40" />
                     <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Odd Bet365 (Manual)</h4>
                   </div>
-                  
+
                   {statusGate === 'BLOQUEADO' ? (
                     <div className="p-4 bg-rose-500/5 border border-rose-500/10 rounded-xl">
                       <p className="text-[10px] font-bold text-rose-500 uppercase tracking-widest leading-relaxed">
@@ -674,7 +696,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                         <div className="flex items-center gap-2">
                           <span className="text-[9px] text-white/20 uppercase font-black">Odd mínima para EV+:</span>
                           <span className="text-[10px] font-mono font-black text-emerald-400/80 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10">
-                            {analysis.tipsterEngine.mercado?.probabilidade_ia > 0 
+                            {analysis.tipsterEngine.mercado?.probabilidade_ia > 0
                               ? (1 / (analysis.tipsterEngine.mercado.probabilidade_ia / 100)).toFixed(2)
                               : '—'}
                           </span>
@@ -741,40 +763,39 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                   }
 
                   return (
-                    <div className={`border rounded-[2rem] p-6 relative overflow-hidden flex flex-col justify-center transition-all duration-300 ${
-                      desvio !== null
-                        ? desvio > 1
-                          ? 'bg-[#00e67610] border-[#00e67630]'
-                          : desvio < -1
-                            ? 'bg-[#f4433610] border-[#f4433630]'
-                            : 'bg-white/[0.05] border-white/10'
-                        : 'bg-white/[0.02] border-white/5'
-                    }`}>
+                    <div className={`border rounded-[2rem] p-6 relative overflow-hidden flex flex-col justify-center transition-all duration-300 ${desvio !== null
+                      ? desvio > 1
+                        ? 'bg-[#00e67610] border-[#00e67630]'
+                        : desvio < -1
+                          ? 'bg-[#f4433610] border-[#f4433630]'
+                          : 'bg-white/[0.05] border-white/10'
+                      : 'bg-white/[0.02] border-white/5'
+                      }`}>
                       <div className="flex items-center gap-3 mb-4">
                         <Activity size={16} className={desvio !== null ? (desvio > 1 ? 'text-[#00e676]' : desvio < -1 ? 'text-[#f44336]' : 'text-white/40') : 'text-white/20'} />
                         <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Bet365 vs {analysis.marketReference?.sharpBookmaker === 'pinnacle' ? 'Pinnacle' : 'Referência'}</h4>
                       </div>
-                      
+
                       {desvio !== null ? (
                         <div>
                           <div className="flex flex-col gap-1 mb-3">
-                             <div className="text-[11px] font-mono text-white/60">
-                               Pinnacle (Abertura): <span className="text-white font-bold">{teEngine?.linha?.odd_abertura ? teEngine.linha.odd_abertura.toFixed(2) : (oddRef != null ? oddRef.toFixed(2) : '—')}</span>
-                             </div>
-                             {teEngine?.linha?.odd_atual && (
-                               <div className="text-[11px] font-mono text-white/60">
-                                 Pinnacle (Atual): <span className="text-[#00e676] font-bold">{teEngine.linha.odd_atual.toFixed(2)}</span>
-                                 <span className="text-[9px] text-white/40 ml-1">({teEngine.linha.fonte} @ {teEngine.linha.timestamp})</span>
-                               </div>
-                             )}
-                             {teEngine?.linha?.movimento_pts > 0.001 && (
-                               <div className="text-[9px] font-black tracking-widest mt-1 uppercase text-rose-400">
-                                 {teEngine.linha.movimento_direcao === 'caiu' ? '📉 Odd caiu' : '📈 Odd subiu'}: {teEngine.linha.movimento_pts.toFixed(2)} pts
-                               </div>
-                             )}
-                             <div className="text-[11px] font-mono text-white/60">
-                               Bet365 ({oddB365Manual ? 'manual' : 'pública'}): <span className="text-white font-bold">{oddB365 != null ? oddB365.toFixed(2) : '—'}</span>
-                             </div>
+                            <div className="text-[11px] font-mono text-white/60">
+                              Pinnacle (Abertura): <span className="text-white font-bold">{teEngine?.linha?.odd_abertura ? teEngine.linha.odd_abertura.toFixed(2) : (oddRef != null ? oddRef.toFixed(2) : '—')}</span>
+                            </div>
+                            {teEngine?.linha?.odd_atual && (
+                              <div className="text-[11px] font-mono text-white/60">
+                                Pinnacle (Atual): <span className="text-[#00e676] font-bold">{teEngine.linha.odd_atual.toFixed(2)}</span>
+                                <span className="text-[9px] text-white/40 ml-1">({teEngine.linha.fonte} @ {teEngine.linha.timestamp})</span>
+                              </div>
+                            )}
+                            {teEngine?.linha?.movimento_pts > 0.001 && (
+                              <div className="text-[9px] font-black tracking-widest mt-1 uppercase text-rose-400">
+                                {teEngine.linha.movimento_direcao === 'caiu' ? '📉 Odd caiu' : '📈 Odd subiu'}: {teEngine.linha.movimento_pts.toFixed(2)} pts
+                              </div>
+                            )}
+                            <div className="text-[11px] font-mono text-white/60">
+                              Bet365 ({oddB365Manual ? 'manual' : 'pública'}): <span className="text-white font-bold">{oddB365 != null ? oddB365.toFixed(2) : '—'}</span>
+                            </div>
                           </div>
                           <div className="flex items-baseline gap-2 pt-2 border-t border-white/10 mt-2">
                             <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">Desvio:</span>
@@ -789,12 +810,12 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                     </div>
                   );
                 })()}
-                
+
                 <div className="col-span-1 md:col-span-2 text-center text-[10px] font-mono text-white/30 uppercase tracking-widest mb-4">
                   {hasReference ? (
                     <>
-                      Ref Sharp: {analysis.marketReference?.sharpBookmaker} | Vig: {analysis.marketReference?.overround.toFixed(1)}% | 
-                      Fair: C {(analysis.marketReference?.fairProbs[0]*100).toFixed(1)}% E {(analysis.marketReference?.fairProbs[1]*100).toFixed(1)}% F {(analysis.marketReference?.fairProbs[2]*100).toFixed(1)}%
+                      Ref Sharp: {analysis.marketReference?.sharpBookmaker} | Vig: {analysis.marketReference?.overround.toFixed(1)}% |
+                      Fair: C {(analysis.marketReference?.fairProbs[0] * 100).toFixed(1)}% E {(analysis.marketReference?.fairProbs[1] * 100).toFixed(1)}% F {(analysis.marketReference?.fairProbs[2] * 100).toFixed(1)}%
                     </>
                   ) : (
                     <span className="text-amber-500/80">⚠️ Sem referência sharp disponível para este jogo. Análise menos confiável.</span>
@@ -825,7 +846,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                             ) : uiState === 'D' ? (
                               <div className="text-[9px] text-rose-500/80 uppercase font-black tracking-widest mt-2 border border-rose-500/20 px-4 py-2 rounded-lg bg-rose-500/10">Sem referência sharp e sem odd. Indisponível.</div>
                             ) : null}
-                            <button 
+                            <button
                               onClick={() => setTicketGerado(true)}
                               disabled={uiState !== 'A' || !dadosCompletos}
                               className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all shadow-xl mt-2 ${uiState === 'A' && dadosCompletos ? 'bg-[#00e676] hover:bg-[#00c853] text-[#0d0d1a] shadow-[#00e676]/20' : 'bg-white/10 text-white/20 cursor-not-allowed border border-white/5'}`}>
@@ -861,7 +882,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                                     </button>
                                   </p>
                                 </div>
-                                
+
                                 {betRegistrada ? (
                                   <div className="flex items-center justify-center gap-2 p-2 bg-green-500/10 border border-green-500/20 rounded-xl text-green-400 font-black text-[10px] uppercase tracking-widest w-full">
                                     <Check size={14} />
@@ -869,13 +890,14 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                                   </div>
                                 ) : (
                                   <button
-                                    disabled={registrandoBet}
+                                    disabled={registrandoBet || !podeEntrarNovaAposta()}
                                     onClick={async () => {
+                                      if (!podeEntrarNovaAposta()) return;
                                       setRegistrandoBet(true);
                                       try {
                                         // const { createBet } = await import('../services/betService'); // removido para usar o import estático
                                         const recommendedMarket = teEngine.mercado_selecionado?.nome || 'Mercado Principal';
-                                        
+
                                         const success = await createBet({
                                           analysis_id: loggedAnalysisId,
                                           market: recommendedMarket,
@@ -884,8 +906,9 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                                           bookmaker: 'bet365',
                                           status: 'pending'
                                         });
-                                        
+
                                         if (success) {
+                                          registrarEntradaAprovada();
                                           setBetRegistrada(true);
                                           setToastMessage("Aposta registrada!");
                                           setTimeout(() => setToastMessage(null), 3000);
@@ -979,8 +1002,8 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                           },
                         ].map((c: any, i) => (
                           <div key={i} className={`p-4 rounded-xl border flex items-center justify-between transition-all ${c.passa
-                              ? 'bg-[#00e67608] border-[#00e67622]'
-                              : (c.bloqueante ? 'bg-[#f4433615] border-[#f4433644]' : 'bg-[#f4433608] border-[#f4433622]')
+                            ? 'bg-[#00e67608] border-[#00e67622]'
+                            : (c.bloqueante ? 'bg-[#f4433615] border-[#f4433644]' : 'bg-[#f4433608] border-[#f4433622]')
                             }`}>
                             <div className="flex items-center gap-3">
                               <div className={`w-5 h-5 rounded-md flex items-center justify-center ${c.passa ? 'text-[#00e676]' : 'text-[#f44336]'}`}>
@@ -1036,79 +1059,76 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                     const evMarket = ((m.probabilidade_final / 100) * m.odd_referencia) - 1;
                     const isApproved = teEngine?.decisao?.status === 'APROVADO';
                     const isSelectedAndApproved = m.selecionado && isApproved;
-                    
+
                     return (
-                    <div key={idx} className={`bg-[#141416] border ${
-                      isSelectedAndApproved
+                      <div key={idx} className={`bg-[#141416] border ${isSelectedAndApproved
                         ? 'border-emerald-500 bg-emerald-500/10 animate-pulse-approved'
                         : m.selecionado
                           ? 'border-blue-500/40 bg-blue-500/5'
                           : 'border-white/5'
-                    } p-4 rounded-xl flex items-center justify-between group transition-all`}>
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`text-[10px] font-black tracking-widest uppercase ${
-                            isSelectedAndApproved
+                        } p-4 rounded-xl flex items-center justify-between group transition-all`}>
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`text-[10px] font-black tracking-widest uppercase ${isSelectedAndApproved
                               ? 'text-emerald-400 font-extrabold'
                               : m.selecionado
                                 ? 'text-blue-400'
                                 : 'text-white/20'
-                          }`}>
-                            {m.nome}
-                          </span>
-                          {m.selecionado && (
-                            <span className={`px-2 py-0.5 border rounded text-[8px] font-black tracking-widest uppercase ${
-                              isApproved
+                              }`}>
+                              {m.nome}
+                            </span>
+                            {m.selecionado && (
+                              <span className={`px-2 py-0.5 border rounded text-[8px] font-black tracking-widest uppercase ${isApproved
                                 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/20 animate-pulse'
                                 : 'bg-blue-500/20 text-blue-400 border-blue-500/20'
-                            }`}>
-                              {isApproved ? '🚀 Liberado pelo Gate' : '✅ Selecionado pelo Gate'}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-6 mt-1">
-                          <div className="flex flex-col">
-                            <span className="text-[8px] text-white/20 uppercase font-bold tracking-widest">IA</span>
-                            <span className="text-xs font-mono font-bold text-white/50">{m.probabilidade_final.toFixed(1)}%</span>
+                                }`}>
+                                {isApproved ? '🚀 Liberado pelo Gate' : '✅ Selecionado pelo Gate'}
+                              </span>
+                            )}
                           </div>
-                          <div className="flex flex-col">
-                             <span className="text-[8px] text-white/20 uppercase font-bold tracking-widest">Odd Pinnacle</span>
-                             <span className="text-xs font-mono font-bold text-white/50">
-                               {teEngine?.linha?.odd_abertura && m.selecionado ? (
-                                 <>
-                                   <span className="line-through text-white/20 mr-1.5">{teEngine.linha.odd_abertura.toFixed(2)}</span>
-                                   <span className="text-[#00e676]">{m.odd_referencia.toFixed(2)}</span>
-                                 </>
-                               ) : (
-                                 m.odd_referencia.toFixed(2)
-                               )}
-                             </span>
-                           </div>
-                          <div className="flex flex-col">
-                            <span className="text-[8px] text-white/20 uppercase font-bold tracking-widest">Min Odd</span>
-                            <span className="text-xs font-mono font-bold text-emerald-500/50">{m.break_even_odd.toFixed(2)}</span>
+                          <div className="flex items-center gap-6 mt-1">
+                            <div className="flex flex-col">
+                              <span className="text-[8px] text-white/20 uppercase font-bold tracking-widest">IA</span>
+                              <span className="text-xs font-mono font-bold text-white/50">{m.probabilidade_final.toFixed(1)}%</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-[8px] text-white/20 uppercase font-bold tracking-widest">Odd Pinnacle</span>
+                              <span className="text-xs font-mono font-bold text-white/50">
+                                {teEngine?.linha?.odd_abertura && m.selecionado ? (
+                                  <>
+                                    <span className="line-through text-white/20 mr-1.5">{teEngine.linha.odd_abertura.toFixed(2)}</span>
+                                    <span className="text-[#00e676]">{m.odd_referencia.toFixed(2)}</span>
+                                  </>
+                                ) : (
+                                  m.odd_referencia.toFixed(2)
+                                )}
+                              </span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-[8px] text-white/20 uppercase font-bold tracking-widest">Min Odd</span>
+                              <span className="text-xs font-mono font-bold text-emerald-500/50">{m.break_even_odd.toFixed(2)}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <span className={`text-lg font-mono font-bold tracking-tighter ${
-                          isSelectedAndApproved
+                        <div className="text-right">
+                          <span className={`text-lg font-mono font-bold tracking-tighter ${isSelectedAndApproved
                             ? 'text-emerald-400'
                             : m.selecionado
                               ? 'text-blue-400'
                               : 'text-white/20'
-                        }`}>
-                          {evMarket > 0 && <span>+</span>}
-                          <span>{(evMarket * 100).toFixed(1)} %</span>
-                        </span>
-                        {m.selecionado && (
-                          <div className={`text-[8px] uppercase font-bold mt-1 ${isApproved ? 'text-emerald-400/60' : 'text-blue-400/50'}`}>
-                            {isApproved ? 'Aposta Liberada' : 'EV Calculado'}
-                          </div>
-                        )}
+                            }`}>
+                            {evMarket > 0 && <span>+</span>}
+                            <span>{(evMarket * 100).toFixed(1)} %</span>
+                          </span>
+                          {m.selecionado && (
+                            <div className={`text-[8px] uppercase font-bold mt-1 ${isApproved ? 'text-emerald-400/60' : 'text-blue-400/50'}`}>
+                              {isApproved ? 'Aposta Liberada' : 'EV Calculado'}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )})}
+                    )
+                  })}
                 </div>
               </section>
 
@@ -1257,7 +1277,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
               {/* 4. Dica Principal / Sumário Executivo */}
               {(() => {
                 const isBloqueado = !teEngine?.decisao || teEngine.decisao.status === 'BLOQUEADO';
-                
+
                 if (teEngine && !teEngine.mercado_selecionado) {
                   if (import.meta.env.VITE_DEBUG_ENGINE === 'true') {
                     console.error('[REGRESSÃO] decisao.mercado_selecionado faltando no teEngine!', analysis);
@@ -1327,7 +1347,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                         </div>
                       </div>
                     </div>
-                    
+
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                       {/* Poisson Chart */}
                       <div className="lg:col-span-1">
@@ -1339,7 +1359,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                         {['over_1.5', 'over_2.5', 'btb'].map((marketKey) => {
                           const gm = teEngine.goalsAnalysis.markets?.find((m: any) => m.marketKey === marketKey);
                           if (!gm) return null;
-                          
+
                           const isSelected = teEngine.mercado_selecionado?.nome === gm.market;
                           const edgePct = (gm.edge * 100).toFixed(1);
 
@@ -1347,38 +1367,36 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                           const goalsMarkets = teEngine.goalsAnalysis.markets || [];
                           const bestGoalMarket = [...goalsMarkets]
                             .sort((a: any, b: any) => b.edge - a.edge)[0];
-                          
+
                           const isBestGoal = bestGoalMarket && bestGoalMarket.marketKey === marketKey;
-                          
+
                           // Um mercado de gols é indicado se for o melhor de gols, tiver EV positivo >= 3%
                           // e a convergência Gemini-Poisson for aceitável (divergência <= 15pp)
                           const isConvergente = (teEngine.goalsAnalysis.convergence ?? 0) <= 15;
                           const isIndicado = isBestGoal && gm.edge >= 0.03 && isConvergente;
-                          
+
                           // Gemini and Poisson crossed probabilities
                           const geminiProb = teEngine.goalsAnalysis.geminiProbs?.[marketKey] ?? null;
                           const poissonProb = gm.prob_ia; // mathematical probability is stored as gm.prob_ia
 
                           return (
-                            <div 
-                              key={marketKey} 
-                              className={`relative rounded-[2rem] p-6 border flex flex-col justify-between transition-all duration-300 hover:scale-[1.02] cursor-pointer ${
-                                isSelected 
-                                  ? 'border-blue-500/50 bg-gradient-to-b from-blue-500/[0.04] to-transparent shadow-[0_0_25px_rgba(59,130,246,0.08)] hover:border-blue-500/70' 
-                                  : isIndicado
-                                    ? 'border-[#00e676]/50 bg-gradient-to-b from-[#00e676]/[0.04] to-transparent shadow-[0_0_25px_rgba(0,230,118,0.08)] hover:border-[#00e676]/70' 
-                                    : 'border-white/[0.05] hover:border-white/15 bg-white/[0.01]'
-                              }`}
+                            <div
+                              key={marketKey}
+                              className={`relative rounded-[2rem] p-6 border flex flex-col justify-between transition-all duration-300 hover:scale-[1.02] cursor-pointer ${isSelected
+                                ? 'border-blue-500/50 bg-gradient-to-b from-blue-500/[0.04] to-transparent shadow-[0_0_25px_rgba(59,130,246,0.08)] hover:border-blue-500/70'
+                                : isIndicado
+                                  ? 'border-[#00e676]/50 bg-gradient-to-b from-[#00e676]/[0.04] to-transparent shadow-[0_0_25px_rgba(0,230,118,0.08)] hover:border-[#00e676]/70'
+                                  : 'border-white/[0.05] hover:border-white/15 bg-white/[0.01]'
+                                }`}
                             >
                               <div>
                                 <div className="flex justify-between items-start mb-6">
-                                  <span className={`text-[10px] font-black tracking-wider uppercase ${
-                                    isSelected 
-                                      ? 'text-blue-400' 
-                                      : isIndicado 
-                                        ? 'text-[#00e676]' 
-                                        : 'text-white/60'
-                                  }`}>
+                                  <span className={`text-[10px] font-black tracking-wider uppercase ${isSelected
+                                    ? 'text-blue-400'
+                                    : isIndicado
+                                      ? 'text-[#00e676]'
+                                      : 'text-white/60'
+                                    }`}>
                                     {gm.market === 'Ambos Times Marcam' ? 'Ambos Marcam' : gm.market}
                                   </span>
                                   {isSelected ? (
@@ -1409,7 +1427,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                                     </span>
                                     <span className="text-white font-bold">{poissonProb.toFixed(1)}%</span>
                                   </div>
-                                  
+
                                   {/* Gemini qualitative probability */}
                                   {geminiProb !== null && (
                                     <div className="flex justify-between items-center text-[10px] font-mono">
@@ -1420,7 +1438,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                                       <span className="text-white font-bold">{geminiProb.toFixed(1)}%</span>
                                     </div>
                                   )}
-                                  
+
                                   <div className="h-px bg-white/5 my-1" />
 
                                   <div className="flex justify-between text-[10px] font-mono">
@@ -1436,15 +1454,14 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
 
                               <div className="pt-4 border-t border-white/5 flex justify-between items-baseline">
                                 <span className="text-[8px] font-black text-white/30 uppercase tracking-widest">Edge / EV</span>
-                                <span className={`text-lg font-mono font-black ${
-                                  isSelected 
-                                    ? 'text-blue-400' 
-                                    : gm.edge >= 0.03
-                                      ? 'text-[#00e676]' 
-                                      : gm.edge > 0
-                                        ? 'text-[#00e676]/60'
-                                        : 'text-rose-500/60'
-                                }`}>
+                                <span className={`text-lg font-mono font-black ${isSelected
+                                  ? 'text-blue-400'
+                                  : gm.edge >= 0.03
+                                    ? 'text-[#00e676]'
+                                    : gm.edge > 0
+                                      ? 'text-[#00e676]/60'
+                                      : 'text-rose-500/60'
+                                  }`}>
                                   {gm.edge > 0 ? `+${edgePct}%` : `${edgePct}%`}
                                 </span>
                               </div>
@@ -1458,286 +1475,286 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
 
                 {/* 5. Bottom Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-8 flex flex-col">
-                  <div className="flex items-center gap-3 mb-8">
-                    <TrendingUp size={16} className="text-white/20" />
-                    <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Probabilidades</h4>
-                    <Tooltip text="Cálculo probabilístico de gols usando Distribuição de Poisson. Considera força de ataque/defesa e médias da liga." />
-                  </div>
-                  <div className="space-y-8 flex-1 flex flex-col justify-center">
-                    {[
-                      { label: 'Over 1.5', val: analysis.gols.over15.probabilidade, color: 'bg-green-500' },
-                      { label: 'Over 2.5', val: analysis.gols.over25.probabilidade, color: 'bg-yellow-500' },
-                      { label: 'Over 3.5', val: analysis.gols.over35.probabilidade, color: 'bg-rose-500' }
-                    ].map(item => (
-                      <div key={item.label} className="space-y-3">
-                        <div className="flex justify-between items-baseline">
-                          <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{item.label}</span>
-                          <span className="text-xs font-mono font-bold text-white">{item.val}%</span>
-                        </div>
-                        <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                          <div className={`h-full ${item.color}`} style={{ width: `${item.val}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-8">
-                  <div className="flex items-center gap-3 mb-8">
-                    <Flag size={16} className="text-white/20" />
-                    <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Escanteios</h4>
-                    <Tooltip text="Estimativa baseada no volume de finalizações, cruzamentos e estilo tático de jogo das duas equipes." />
-                  </div>
-                  {(() => {
-                    const escMin = analysis?.escanteios?.total_min ?? 9;
-                    const escMax = analysis?.escanteios?.total_max ?? 11;
-                    const escProb = analysis?.escanteios?.probabilidade ?? 80;
-                    const escMediaHome = analysis?.escanteios?.media_home ?? 0;
-                    const escMediaAway = analysis?.escanteios?.media_away ?? 0;
-                    return (
-                      <>
-                        <div className="flex items-baseline gap-2 mb-2">
-                          <span className="text-5xl font-mono font-bold text-white tracking-tighter">{escMin}-{escMax}</span>
-                          <span className="text-xs font-bold text-blue-400">{escProb}%</span>
-                        </div>
-                        <p className="text-[9px] text-white/20 uppercase font-black tracking-widest mb-10">Média de Probabilidade</p>
-                        <div className="pt-6 border-t border-white/5 flex items-center justify-between gap-3">
-                          <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col gap-1.5 items-center justify-center transition-colors hover:bg-white/[0.04]">
-                            <span className="text-[9px] font-black uppercase text-white/40 text-center leading-tight break-words">{match.home_team}</span>
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-sm font-mono font-bold text-white">{escMediaHome}</span>
-                              <span className="text-[8px] text-white/20 uppercase">/j</span>
-                            </div>
-                          </div>
-                          <div className="text-[9px] font-black text-white/10 uppercase tracking-widest px-2">VS</div>
-                          <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col gap-1.5 items-center justify-center transition-colors hover:bg-white/[0.04]">
-                            <span className="text-[9px] font-black uppercase text-white/40 text-center leading-tight break-words">{match.away_team}</span>
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-sm font-mono font-bold text-white">{escMediaAway}</span>
-                              <span className="text-[8px] text-white/20 uppercase">/j</span>
-                            </div>
-                          </div>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-
-                <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-8">
-                  <div className="flex items-center gap-3 mb-8">
-                    <Activity size={16} className="text-white/20" />
-                    <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Finalizações</h4>
-                    <Tooltip text="Projeção de chutes a gol baseada no aproveitamento ofensivo e histórico de chances criadas nas últimas 5 partidas." />
-                  </div>
-                  {(() => {
-                    const finMin = analysis?.finalizacoes?.total_min ?? 24;
-                    const finMax = analysis?.finalizacoes?.total_max ?? 28;
-                    const finProb = analysis?.finalizacoes?.probabilidade ?? 75;
-                    const finMediaHome = analysis?.finalizacoes?.media_home ?? 0;
-                    const finMediaAway = analysis?.finalizacoes?.media_away ?? 0;
-                    return (
-                      <>
-                        <div className="flex items-baseline gap-2 mb-2">
-                          <span className="text-5xl font-mono font-bold text-white tracking-tighter">{finMin}-{finMax}</span>
-                          <span className="text-xs font-bold text-blue-400">{finProb}%</span>
-                        </div>
-                        <p className="text-[9px] text-white/20 uppercase font-black tracking-widest mb-10">Expectativa Técnica</p>
-                        <div className="pt-6 border-t border-white/5 flex items-center justify-between gap-3">
-                          <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col gap-1.5 items-center justify-center transition-colors hover:bg-white/[0.04]">
-                            <span className="text-[9px] font-black uppercase text-white/40 text-center leading-tight break-words">{match.home_team}</span>
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-sm font-mono font-bold text-blue-400">{finMediaHome}</span>
-                              <span className="text-[8px] text-blue-400/40 uppercase">/j</span>
-                            </div>
-                          </div>
-                          <div className="text-[9px] font-black text-white/10 uppercase tracking-widest px-2">VS</div>
-                          <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col gap-1.5 items-center justify-center transition-colors hover:bg-white/[0.04]">
-                            <span className="text-[9px] font-black uppercase text-white/40 text-center leading-tight break-words">{match.away_team}</span>
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-sm font-mono font-bold text-blue-400">{finMediaAway}</span>
-                              <span className="text-[8px] text-blue-400/40 uppercase">/j</span>
-                            </div>
-                          </div>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-
-                <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-8">
-                  <div className="flex items-center gap-3 mb-8">
-                    <ShieldCheck size={16} className="text-white/20" />
-                    <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Dupla Chance</h4>
-                    <Tooltip text="Combinação matemática das probabilidades de Resultado Final para cobrir 2 dos 3 cenários possíveis (1X, 12, X2)." />
-                  </div>
-                  <div className="flex h-3 w-full rounded-full overflow-hidden mb-10 bg-white/5">
-                    <div className="h-full bg-blue-500" style={{ width: `${analysis.dupla_chance['1X'].probabilidade}%` }} />
-                    <div className="h-full bg-white/10" style={{ width: `${analysis.dupla_chance['12'].probabilidade}%` }} />
-                    <div className="h-full bg-rose-500" style={{ width: `${analysis.dupla_chance['X2'].probabilidade}%` }} />
-                  </div>
-                  <div className="space-y-2">
-                    {['1X', 'X2', '12'].map(key => (
-                      <div key={key} className="bg-white/[0.02] border border-white/5 p-3 rounded-xl flex justify-between items-center">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-white/40"><span>{key}</span></span>
-                        <span className="text-xs font-mono font-bold text-white"><span>{analysis.dupla_chance[key as keyof typeof analysis.dupla_chance].probabilidade}</span>%</span>
-                      </div>
-                    ))}
-
-                  </div>
-                </div>
-              </div>
-
-              {/* Confrontos Diretos (H2H) */}
-              {analysis.h2h && (
-                <div className="pt-10 border-t border-white/5">
-                  <div className="flex items-center justify-between mb-8">
-                    <div className="flex items-center">
-                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20 italic">Confrontos Diretos (H2H)</h4>
-                      {analysis?.h2h?.confiavel === false && (
-                        <span className="text-[9px] font-bold text-orange-400/80 animate-pulse flex items-center gap-1 ml-4">
-                          <AlertTriangle size={10} /> ⚠️ DADOS NÃO VERIFICADOS
-                        </span>
-                      )}
-                      {analysis.h2h.fonte === 'estimado' && !analysis?.h2h?.confiavel && (
-                        <span style={{
-                          fontSize: 9, padding: '2px 8px',
-                          borderRadius: 8, marginLeft: 12,
-                          background: '#ff980022',
-                          color: '#ff9800',
-                          border: '1px solid #ff980044',
-                          fontWeight: 900
-                        }}>
-                          ⚠️ DADOS ESTIMADOS
-                        </span>
-                      )}
+                  <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-8 flex flex-col">
+                    <div className="flex items-center gap-3 mb-8">
+                      <TrendingUp size={16} className="text-white/20" />
+                      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Probabilidades</h4>
+                      <Tooltip text="Cálculo probabilístico de gols usando Distribuição de Poisson. Considera força de ataque/defesa e médias da liga." />
                     </div>
-                    <Tooltip text="Histórico de confrontos diretos recentes entre as duas equipes." />
-                  </div>
-
-                  <div className="bg-[#0d0d1a] border border-[#1e1e3e] rounded-[16px] p-6">
-                    {/* 1. MINI PLACAR DE DOMÍNIO */}
-                    <div className="flex flex-col items-center mb-8">
-                      <div className="text-[10px] text-white/40 font-black uppercase tracking-widest mb-3">Domínio Histórico</div>
-                      <div className="w-full flex items-center justify-between text-[11px] sm:text-xs font-black uppercase">
-                        <span className="text-blue-400 flex-1 text-right leading-tight pr-2 break-words">{match.home_team}</span>
-                        <div className="w-1/3 px-2 sm:px-4 flex items-center gap-1 sm:gap-2 shrink-0">
-                          <div className="h-2 rounded-l-full bg-blue-500" style={{ flex: analysis.h2h.resumo.vitorias_home || 0.1 }} />
-                          <div className="h-2 bg-white/20" style={{ flex: analysis.h2h.resumo.empates || 0.1 }} />
-                          <div className="h-2 rounded-r-full bg-rose-500" style={{ flex: analysis.h2h.resumo.vitorias_away || 0.1 }} />
-                        </div>
-                        <span className="text-rose-400 flex-1 text-left leading-tight pl-2 break-words">{match.away_team}</span>
-                      </div>
-                      <div className="w-full flex items-center justify-center gap-6 mt-2 text-[10px] font-mono text-white/40">
-                        <span>{analysis.h2h.resumo.vitorias_home}V</span>
-                        <span>{analysis.h2h.resumo.empates}E</span>
-                        <span>{analysis.h2h.resumo.vitorias_away}V</span>
-                      </div>
-                    </div>
-
-                    {/* 3. STATS DO H2H */}
-                    <div className="grid grid-cols-2 gap-4 mb-8">
-                      <div className="bg-white/[0.02] border border-white/5 p-4 rounded-xl text-center">
-                        <div className="text-sm font-mono font-bold text-white mb-1">
-                          {analysis.h2h.resumo.media_gols_home.toFixed(1)} <span className="text-white/20 mx-1">x</span> {analysis.h2h.resumo.media_gols_away.toFixed(1)}
-                        </div>
-                        <div className="text-[9px] font-black uppercase tracking-widest text-white/40">Média Gols (C x F)</div>
-                      </div>
-                      <div className="bg-white/[0.02] border border-white/5 p-4 rounded-xl text-center">
-                        <div className="text-sm font-mono font-bold text-white mb-1">{analysis.h2h.resumo.over25_percentual}%</div>
-                        <div className="text-[9px] font-black uppercase tracking-widest text-white/40">Over 2.5 Gols</div>
-                      </div>
-                    </div>
-
-                    {/* 2. LISTA DOS 5 CONFRONTOS */}
-                    <div className="space-y-2">
-                      <div className="text-[10px] text-white/40 font-black uppercase tracking-widest mb-3 pl-2">Últimos Confrontos</div>
-                      {analysis.h2h.confrontos.map((c: any, i: number) => (
-                        <div key={i} className="flex items-center justify-between p-3 bg-white/[0.02] border border-white/5 rounded-xl hover:bg-white/[0.04] transition-colors">
-                          <span className="text-[10px] text-white/30 font-mono w-16">{c.data}</span>
-                          <div className="flex-1 flex justify-center items-center text-[11px] sm:text-xs font-bold text-white">
-                            <span className="text-right flex-1 leading-tight break-words">{c.homeTeam}</span>
-                            <span className="px-2 sm:px-3 text-white/40 font-mono shrink-0">{c.placar}</span>
-                            <span className="text-left flex-1 leading-tight break-words">{c.awayTeam}</span>
+                    <div className="space-y-8 flex-1 flex flex-col justify-center">
+                      {[
+                        { label: 'Over 1.5', val: analysis.gols.over15.probabilidade, color: 'bg-green-500' },
+                        { label: 'Over 2.5', val: analysis.gols.over25.probabilidade, color: 'bg-yellow-500' },
+                        { label: 'Over 3.5', val: analysis.gols.over35.probabilidade, color: 'bg-rose-500' }
+                      ].map(item => (
+                        <div key={item.label} className="space-y-3">
+                          <div className="flex justify-between items-baseline">
+                            <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{item.label}</span>
+                            <span className="text-xs font-mono font-bold text-white">{item.val}%</span>
                           </div>
-                          <div className="w-16 flex justify-end">
-                            <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded-md border ${c.vencedor === 'home' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                                c.vencedor === 'away' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
-                                  'bg-white/10 text-white/40 border-white/10'
-                              }`}>
-                              {c.vencedor === 'draw' ? 'EMP' : (c.vencedor ? c.vencedor.substring(0, 3) : '—')}
-                            </span>
+                          <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                            <div className={`h-full ${item.color}`} style={{ width: `${item.val}%` }} />
                           </div>
                         </div>
                       ))}
-                      {analysis.h2h.confrontos.length === 0 && (
-                        <div className="text-center p-4 text-[10px] text-white/20 uppercase font-black">Nenhum confronto recente</div>
-                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-8">
+                    <div className="flex items-center gap-3 mb-8">
+                      <Flag size={16} className="text-white/20" />
+                      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Escanteios</h4>
+                      <Tooltip text="Estimativa baseada no volume de finalizações, cruzamentos e estilo tático de jogo das duas equipes." />
+                    </div>
+                    {(() => {
+                      const escMin = analysis?.escanteios?.total_min ?? 9;
+                      const escMax = analysis?.escanteios?.total_max ?? 11;
+                      const escProb = analysis?.escanteios?.probabilidade ?? 80;
+                      const escMediaHome = analysis?.escanteios?.media_home ?? 0;
+                      const escMediaAway = analysis?.escanteios?.media_away ?? 0;
+                      return (
+                        <>
+                          <div className="flex items-baseline gap-2 mb-2">
+                            <span className="text-5xl font-mono font-bold text-white tracking-tighter">{escMin}-{escMax}</span>
+                            <span className="text-xs font-bold text-blue-400">{escProb}%</span>
+                          </div>
+                          <p className="text-[9px] text-white/20 uppercase font-black tracking-widest mb-10">Média de Probabilidade</p>
+                          <div className="pt-6 border-t border-white/5 flex items-center justify-between gap-3">
+                            <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col gap-1.5 items-center justify-center transition-colors hover:bg-white/[0.04]">
+                              <span className="text-[9px] font-black uppercase text-white/40 text-center leading-tight break-words">{match.home_team}</span>
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-sm font-mono font-bold text-white">{escMediaHome}</span>
+                                <span className="text-[8px] text-white/20 uppercase">/j</span>
+                              </div>
+                            </div>
+                            <div className="text-[9px] font-black text-white/10 uppercase tracking-widest px-2">VS</div>
+                            <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col gap-1.5 items-center justify-center transition-colors hover:bg-white/[0.04]">
+                              <span className="text-[9px] font-black uppercase text-white/40 text-center leading-tight break-words">{match.away_team}</span>
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-sm font-mono font-bold text-white">{escMediaAway}</span>
+                                <span className="text-[8px] text-white/20 uppercase">/j</span>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-8">
+                    <div className="flex items-center gap-3 mb-8">
+                      <Activity size={16} className="text-white/20" />
+                      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Finalizações</h4>
+                      <Tooltip text="Projeção de chutes a gol baseada no aproveitamento ofensivo e histórico de chances criadas nas últimas 5 partidas." />
+                    </div>
+                    {(() => {
+                      const finMin = analysis?.finalizacoes?.total_min ?? 24;
+                      const finMax = analysis?.finalizacoes?.total_max ?? 28;
+                      const finProb = analysis?.finalizacoes?.probabilidade ?? 75;
+                      const finMediaHome = analysis?.finalizacoes?.media_home ?? 0;
+                      const finMediaAway = analysis?.finalizacoes?.media_away ?? 0;
+                      return (
+                        <>
+                          <div className="flex items-baseline gap-2 mb-2">
+                            <span className="text-5xl font-mono font-bold text-white tracking-tighter">{finMin}-{finMax}</span>
+                            <span className="text-xs font-bold text-blue-400">{finProb}%</span>
+                          </div>
+                          <p className="text-[9px] text-white/20 uppercase font-black tracking-widest mb-10">Expectativa Técnica</p>
+                          <div className="pt-6 border-t border-white/5 flex items-center justify-between gap-3">
+                            <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col gap-1.5 items-center justify-center transition-colors hover:bg-white/[0.04]">
+                              <span className="text-[9px] font-black uppercase text-white/40 text-center leading-tight break-words">{match.home_team}</span>
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-sm font-mono font-bold text-blue-400">{finMediaHome}</span>
+                                <span className="text-[8px] text-blue-400/40 uppercase">/j</span>
+                              </div>
+                            </div>
+                            <div className="text-[9px] font-black text-white/10 uppercase tracking-widest px-2">VS</div>
+                            <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col gap-1.5 items-center justify-center transition-colors hover:bg-white/[0.04]">
+                              <span className="text-[9px] font-black uppercase text-white/40 text-center leading-tight break-words">{match.away_team}</span>
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-sm font-mono font-bold text-blue-400">{finMediaAway}</span>
+                                <span className="text-[8px] text-blue-400/40 uppercase">/j</span>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-8">
+                    <div className="flex items-center gap-3 mb-8">
+                      <ShieldCheck size={16} className="text-white/20" />
+                      <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Dupla Chance</h4>
+                      <Tooltip text="Combinação matemática das probabilidades de Resultado Final para cobrir 2 dos 3 cenários possíveis (1X, 12, X2)." />
+                    </div>
+                    <div className="flex h-3 w-full rounded-full overflow-hidden mb-10 bg-white/5">
+                      <div className="h-full bg-blue-500" style={{ width: `${analysis.dupla_chance['1X'].probabilidade}%` }} />
+                      <div className="h-full bg-white/10" style={{ width: `${analysis.dupla_chance['12'].probabilidade}%` }} />
+                      <div className="h-full bg-rose-500" style={{ width: `${analysis.dupla_chance['X2'].probabilidade}%` }} />
+                    </div>
+                    <div className="space-y-2">
+                      {['1X', 'X2', '12'].map(key => (
+                        <div key={key} className="bg-white/[0.02] border border-white/5 p-3 rounded-xl flex justify-between items-center">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-white/40"><span>{key}</span></span>
+                          <span className="text-xs font-mono font-bold text-white"><span>{analysis.dupla_chance[key as keyof typeof analysis.dupla_chance].probabilidade}</span>%</span>
+                        </div>
+                      ))}
+
                     </div>
                   </div>
                 </div>
-              )}
 
-              {/* Scouting Intelligence (Final Section) */}
-              <div className="pt-10 border-t border-white/5">
-                <div className="flex items-center justify-between mb-8">
-                  <div className="flex flex-col gap-1">
-                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20 italic">Scouting Intelligence</h4>
-                    {(analysis?.scouting?.confiavel === false || analysis?.scouting?.data_source === 'gemini_inferido') && (
-                      <span className="text-[9px] font-bold text-orange-400/80 animate-pulse flex items-center gap-1">
-                        <AlertTriangle size={10} /> ⚠️ DADOS NÃO VERIFICADOS (INFERÊNCIA IA)
-                      </span>
-                    )}
-                  </div>
-                  <Tooltip text="Monitoramento em tempo real da forma física e técnica. V = Vitória, E = Empate, D = Derrota, ? = Dados Indisponíveis." />
+                {/* Confrontos Diretos (H2H) */}
+                {analysis.h2h && (
+                  <div className="pt-10 border-t border-white/5">
+                    <div className="flex items-center justify-between mb-8">
+                      <div className="flex items-center">
+                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20 italic">Confrontos Diretos (H2H)</h4>
+                        {analysis?.h2h?.confiavel === false && (
+                          <span className="text-[9px] font-bold text-orange-400/80 animate-pulse flex items-center gap-1 ml-4">
+                            <AlertTriangle size={10} /> ⚠️ DADOS NÃO VERIFICADOS
+                          </span>
+                        )}
+                        {analysis.h2h.fonte === 'estimado' && !analysis?.h2h?.confiavel && (
+                          <span style={{
+                            fontSize: 9, padding: '2px 8px',
+                            borderRadius: 8, marginLeft: 12,
+                            background: '#ff980022',
+                            color: '#ff9800',
+                            border: '1px solid #ff980044',
+                            fontWeight: 900
+                          }}>
+                            ⚠️ DADOS ESTIMADOS
+                          </span>
+                        )}
+                      </div>
+                      <Tooltip text="Histórico de confrontos diretos recentes entre as duas equipes." />
+                    </div>
 
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  {[
-                    { name: match.home_team, form: formaHome.data },
-                    { name: match.away_team, form: formaAway.data }
-                  ].map(team => (
-                    <div key={team.name} className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl">
-
-                      <span className="text-[11px] font-black uppercase text-white/60 leading-tight max-w-[200px] break-words">
-                        <span>{team.name}</span>
-                      </span>
-                      <div className="flex gap-1.5">
-                        {team.form && team.form.length > 0 ? team.form.map((r: any, i: number) => (
-                          <div key={i} style={{
-                            width: 32, height: 32, borderRadius: 8,
-                            display: 'flex', flexDirection: 'column',
-                            alignItems: 'center', justifyContent: 'center',
-                            background: r.resultado === 'W' ? '#00e67622'
-                              : r.resultado === 'D' ? '#ffeb3b22' : '#f4433622',
-                            border: `1px solid ${r.resultado === 'W' ? '#00e67644'
-                                : r.resultado === 'D' ? '#ffeb3b44' : '#f4433644'
-                              }`,
-                            cursor: 'pointer'
-                          }} title={`${r.resultado} ${r.placar} vs ${r.adversario}`}>
-                            <span style={{
-                              color: r.resultado === 'W' ? '#00e676'
-                                : r.resultado === 'D' ? '#ffeb3b' : '#f44336',
-                              fontWeight: 900, fontSize: 11, fontFamily: 'monospace'
-                            }}>
-                              {r.resultado}
-                            </span>
-                            <span style={{ color: '#555', fontSize: 8 }}>
-                              {r.placar}
-                            </span>
+                    <div className="bg-[#0d0d1a] border border-[#1e1e3e] rounded-[16px] p-6">
+                      {/* 1. MINI PLACAR DE DOMÍNIO */}
+                      <div className="flex flex-col items-center mb-8">
+                        <div className="text-[10px] text-white/40 font-black uppercase tracking-widest mb-3">Domínio Histórico</div>
+                        <div className="w-full flex items-center justify-between text-[11px] sm:text-xs font-black uppercase">
+                          <span className="text-blue-400 flex-1 text-right leading-tight pr-2 break-words">{match.home_team}</span>
+                          <div className="w-1/3 px-2 sm:px-4 flex items-center gap-1 sm:gap-2 shrink-0">
+                            <div className="h-2 rounded-l-full bg-blue-500" style={{ flex: analysis.h2h.resumo.vitorias_home || 0.1 }} />
+                            <div className="h-2 bg-white/20" style={{ flex: analysis.h2h.resumo.empates || 0.1 }} />
+                            <div className="h-2 rounded-r-full bg-rose-500" style={{ flex: analysis.h2h.resumo.vitorias_away || 0.1 }} />
                           </div>
-                        )) : (
-                          ['?', '?', '?', '?', '?'].map((r, i) => (
-                            <div key={i} className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black border ${getFormBadge(r)}`}>
-                              <span>{r}</span>
+                          <span className="text-rose-400 flex-1 text-left leading-tight pl-2 break-words">{match.away_team}</span>
+                        </div>
+                        <div className="w-full flex items-center justify-center gap-6 mt-2 text-[10px] font-mono text-white/40">
+                          <span>{analysis.h2h.resumo.vitorias_home}V</span>
+                          <span>{analysis.h2h.resumo.empates}E</span>
+                          <span>{analysis.h2h.resumo.vitorias_away}V</span>
+                        </div>
+                      </div>
+
+                      {/* 3. STATS DO H2H */}
+                      <div className="grid grid-cols-2 gap-4 mb-8">
+                        <div className="bg-white/[0.02] border border-white/5 p-4 rounded-xl text-center">
+                          <div className="text-sm font-mono font-bold text-white mb-1">
+                            {analysis.h2h.resumo.media_gols_home.toFixed(1)} <span className="text-white/20 mx-1">x</span> {analysis.h2h.resumo.media_gols_away.toFixed(1)}
+                          </div>
+                          <div className="text-[9px] font-black uppercase tracking-widest text-white/40">Média Gols (C x F)</div>
+                        </div>
+                        <div className="bg-white/[0.02] border border-white/5 p-4 rounded-xl text-center">
+                          <div className="text-sm font-mono font-bold text-white mb-1">{analysis.h2h.resumo.over25_percentual}%</div>
+                          <div className="text-[9px] font-black uppercase tracking-widest text-white/40">Over 2.5 Gols</div>
+                        </div>
+                      </div>
+
+                      {/* 2. LISTA DOS 5 CONFRONTOS */}
+                      <div className="space-y-2">
+                        <div className="text-[10px] text-white/40 font-black uppercase tracking-widest mb-3 pl-2">Últimos Confrontos</div>
+                        {analysis.h2h.confrontos.map((c: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between p-3 bg-white/[0.02] border border-white/5 rounded-xl hover:bg-white/[0.04] transition-colors">
+                            <span className="text-[10px] text-white/30 font-mono w-16">{c.data}</span>
+                            <div className="flex-1 flex justify-center items-center text-[11px] sm:text-xs font-bold text-white">
+                              <span className="text-right flex-1 leading-tight break-words">{c.homeTeam}</span>
+                              <span className="px-2 sm:px-3 text-white/40 font-mono shrink-0">{c.placar}</span>
+                              <span className="text-left flex-1 leading-tight break-words">{c.awayTeam}</span>
                             </div>
-                          ))
+                            <div className="w-16 flex justify-end">
+                              <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded-md border ${c.vencedor === 'home' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                                c.vencedor === 'away' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                                  'bg-white/10 text-white/40 border-white/10'
+                                }`}>
+                                {c.vencedor === 'draw' ? 'EMP' : (c.vencedor ? c.vencedor.substring(0, 3) : '—')}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                        {analysis.h2h.confrontos.length === 0 && (
+                          <div className="text-center p-4 text-[10px] text-white/20 uppercase font-black">Nenhum confronto recente</div>
                         )}
                       </div>
                     </div>
-                  ))}
+                  </div>
+                )}
 
-                </div>
+                {/* Scouting Intelligence (Final Section) */}
+                <div className="pt-10 border-t border-white/5">
+                  <div className="flex items-center justify-between mb-8">
+                    <div className="flex flex-col gap-1">
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20 italic">Scouting Intelligence</h4>
+                      {(analysis?.scouting?.confiavel === false || analysis?.scouting?.data_source === 'gemini_inferido') && (
+                        <span className="text-[9px] font-bold text-orange-400/80 animate-pulse flex items-center gap-1">
+                          <AlertTriangle size={10} /> ⚠️ DADOS NÃO VERIFICADOS (INFERÊNCIA IA)
+                        </span>
+                      )}
+                    </div>
+                    <Tooltip text="Monitoramento em tempo real da forma física e técnica. V = Vitória, E = Empate, D = Derrota, ? = Dados Indisponíveis." />
+
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {[
+                      { name: match.home_team, form: formaHome.data },
+                      { name: match.away_team, form: formaAway.data }
+                    ].map(team => (
+                      <div key={team.name} className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl">
+
+                        <span className="text-[11px] font-black uppercase text-white/60 leading-tight max-w-[200px] break-words">
+                          <span>{team.name}</span>
+                        </span>
+                        <div className="flex gap-1.5">
+                          {team.form && team.form.length > 0 ? team.form.map((r: any, i: number) => (
+                            <div key={i} style={{
+                              width: 32, height: 32, borderRadius: 8,
+                              display: 'flex', flexDirection: 'column',
+                              alignItems: 'center', justifyContent: 'center',
+                              background: r.resultado === 'W' ? '#00e67622'
+                                : r.resultado === 'D' ? '#ffeb3b22' : '#f4433622',
+                              border: `1px solid ${r.resultado === 'W' ? '#00e67644'
+                                : r.resultado === 'D' ? '#ffeb3b44' : '#f4433644'
+                                }`,
+                              cursor: 'pointer'
+                            }} title={`${r.resultado} ${r.placar} vs ${r.adversario}`}>
+                              <span style={{
+                                color: r.resultado === 'W' ? '#00e676'
+                                  : r.resultado === 'D' ? '#ffeb3b' : '#f44336',
+                                fontWeight: 900, fontSize: 11, fontFamily: 'monospace'
+                              }}>
+                                {r.resultado}
+                              </span>
+                              <span style={{ color: '#555', fontSize: 8 }}>
+                                {r.placar}
+                              </span>
+                            </div>
+                          )) : (
+                            ['?', '?', '?', '?', '?'].map((r, i) => (
+                              <div key={i} className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-black border ${getFormBadge(r)}`}>
+                                <span>{r}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -1748,7 +1765,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
         <footer className="h-12 bg-white/[0.02] border-t border-white/5 px-10 flex items-center justify-between text-[9px] font-mono text-white/10 uppercase tracking-[0.3em]">
           <div className="flex gap-10">
             <span><span>Verified Analysis Status</span></span>
-            <span><span>Model: GEMINI-2.0-FLASH</span></span>
+            <span><span>Model: {GEMINI_MODEL.toUpperCase()}</span></span>
           </div>
 
           <div className="flex items-center gap-2 text-blue-500/40">
