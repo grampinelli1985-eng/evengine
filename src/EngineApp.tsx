@@ -5,31 +5,29 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Match, LEAGUES, AnalysisResponse } from './types';
-import { fetchAllMatches, getOddsApiQuotaInfo } from './services/oddsService';
+import { fetchAllMatches, getOddsApiQuotaInfo, fetchActiveMatches, syncApiEplFixtureToMatch, syncApiFootballFixtureToMatch, carregarLigasUsuario } from './services/oddsService';
 import { analyzeMatch } from './services/geminiService';
-import { resetGeminiCallCounter, getGeminiCallCount } from './services/telemetryService';
+import { updateMatchResultInSupabase, resetGeminiCallCounter, getGeminiCallCount } from './services/telemetryService';
 import MatchCardTipster from './components/MatchCardTipster';
 import SkeletonMatch from './components/SkeletonMatch';
 import AnalysisView from './components/AnalysisView';
 import TicketModal from './components/TicketModal';
 import LiveNotification from './components/LiveNotification';
 import LeagueSidebar from './components/LeagueSidebar';
-import { getBanca, calculateKellyStake, carregarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada } from './services/bancaService';
-import { fetchActiveMatches, syncApiEplFixtureToMatch, syncApiFootballFixtureToMatch, carregarLigasUsuario } from './services/oddsService';
-import { fetchBets, fetchAnalysisByMatchId, saveAnalysis, setCachedAnalysis, registrarPrevisao } from './services/betService';
-import { Trophy, Filter, RefreshCw, Search, AlertCircle, TrendingUp, Ticket, Menu, X, Zap, Flame, Shield, Activity, Crown, Star, Sun, Compass, Award, Home, BookOpen, ShieldOff, AlertTriangle, LogOut, FileText } from 'lucide-react';
+import { getBanca, calculateKellyStake, carregarStopLossState, salvarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada, getBancaAtual, setBancaAtual, getBancasFromSupabase, addBancaToSupabase, switchActiveBanca, updateBancaBalance, BancaDB } from './services/bancaService';
+import { fetchBets, fetchAnalysisByMatchId, saveAnalysis, createBet, autoResolveBetFromLiveResult } from './services/betService';
+import { Trophy, Filter, RefreshCw, Search, AlertCircle, TrendingUp, Ticket, Menu, X, Zap, Flame, Shield, Activity, Crown, Star, Sun, Compass, Award, Home, BookOpen, ShieldOff, AlertTriangle, LogOut, FileText, CheckCircle, Eye, EyeOff, Users, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
 import { syncQuotaFromAPI } from './services/apiQuotaService';
 import { seedEloFromOdds, sanitizeEloRatings, calcularEstadoJogo, EstadoJogo, atualizarEloPartida } from './services/eloService';
 import { registerOpeningOdds, detectLineMovement } from './services/lineMovementService';
-import { registrarEntradaCLV, capturarOddsFechamento } from './services/clvService';
+import { registrarEntradaCLV, capturarOddsFechamento, corrigirEntradaCLV, sincronizarResultadoCLV } from './services/clvService';
 import { analisarMatchAH } from './services/asianHandicapService';
 import { calcularValueBets, validateReport } from './services/valueBetService';
 import { runTipsterEngine } from './services/tipsterEngine';
 import { buscarEstatisticasMedias, buscarH2H } from './services/scoutingService';
 import BancaModal from './components/BancaModal';
-import { getBancaAtual, setBancaAtual } from './services/bancaService';
 import { registrarPrevisao, resolverPrevisoesPendentes } from './services/calibrationService';
 import HistoricoModal from './components/HistoricoModal';
 import { ResultadoModal } from './components/ResultadoModal';
@@ -37,10 +35,10 @@ import TelemetryView from './components/TelemetryView';
 import DashboardView from './components/DashboardView';
 import BetsView from './components/BetsView';
 import PendenciasView from './components/PendenciasView';
-import { updateMatchResultInSupabase } from './services/telemetryService';
 import { isLigaOperavel } from './config/leagues';
 import DocumentationView from './components/Documentation/DocumentationView';
 import WorldCupView from './components/WorldCup/WorldCupView';
+import LineMovementsView, { LineMovementRecord } from './components/LineMovementsView';
 import { useUserPlan } from './hooks/useUserPlan';
 import {
   canAnalyzeToday,
@@ -57,18 +55,11 @@ import {
   updateApiKeyOwn,
   setCachedProfile
 } from './services/planService';
-import { buildFixtureKey, getCachedAnalysis, setCachedAnalysis, cleanExpiredCache } from './services/analysisCacheService';
+import { buildFixtureKey, getCachedAnalysis, setCachedAnalysis, cleanExpiredCache, markMatchAsAnalyzed, getAnalyzedLog, wasAnalyzedWithin24h, fetchAnalyzedMatchIdsLast24h } from './services/analysisCacheService';
 import { registerMatchForTracking, pollLiveResults, hasPendingLiveMatches, buildLiveKey, LiveScore, onApiError } from './services/liveTrackerService';
 import ApiErrorBanner, { ApiErrorType } from './components/ApiErrorBanner';
 import { PlanBadge, UpgradeModal, PlanLock } from './components/PlanControl';
 import { showToast, ToastContainer } from './components/Toast';
-import {
-  getBancasFromSupabase,
-  addBancaToSupabase,
-  switchActiveBanca,
-  updateBancaBalance,
-  BancaDB
-} from './services/bancaService';
 
 const APP_VERSION = "BG_V9_TIPSTER_GATE_V3";
 
@@ -82,6 +73,199 @@ const leagueIcons: Record<string, any> = {
   sun: Sun,
   compass: Compass,
   award: Award,
+};
+
+// Official league emblems as inline SVG, keyed by Odds API sport_key
+const LeagueEmblem = ({ sportKey, size = 16, active = false }: { sportKey: string; size?: number; active?: boolean }) => {
+  const cls = `flex-shrink-0 transition-opacity ${active ? 'opacity-100' : 'opacity-50 group-hover/btn:opacity-80'}`;
+
+  if (sportKey === 'soccer_epl') {
+    // Premier League — purple lion crest simplified
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#38003c' : '#2a002e'} />
+        <path d="M16 4 C16 4 10 7 10 13 C10 19 13 22 16 28 C19 22 22 19 22 13 C22 7 16 4 16 4Z" fill="#00ff85" />
+        <circle cx="16" cy="13" r="3.5" fill="#38003c" />
+        <path d="M10 10 L8 8 M22 10 L24 8" stroke="#00ff85" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_spain_la_liga') {
+    // La Liga — orange/red shield
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#ff4b00' : '#cc3b00'} />
+        <path d="M16 5 L26 9 L26 18 C26 23 21 27 16 29 C11 27 6 23 6 18 L6 9 Z" fill="white" fillOpacity="0.15" stroke="white" strokeWidth="1.5" />
+        <text x="16" y="21" textAnchor="middle" fontSize="10" fontWeight="900" fontFamily="serif" fill="white" letterSpacing="-0.5">LFP</text>
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_italy_serie_a') {
+    // Serie A — dark blue with star
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#1a1f6e' : '#13185a'} />
+        <path d="M16 7 L17.8 12.8 L24 12.8 L19 16.2 L20.8 22 L16 18.6 L11.2 22 L13 16.2 L8 12.8 L14.2 12.8 Z" fill="#008fd7" />
+        <path d="M16 10 L17.2 13.8 L21 13.8 L18 16 L19.2 19.8 L16 17.6 L12.8 19.8 L14 16 L11 13.8 L14.8 13.8 Z" fill="white" />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_germany_bundesliga') {
+    // Bundesliga — red with swoosh
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#d20515' : '#a80410'} />
+        <path d="M7 11 C7 11 12 9 16 11 C20 13 22 17 16 19 C10 21 7 19 7 19" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+        <circle cx="22" cy="21" r="3" fill="white" />
+        <circle cx="22" cy="21" r="1.5" fill={active ? '#d20515' : '#a80410'} />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_france_ligue_one') {
+    // Ligue 1 — orange/gold with L1
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#daa520' : '#b8891a'} />
+        <path d="M16 5 L26 9 L26 19 C26 24 21 28 16 29 C11 28 6 24 6 19 L6 9 Z" fill="white" fillOpacity="0.12" stroke="white" strokeWidth="1.5" />
+        <text x="16" y="21" textAnchor="middle" fontSize="11" fontWeight="900" fontFamily="sans-serif" fill="white">L1</text>
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_uefa_champs_league_qualification') {
+    // UCL Qualifying — same as UCL but with "Q" badge
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#001489' : '#000e6e'} />
+        <polygon points="16,5 18.5,12.5 26.5,12.5 20,17.5 22.5,25 16,20 9.5,25 12,17.5 5.5,12.5 13.5,12.5" fill="#FFD700" />
+        <rect x="19" y="19" width="12" height="10" rx="3" fill="#C8102E" />
+        <text x="25" y="27" textAnchor="middle" fontSize="7" fontWeight="bold" fill="white" fontFamily="Arial">Q</text>
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_uefa_champs_league') {
+    // UCL — dark blue with star ball
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#001489' : '#000e6e'} />
+        <circle cx="16" cy="16" r="8" fill="none" stroke="#ffffff" strokeWidth="1.5" />
+        <path d="M16 8 L17 12 L21 12 L18 14.5 L19 18.5 L16 16 L13 18.5 L14 14.5 L11 12 L15 12 Z" fill="white" />
+        <path d="M10 10 L8 7 M22 10 L24 7 M16 8 L16 5" stroke="#ffffff" strokeWidth="1" strokeLinecap="round" opacity="0.6" />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_uefa_europa_league') {
+    // Europa League — orange
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#f04e23' : '#c03d1a'} />
+        <circle cx="16" cy="16" r="8" fill="none" stroke="white" strokeWidth="1.5" />
+        <path d="M16 9 L17 12.8 L21 12.8 L18 15.2 L19 19 L16 16.6 L13 19 L14 15.2 L11 12.8 L15 12.8 Z" fill="white" />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_netherlands_eredivisie') {
+    // Eredivisie — red/white
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#c8102e' : '#a00d24'} />
+        <rect x="6" y="13" width="20" height="6" fill="white" />
+        <text x="16" y="20" textAnchor="middle" fontSize="5.5" fontWeight="900" fontFamily="sans-serif" fill="#c8102e">EREDIVISIE</text>
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_portugal_primeira_liga') {
+    // Primeira Liga — green/red
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#006600' : '#004d00'} />
+        <rect x="6" y="6" width="8" height="20" fill="#cc0000" />
+        <path d="M16 5 L26 9 L26 19 C26 24 21 27 16 29 C11 27 6 24 6 19 L6 9 Z" fill="none" stroke="white" strokeWidth="1.5" opacity="0.5" />
+        <text x="20" y="20" textAnchor="middle" fontSize="5" fontWeight="900" fontFamily="sans-serif" fill="white">LIGA</text>
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_brazil_campeonato') {
+    // Brasileirão — green/yellow
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#009c3b' : '#007a2e'} />
+        <path d="M16 6 L28 16 L16 26 L4 16 Z" fill="#ffdf00" />
+        <circle cx="16" cy="16" r="5.5" fill={active ? '#009c3b' : '#007a2e'} />
+        <path d="M11 16 C11 14 13 12 16 12 C17 12 18 12.5 19 13" stroke="white" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_argentina_primera_division') {
+    // Argentina Primera — light blue/white
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#74acdf' : '#5a8fbf'} />
+        <rect x="6" y="6" width="20" height="20" rx="2" fill="none" stroke="white" strokeWidth="1.5" />
+        <rect x="6" y="13" width="20" height="6" fill="white" />
+        <circle cx="16" cy="16" r="2.5" fill="#f6b40e" />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_usa_mls') {
+    // MLS — dark blue/red
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#002f6c' : '#00245a'} />
+        <path d="M16 6 L20 12 L27 12 L21.5 16.5 L23.5 23 L16 19 L8.5 23 L10.5 16.5 L5 12 L12 12 Z" fill="#c8102e" />
+        <path d="M16 8 L19 13 L25 13 L20.5 16.5 L22 22 L16 18.5 L10 22 L11.5 16.5 L7 13 L13 13 Z" fill="white" fillOpacity="0.2" />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_turkey_super_league') {
+    // Süper Lig — red/white
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#e30a17' : '#b80812'} />
+        <circle cx="14" cy="16" r="6" fill="white" />
+        <circle cx="16" cy="16" r="6" fill={active ? '#e30a17' : '#b80812'} />
+        <path d="M22 13 L23.7 16 L22 19 L23 19 L25 16 L23 13 Z" fill="white" />
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_mexico_ligamx') {
+    // Liga MX — dark green
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#00693e' : '#00502f'} />
+        <path d="M16 5 L26 9 L26 19 C26 24 21 27 16 29 C11 27 6 24 6 19 L6 9 Z" fill="none" stroke="#ffffff" strokeWidth="1.5" />
+        <text x="16" y="21" textAnchor="middle" fontSize="7.5" fontWeight="900" fontFamily="sans-serif" fill="white">MX</text>
+      </svg>
+    );
+  }
+
+  if (sportKey === 'soccer_conmebol_copa_libertadores') {
+    // Copa Libertadores — dark blue/yellow
+    return (
+      <svg width={size} height={size} viewBox="0 0 32 32" className={cls} fill="none">
+        <rect width="32" height="32" rx="4" fill={active ? '#002060' : '#001540'} />
+        <path d="M16 5 C20 5 25 8 25 14 C25 20 20 26 16 28 C12 26 7 20 7 14 C7 8 12 5 16 5Z" fill="none" stroke="#f5c518" strokeWidth="2" />
+        <path d="M16 9 L17.2 13 L21 13 L18 15.2 L19.2 19 L16 16.8 L12.8 19 L14 15.2 L11 13 L14.8 13 Z" fill="#f5c518" />
+      </svg>
+    );
+  }
+
+  // Generic fallback
+  const FallbackIcon = leagueIcons['trophy'] || Trophy;
+  return <Trophy size={size} className={`flex-shrink-0 transition-opacity ${active ? 'opacity-100 text-blue-400' : 'opacity-40 text-blue-400/50 group-hover/btn:opacity-70'}`} />;
 };
 
 interface EngineAppProps {
@@ -211,20 +395,39 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     return () => unsubscribe();
   }, []);
   const [showApprovedOnly, setShowApprovedOnly] = useState(false);
+  const [filterAnalyzed, setFilterAnalyzed] = useState<'all' | 'analyzed' | 'pending'>('all');
+  const [placedBets, setPlacedBets] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem('evengine_placed_bets') || '[]'));
+    } catch { return new Set(); }
+  });
   const [bancaModalOpen, setBancaModalOpen] = useState(false);
+  const [confirmBet, setConfirmBet] = useState<{ match: Match; analysis: AnalysisResponse; suggestedOdd: number } | null>(null);
+  const [confirmBetOdd, setConfirmBetOdd] = useState('');
+  const [remoteAnalyzedIds, setRemoteAnalyzedIds] = useState<Set<string>>(new Set());
   const [historicoModalOpen, setHistoricoModalOpen] = useState(false);
   const [bancaAtual, setBancaAtualState] = useState(getBancaAtual());
   const [resultadoModalOpen, setResultadoModalOpen] = useState(false);
   const [isExtraMenuOpen, setIsExtraMenuOpen] = useState(false);
   const extraMenuRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<'dashboard' | 'main' | 'bets' | 'telemetry' | 'pendencias' | 'documentacao' | 'worldcup'>(() => {
+  const [lineMovements, setLineMovements] = useState<LineMovementRecord[]>([]);
+  const [view, setView] = useState<'dashboard' | 'main' | 'bets' | 'telemetry' | 'pendencias' | 'documentacao' | 'worldcup' | 'linemovement'>(() => {
     const saved = localStorage.getItem('evengine_active_view');
     return (saved as any) || 'dashboard';
   });
   const [prevView, setPrevView] = useState<string>(view);
   const [direction, setDirection] = useState<'forward' | 'backward'>('forward');
 
-  const [stopLossState, setStopLossState] = useState(() => carregarStopLossState());
+  const [stopLossState, setStopLossState] = useState(() => {
+    const state = carregarStopLossState();
+    // Auto-correção na inicialização: suspensão inválida com streak < 3 → limpa
+    if (state.suspensaoAtiva && state.redStreakAtual < 3) {
+      const corrected = { ...state, suspensaoAtiva: false, redStreakAtual: 0 };
+      salvarStopLossState(corrected);
+      return corrected;
+    }
+    return state;
+  });
   const [alertDismissed, setAlertDismissed] = useState(() => {
     return localStorage.getItem('evengine_stop_loss_alert_dismissed') === 'true';
   });
@@ -288,7 +491,22 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               ? { ...m, resultado_registrado: true, resultado_placar: u.placar, resultado_data: new Date().toISOString() }
               : m
           ));
-          showToast.success(`Resultado final: ${u.homeTeam} ${u.placar} ${u.awayTeam}`);
+
+          // Auto-resolve apostas pendentes deste jogo e sincroniza CLV
+          autoResolveBetFromLiveResult({
+            matchId: u.matchId,
+            homeGoals: (u as any).homeGoals ?? 0,
+            awayGoals: (u as any).awayGoals ?? 0,
+            placar: u.placar,
+          }).then(count => {
+            if (count > 0) {
+              showToast.success(`✓ ${count} aposta${count > 1 ? 's' : ''} resolvida${count > 1 ? 's' : ''} automaticamente: ${u.homeTeam} ${u.placar} ${u.awayTeam}`);
+            } else {
+              showToast.success(`Resultado final: ${u.homeTeam} ${u.placar} ${u.awayTeam}`);
+            }
+          }).catch(() => {
+            showToast.success(`Resultado final: ${u.homeTeam} ${u.placar} ${u.awayTeam}`);
+          });
         } else {
           newScores[liveKey] = u as LiveScore;
         }
@@ -364,10 +582,233 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     duration: 0.28,
     ease: [0.16, 1, 0.3, 1]
   };
+
+  // Traduz um texto técnico isolado em mensagem amigável
+  function traduzirTextoTecnico(texto: string): string {
+    if (texto.includes('Lambda instável') || texto.includes('CV=')) {
+      return 'Dados insuficientes: liga em início de temporada ou times sem histórico de gols. Aguarde mais rodadas disputadas.';
+    }
+    return texto;
+  }
+
+  // Traduz códigos técnicos de veto em mensagens legíveis para o usuário
+  function traduzirVetos(vetos: string[]): string[] {
+    return vetos.map(v => {
+      if (v.includes('B-DADOS') && (v.includes('Lambda instável') || v.includes('CV='))) {
+        return '[B-DADOS] Dados insuficientes: liga em início de temporada ou times sem histórico de gols. Aguarde mais rodadas disputadas.';
+      }
+      if (v.includes('B-STOP-LOSS-PNL')) {
+        return '[B-STOP-LOSS] Stop Loss diário ativado. Perda do dia atingiu o limite de 5% da banca. Retorne amanhã.';
+      }
+      if (v.includes('B-STOP-WIN')) {
+        return '[B-STOP-WIN] Meta diária de lucro atingida (+15% da banca). Proteja o resultado — sem novas entradas hoje.';
+      }
+      if (v.includes('B-STOP-LOSS') || v.includes('Stop Loss Ativado')) {
+        // Extrai número de derrotas do próprio motivo gerado pelo engine
+        const matchDerrota = v.match(/após (\d+) derrota/);
+        const n = matchDerrota ? matchDerrota[1] : v.match(/(\d+) reds/)?.[1] ?? '3';
+        return `[B-STOP-LOSS] Proteção ativada após ${n} derrotas consecutivas. Novas entradas bloqueadas até o próximo green.`;
+      }
+      if (v.includes('B-LIMITE') || v.includes('limite de entradas') || v.includes('jogos simultâneos')) {
+        // Mantém a mensagem detalhada gerada pelo engine se ela já contiver a causa
+        if (v.includes('simultâneos') || v.includes('simultâneo')) {
+          return '[B-LIMITE] Limite de jogos simultâneos atingido. Aguarde a resolução de uma aposta aberta.';
+        }
+        return '[B-LIMITE] Limite diário de entradas atingido. Retorne amanhã ou aguarde resolução das apostas abertas.';
+      }
+      if (v.includes('B-EV') || v.includes('EV insuficiente')) {
+        return '[B-EV] Valor esperado abaixo do mínimo aceitável. A odd não oferece edge suficiente sobre o mercado.';
+      }
+      if (v.includes('B-CONF') || v.includes('confiança')) {
+        return '[B-CONF] Confiança da análise abaixo do limiar. Incerteza muito alta para recomendar entrada.';
+      }
+      return v;
+    });
+  }
   const [resultadoPreenchido, setResultadoPreenchido] = useState<any>(undefined);
   const [modoOperacao, setModoOperacao] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const notifiedIdsRef = useRef<Set<string>>(new Set());
+  // Persistido em sessionStorage para sobreviver a recargas dentro da mesma sessão do browser
+  const notifiedLineMovementRef = useRef<Set<string>>(
+    new Set(JSON.parse(sessionStorage.getItem('evengine_notified_lm') || '[]'))
+  );
+  const addNotifiedLM = (id: string) => {
+    notifiedLineMovementRef.current.add(id);
+    sessionStorage.setItem('evengine_notified_lm', JSON.stringify([...notifiedLineMovementRef.current]));
+  };
+
+  // ── Helpers para criar/salvar aposta de um match ────────────────────────────
+  const buildBetPayloadFromMatch = (match: Match, analysis: AnalysisResponse) => {
+    const engine = (analysis as any)?.tipsterEngine;
+
+    // Fonte 1: mercado_selecionado — é o que o Gate efetivamente aprovou
+    const selecionado = engine?.mercado_selecionado;
+    // Fonte 2: mercado (campo de decisão do Gate)
+    const mercadoGate = engine?.mercado;
+    // Fonte 3: fallback — melhor EV de todos_mercados (menos preciso)
+    const mercadosValue: any[] = engine?.todos_mercados ?? [];
+    const melhorFallback = mercadosValue.length > 0
+      ? [...mercadosValue].sort((a: any, b: any) => (b.ev || 0) - (a.ev || 0))[0]
+      : null;
+
+    const mercado: string =
+      selecionado?.nome ??
+      mercadoGate?.nome ??
+      melhorFallback?.nome ??
+      (analysis as any)?.dica_principal ??
+      'Principal';
+
+    const odd: number =
+      selecionado?.odd_referencia ??
+      selecionado?.odd_bet365_publica ??
+      mercadoGate?.odd ??
+      melhorFallback?.odd_referencia ??
+      melhorFallback?.odd ??
+      1.85;
+
+    const probIA: number =
+      selecionado?.probabilidade_final ??
+      mercadoGate?.probabilidade_ia ??
+      melhorFallback?.probabilidade_final ??
+      melhorFallback?.probabilidade_ia ??
+      0.5;
+
+    const stakeRecomendada = calculateKellyStake(probIA, odd, bancaAtual || 1000, 0.25);
+    return {
+      analysis_id: null as null,
+      market: mercado as string,
+      odd_taken: parseFloat(odd.toFixed(3)),
+      stake_amount: parseFloat((stakeRecomendada || 0).toFixed(2)),
+      bookmaker: 'bet365' as const,
+      status: 'pending' as const,
+      notes: `${match.home_team} × ${match.away_team} | ${match.sport_title} | ${new Date(match.commence_time).toLocaleDateString('pt-BR')} | matchId:${match.id}`
+    };
+  };
+
+  // Salva detalhes pendentes no localStorage para retry se Supabase falhar
+  const savePendingBetToStorage = (matchId: string, payload: ReturnType<typeof buildBetPayloadFromMatch>) => {
+    try {
+      const raw = localStorage.getItem('evengine_pending_bets');
+      const pending: Record<string, any> = raw ? JSON.parse(raw) : {};
+      pending[matchId] = payload;
+      localStorage.setItem('evengine_pending_bets', JSON.stringify(pending));
+    } catch { /* ignorar */ }
+  };
+
+  const removePendingBetFromStorage = (matchId: string) => {
+    try {
+      const raw = localStorage.getItem('evengine_pending_bets');
+      if (!raw) return;
+      const pending = JSON.parse(raw);
+      delete pending[matchId];
+      localStorage.setItem('evengine_pending_bets', JSON.stringify(pending));
+    } catch { /* ignorar */ }
+  };
+
+  // Ao carregar jogos, tenta sincronizar apostas que falharam anteriormente
+  const syncPendingBets = async (currentMatches: Match[], currentAnalyzed: Record<string, AnalysisResponse>) => {
+    try {
+      const raw = localStorage.getItem('evengine_pending_bets');
+      if (!raw) return;
+      const pending: Record<string, any> = JSON.parse(raw);
+      const matchIds = Object.keys(pending);
+      if (matchIds.length === 0) return;
+
+      for (const matchId of matchIds) {
+        let payload = pending[matchId];
+
+        // Se não tiver payload salvo (apostas antigas marcadas sem dados),
+        // tenta reconstruir a partir do match/analysis atual
+        if (!payload || !payload.market) {
+          const match = currentMatches.find(m => m.id === matchId);
+          const analysis = currentAnalyzed[matchId];
+          if (!match || !analysis) continue;
+          payload = buildBetPayloadFromMatch(match, analysis);
+        }
+
+        try {
+          await createBet(payload);
+          removePendingBetFromStorage(matchId);
+          console.info(`[SyncBets] Aposta recuperada para matchId ${matchId}`);
+        } catch (e) {
+          console.warn(`[SyncBets] Falha ao recuperar aposta ${matchId}:`, e);
+        }
+      }
+    } catch (e) {
+      console.warn('[SyncBets] Erro ao ler pending bets:', e);
+    }
+
+    // Corrige entradas CLV com mercado errado (registradas antes de correção de bug).
+    // Para cada análise disponível, verifica se o mercado armazenado no CLV diverge
+    // do mercado que o Gate efetivamente aprovou e corrige silenciosamente.
+    try {
+      for (const [matchId, analysis] of Object.entries(currentAnalyzed)) {
+        const engine = (analysis as any)?.tipsterEngine;
+        if (!engine) continue;
+        const selecionado = engine.mercado_selecionado;
+        const mercadoGate = engine.mercado;
+        const novoMercado: string | undefined =
+          selecionado?.nome ?? mercadoGate?.nome;
+        const novaOdd: number | undefined =
+          selecionado?.odd_referencia ??
+          selecionado?.odd_bet365_publica ??
+          mercadoGate?.odd;
+        if (novoMercado && novaOdd) {
+          corrigirEntradaCLV(matchId, novoMercado, novaOdd);
+        }
+      }
+    } catch (e) {
+      console.warn('[SyncBets] Erro ao corrigir entradas CLV:', e);
+    }
+  };
+
+  const handleMarcarFeito = async (match: Match, overrideAnalysis?: AnalysisResponse, realOdd?: number) => {
+    const analysis = overrideAnalysis ?? analyzedMatches[match.id];
+    if (!analysis) return;
+
+    // Evita registro duplicado
+    if (placedBets.has(match.id)) return;
+
+    const newPlaced = new Set(placedBets);
+    newPlaced.add(match.id);
+    setPlacedBets(newPlaced);
+    localStorage.setItem('evengine_placed_bets', JSON.stringify([...newPlaced]));
+
+    const payload = buildBetPayloadFromMatch(match, analysis);
+    if (realOdd && realOdd > 1) {
+      payload.odd_taken = parseFloat(realOdd.toFixed(3));
+    }
+
+    // Salva no localStorage ANTES do Supabase — garante que retry é possível se falhar
+    savePendingBetToStorage(match.id, payload);
+
+    const isAutoSharp = plan === 'sharp' && !!overrideAnalysis;
+
+    try {
+      await createBet(payload);
+      removePendingBetFromStorage(match.id);
+      if (isAutoSharp) {
+        showToast.success(`⚡ Sharp Auto-Registro: ${match.home_team} × ${match.away_team} adicionado em Apostas`);
+      } else {
+        showToast.success(`✓ ${match.home_team} × ${match.away_team} registrado em Apostas`);
+      }
+    } catch (e) {
+      console.warn('[Marcar Feito] Falha ao gravar no Supabase — será tentado novamente:', e);
+      showToast.warning(`Salvo localmente. Será sincronizado ao recarregar.`);
+    }
+  };
+
+  const handleOpenConfirmBet = (match: Match, analysis?: AnalysisResponse) => {
+    const a = analysis ?? analyzedMatches[match.id];
+    if (!a) return;
+    const payload = buildBetPayloadFromMatch(match, a);
+    setConfirmBetOdd(payload.odd_taken.toFixed(2));
+    setConfirmBet({ match, analysis: a, suggestedOdd: payload.odd_taken });
+  };
+
+  // Auto-registro removido: Gate aprovar ≠ aposta realizada.
+  // Usuário deve marcar manualmente via "Marcar como Feito".
 
   const handleBancaSalva = (novaBANCA: number) => {
     setBancaAtual(novaBANCA);
@@ -387,6 +828,28 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   });
 
   const ODDS_API_KEY = import.meta.env.VITE_ODDS_API_KEY || '';
+
+  // Migração única: apostas marcadas antes da correção não tinham payload salvo.
+  // Registra os matchIds no pending_bets com payload vazio para que syncPendingBets
+  // os reconstrua a partir do match/analysis quando os dados carregarem.
+  useEffect(() => {
+    try {
+      const placed = new Set<string>(JSON.parse(localStorage.getItem('evengine_placed_bets') || '[]'));
+      if (placed.size === 0) return;
+      const raw = localStorage.getItem('evengine_pending_bets');
+      const pending: Record<string, any> = raw ? JSON.parse(raw) : {};
+      let changed = false;
+      for (const matchId of placed) {
+        if (!(matchId in pending)) {
+          pending[matchId] = null; // null = sem payload, será reconstruído
+          changed = true;
+        }
+      }
+      if (changed) {
+        localStorage.setItem('evengine_pending_bets', JSON.stringify(pending));
+      }
+    } catch { /* ignorar */ }
+  }, []);
 
   useEffect(() => {
     resolverPrevisoesPendentes().catch(console.error);
@@ -435,6 +898,51 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
   }, []);
 
+  // Restaurar análises do log de 24h (localStorage + Supabase) após carregar partidas e perfil
+  useEffect(() => {
+    if (!matches.length) return;
+    const userId = profile?.id || user?.id;
+    if (!userId) return;
+
+    const restore = async () => {
+      // 1. Buscar IDs analisados nas últimas 24h do Supabase (cross-device)
+      const remoteIds = await fetchAnalyzedMatchIdsLast24h(userId);
+      setRemoteAnalyzedIds(remoteIds);
+
+      // 2. Merge com log local (para partidas analisadas sem conexão)
+      const localLog = getAnalyzedLog(userId);
+      const allAnalyzedIds = new Set([...remoteIds, ...Object.keys(localLog)]);
+
+      // 3. Sincronizar: adicionar ao log local IDs que vieram do remoto
+      remoteIds.forEach(id => {
+        if (!localLog[id]) {
+          const match = matches.find(m => m.id === id);
+          if (match) {
+            const fk = buildFixtureKey(match.home_team, match.away_team, match.commence_time);
+            markMatchAsAnalyzed(id, fk, userId);
+          }
+        }
+      });
+
+      // 4. Tentar restaurar dados de análise do cache do Supabase
+      const updates: Record<string, any> = {};
+      for (const matchId of allAnalyzedIds) {
+        if (analyzedMatches[matchId]) continue;
+        const entry = localLog[matchId];
+        if (!entry) continue;
+        const cached = await getCachedAnalysis(entry.fixtureKey, (plan as any) || 'free').catch(() => null);
+        if (cached && cached.tipsterEngine) {
+          updates[matchId] = cached;
+        }
+      }
+      if (Object.keys(updates).length) {
+        setAnalyzedMatches(prev => ({ ...prev, ...updates }));
+      }
+    };
+
+    restore();
+  }, [matches, profile, user]);
+
   const loadMatches = async (silent = false) => {
     let currentView = view as string;
     if (currentView === 'worldcup') {
@@ -458,12 +966,46 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
       // Register initial data for advanced services
       registerOpeningOdds(data);
+      const newMovements: LineMovementRecord[] = [];
       data.forEach(m => {
         seedEloFromOdds(m);
-        detectLineMovement(m);
+        const lm = detectLineMovement(m);
+        // Acumula movimentos detectados para o LineMovementsView
+        if (lm && Math.abs(lm.variation?.home ?? 0) >= 3) {
+          newMovements.push({
+            id: `${m.id}-${Date.now()}`,
+            matchId: m.id,
+            homeTeam: m.home_team,
+            awayTeam: m.away_team,
+            league: m.sport_key ?? '',
+            variationHome: lm.variation?.home ?? 0,
+            temSteam: !!(lm.tem_steam),
+            timestamp: new Date().toISOString(),
+          });
+        }
+        // Alerta de movimento de odds para planos Pro e Sharp — dispara apenas uma vez por partida
+        if (lm && (plan === 'pro' || plan === 'sharp') && !notifiedLineMovementRef.current.has(m.id)) {
+          if (lm.tem_steam) {
+            addNotifiedLM(m.id);
+            showToast.warning(`⚡ Steam Move detectado: ${m.home_team} vs ${m.away_team}`);
+          } else if (Math.abs(lm.variation?.home ?? 0) >= 5) {
+            addNotifiedLM(m.id);
+            showToast.info(`📈 Movimento de odds: ${m.home_team} vs ${m.away_team} (${lm.variation?.home > 0 ? '+' : ''}${lm.variation?.home?.toFixed(1)}%)`);
+          }
+        }
       });
+      if (newMovements.length > 0) {
+        setLineMovements(prev => {
+          const map = new Map(prev.map(r => [r.matchId, r]));
+          newMovements.forEach(r => map.set(r.matchId, r));
+          return [...map.values()];
+        });
+      }
 
       setMatches(data);
+
+      // Recupera apostas que falharam em sessões anteriores
+      syncPendingBets(data, analyzedMatches).catch(console.warn);
     } catch (err) {
       console.error(err);
       setError('Houve um erro ao buscar as partidas reais. Verifique sua chave de API e conexão.');
@@ -575,9 +1117,22 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       filtered = filtered.filter(m => isLigaOperavel(m.sport_key));
     }
 
+    // Filter by analysis status — localStorage (24h) + Supabase remoto (cross-device)
+    const userId = profile?.id || user?.id;
+    const isAnalyzed = (m: Match) =>
+      !!analyzedMatches[m.id] ||
+      remoteAnalyzedIds.has(m.id) ||
+      wasAnalyzedWithin24h(m.id, userId);
+
+    if (filterAnalyzed === 'analyzed') {
+      filtered = filtered.filter(isAnalyzed);
+    } else if (filterAnalyzed === 'pending') {
+      filtered = filtered.filter(m => !isAnalyzed(m));
+    }
+
     // Sort by date
     return filtered.sort((a, b) => new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime());
-  }, [matches, filterLeagues, filterDate, modoOperacao, searchQuery]);
+  }, [matches, filterLeagues, filterDate, modoOperacao, searchQuery, filterAnalyzed, analyzedMatches, remoteAnalyzedIds, profile, user]);
 
   const approvedCount = useMemo(() =>
     filteredMatches.filter(m => analyzedMatches[m.id]?.tipsterEngine?.status === 'APROVADO').length,
@@ -591,18 +1146,22 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       return;
     }
 
-    if (analyzedMatches[match.id]) {
-      setSelectedMatch(match);
-      setAnalysis(analyzedMatches[match.id]);
-      setAnalysisLoading(false);
-      return;
-    }
+    // Verifica cota e acesso à liga ANTES de qualquer early return,
+    // para que todo clique em análise (nova ou cacheada) consuma a cota diária.
     if (!canAnalyzeToday()) {
       window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
       return;
     }
     if (match.sport_key && !canAccessLeague(match.sport_key)) {
       window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
+      return;
+    }
+
+    if (analyzedMatches[match.id]) {
+      setSelectedMatch(match);
+      setAnalysis(analyzedMatches[match.id]);
+      setAnalysisLoading(false);
+      await incrementAnalysesToday();
       return;
     }
     setSelectedMatch(match);
@@ -612,10 +1171,29 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     const fixtureKey = buildFixtureKey(match.home_team, match.away_team, match.commence_time);
     const cached = await getCachedAnalysis(fixtureKey).catch(() => null);
     if (cached && cached.tipsterEngine) {
-      setAnalysis(cached);
-      setAnalyzedMatches(prev => ({ ...prev, [match.id]: cached }));
-      setAnalysisLoading(false);
-      return;
+      // Não servir do cache se o engine estava bloqueado — bloqueios são estado
+      // transitório (stop-loss, limite de entradas, jogos simultâneos) que podem
+      // ter mudado. Re-roda o engine sobre a análise cacheada.
+      const cachedEngine = cached.tipsterEngine as any;
+      const isBlockedInCache = cachedEngine?.status === 'BLOQUEADO' || cachedEngine?.bloqueado === true;
+      if (!isBlockedInCache) {
+        // Traduzir vetos e resultado_check_factual mesmo quando vem do cache
+        if (cached.tipsterEngine?.vetos?.length) {
+          cached.tipsterEngine.vetos = traduzirVetos(cached.tipsterEngine.vetos);
+        }
+        if ((cached.tipsterEngine as any)?.resultado_check_factual) {
+          (cached.tipsterEngine as any).resultado_check_factual = traduzirTextoTecnico(
+            (cached.tipsterEngine as any).resultado_check_factual
+          );
+        }
+        setAnalysis(cached);
+        setAnalyzedMatches(prev => ({ ...prev, [match.id]: cached }));
+        markMatchAsAnalyzed(match.id, fixtureKey, profile?.id || user?.id);
+        await incrementAnalysesToday();
+        setAnalysisLoading(false);
+        return;
+      }
+      // Stop Loss no cache: cai no fluxo normal para re-executar o Gate com o estado atual
     }
 
     try {
@@ -811,10 +1389,15 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         bancaTotal: banca.total,
         pendentesCount
       });      // Attach engine result to analysis
+      if (engineVerdict?.vetos?.length) {
+        engineVerdict.vetos = traduzirVetos(engineVerdict.vetos);
+      }
       result.tipsterEngine = engineVerdict;
 
-      // Persistir no cache compartilhado Supabase
-      setCachedAnalysis(fixtureKey, result, undefined, match.commence_time).catch(console.warn);
+      // Persistir no cache compartilhado Supabase — só cacheia APROVADAS
+      if (engineVerdict.status === 'APROVADO') {
+        setCachedAnalysis(fixtureKey, result, undefined, match.commence_time).catch(console.warn);
+      }
 
       // Registrar para rastreamento automático + poll imediato se jogo já começou
       registerMatchForTracking(match.id, match.home_team, match.away_team, match.commence_time);
@@ -825,11 +1408,22 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       // 🚀 CALIBRATION: Registrar se aprovado
       if (engineVerdict.status === 'APROVADO') {
         registrarEntradaAprovada();
-        
-        const oddAnalise = melhorMarket?.odd_api || result.tipster?.odds || 1.85;
-        const mercadoAnalise = melhorMarket
-          ? ((melhorMarket as any).mercado || melhorMarket.market || 'Mercado Principal')
-          : (result.tipster?.market?.name || 'Mercado Principal');
+
+        // Usar o mercado que o Gate efetivamente aprovou (mercado_selecionado),
+        // não o de maior EV bruto de todos_mercados (pode ser outro)
+        const gateMercado = engineVerdict.mercado_selecionado ?? engineVerdict.mercado;
+        const oddAnalise: number =
+          (gateMercado as any)?.odd_referencia ??
+          (gateMercado as any)?.odd_bet365_publica ??
+          (gateMercado as any)?.odd ??
+          melhorMarket?.odd_api ??
+          result.tipster?.odds ??
+          1.85;
+        const mercadoAnalise: string =
+          (gateMercado as any)?.nome ??
+          melhorMarket?.market ??
+          result.tipster?.market?.name ??
+          'Mercado Principal';
 
         registrarPrevisao({
           matchId: match.id,
@@ -869,7 +1463,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
       setAnalysis(result);
       setAnalyzedMatches(prev => ({ ...prev, [match.id]: result }));
+      markMatchAsAnalyzed(match.id, buildFixtureKey(match.home_team, match.away_team, match.commence_time), profile?.id || user?.id);
       await incrementAnalysesToday();
+
+      // Auto-registro Sharp: delegado ao useEffect que lê placedBets atualizado
     } catch (err) {
       console.error(err);
       // AnalysisView will handle showing error if analysis is null
@@ -1056,8 +1653,14 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             },
             bancaTotal: banca.total
           });
-          result.tipsterEngine = engineVerdict;
-          setCachedAnalysis(fKey, result, undefined, match.commence_time).catch(console.warn);
+          if (engineVerdict?.vetos?.length) {
+        engineVerdict.vetos = traduzirVetos(engineVerdict.vetos);
+      }
+      result.tipsterEngine = engineVerdict;
+          // Só cacheia análises APROVADAS — bloqueados podem mudar com dados adicionais
+          if (engineVerdict.status === 'APROVADO') {
+            setCachedAnalysis(fKey, result, undefined, match.commence_time).catch(console.warn);
+          }
           registerMatchForTracking(match.id, match.home_team, match.away_team, match.commence_time);
 
           setAnalyzedMatches(prev => ({ ...prev, [match.id]: result }));
@@ -1142,10 +1745,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           notifiedIdsRef.current.add(match.id);
           setLiveNotifications(prev => [...prev, match]);
 
-          // Auto dismiss after 5s
+          // Auto dismiss after 12s
           setTimeout(() => {
             setLiveNotifications(prev => prev.filter(n => n.id !== match.id));
-          }, 5000);
+          }, 12000);
         }
       });
     };
@@ -1203,18 +1806,21 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                   : 'bg-white/[0.02] border-white/10 hover:border-white/20'
                   }`}
               >
-                <div className="relative z-10">
-                  <h3 className={`text-sm font-bold uppercase tracking-widest mb-1 ${selectedLeagues.includes(league.key) ? 'text-blue-400' : 'text-white/40 group-hover:text-white/60'}`}>
-                    {league.name}
-                  </h3>
-                  <div className="text-[10px] font-mono text-white/20 uppercase tracking-tighter">{league.key.replace('soccer_', '').replace(/_/g, ' ')}</div>
+                <div className="relative z-10 flex items-center gap-3">
+                  <LeagueEmblem sportKey={league.key} size={28} active={selectedLeagues.includes(league.key)} />
+                  <div>
+                    <h3 className={`text-sm font-bold uppercase tracking-widest mb-0.5 ${selectedLeagues.includes(league.key) ? 'text-blue-400' : 'text-white/40 group-hover:text-white/60'}`}>
+                      {league.name}
+                    </h3>
+                    <div className="text-[10px] font-mono text-white/20 uppercase tracking-tighter">{league.key.replace('soccer_', '').replace(/_/g, ' ')}</div>
+                  </div>
                 </div>
                 {selectedLeagues.includes(league.key) && (
                   <motion.div
                     layoutId={`check-${league.key}`}
                     className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-500"
                   >
-                    <Trophy size={20} />
+                    <CheckCircle size={18} />
                   </motion.div>
                 )}
               </button>
@@ -1243,6 +1849,14 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
   return (
     <div translate="no" className="min-h-screen bg-[#0a0a0b] text-[#e1e1e3] font-sans selection:bg-blue-500/30">
+      <style>{`
+        @keyframes lmHighlight {
+          0%   { box-shadow: 0 0 0 0 rgba(16,185,129,0); outline: 2px solid rgba(16,185,129,0); }
+          20%  { box-shadow: 0 0 0 8px rgba(16,185,129,0.35); outline: 2px solid rgba(16,185,129,0.8); }
+          100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); outline: 2px solid rgba(16,185,129,0); }
+        }
+        .lm-highlight { animation: lmHighlight 2s ease-out forwards; border-radius: 1.5rem; }
+      `}</style>
 
       {/* Header */}
       <header className="sticky top-0 z-40 bg-[#0f0f11]/80 backdrop-blur-xl border-b border-white/10">
@@ -1359,7 +1973,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               <div className="relative shrink-0" ref={extraMenuRef}>
                 <button
                   onClick={() => setIsExtraMenuOpen(!isExtraMenuOpen)}
-                  className={`flex items-center justify-center px-2.5 py-1.5 2xl:px-3 border rounded-xl transition-all active:scale-95 cursor-pointer shrink-0 ${isExtraMenuOpen || view === 'telemetry' || view === 'documentacao' || view === 'bets' || view === 'pendencias'
+                  className={`flex items-center justify-center px-2.5 py-1.5 2xl:px-3 border rounded-xl transition-all active:scale-95 cursor-pointer shrink-0 ${isExtraMenuOpen || view === 'telemetry' || view === 'documentacao' || view === 'bets' || view === 'pendencias' || view === 'linemovement'
                       ? 'border-blue-500/50 text-blue-400 bg-blue-600/10'
                       : 'border-transparent text-white/50 hover:text-white hover:bg-white/5'
                     }`}
@@ -1389,6 +2003,44 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                         <Ticket size={14} className="shrink-0" />
                         <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Apostas</span>
                       </button>
+
+                      {plan === 'sharp' ? (
+                        <button
+                          onClick={() => {
+                            setView('linemovement');
+                            setIsExtraMenuOpen(false);
+                          }}
+                          className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-all text-left cursor-pointer ${view === 'linemovement'
+                              ? 'bg-emerald-600 border-emerald-500 text-white'
+                              : 'bg-transparent border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                            }`}
+                        >
+                          <Activity size={14} className={`shrink-0 ${view === 'linemovement' ? 'text-white' : 'text-emerald-400/70'}`} />
+                          <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap flex items-center gap-1.5">
+                            Line Movements
+                            {lineMovements.length > 0 && (
+                              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black ${view === 'linemovement' ? 'bg-white/20 text-white' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                {lineMovements.length}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal', { detail: { targetPlan: 'sharp' } }));
+                            setIsExtraMenuOpen(false);
+                          }}
+                          className="flex items-center gap-2 px-3 py-2 border border-transparent rounded-lg transition-all text-left cursor-pointer text-white/30 hover:text-white/60 hover:bg-white/5"
+                          title="Exclusivo Plano Sharp"
+                        >
+                          <Lock size={14} className="shrink-0 text-emerald-500/40" />
+                          <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap flex items-center gap-1.5">
+                            Line Movements
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-500/10 text-emerald-400/70 border border-emerald-500/20">Sharp</span>
+                          </span>
+                        </button>
+                      )}
 
                       <button
                         onClick={() => {
@@ -1505,7 +2157,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                 setBancaModalOpen(true);
                 setMobileMenuOpen(false);
               }}
-              className="hidden sm:flex px-3.5 py-1.5 rounded-full bg-[#00e676]/10 border border-[#00e676]/30 text-[#00e676] font-bold text-xs font-mono transition-all hover:bg-[#00e676]/20 active:scale-95 items-center gap-1 shadow-[0_0_15px_rgba(0,230,118,0.05)] shrink-0"
+              className="flex px-3 py-1.5 rounded-full bg-[#00e676]/10 border border-[#00e676]/30 text-[#00e676] font-bold text-xs font-mono transition-all hover:bg-[#00e676]/20 active:scale-95 items-center gap-1 shadow-[0_0_15px_rgba(0,230,118,0.05)] shrink-0 max-w-[140px] overflow-hidden"
             >
               <span>💰</span>
               <span>R$ {bancaAtual.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
@@ -1609,6 +2261,43 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                         ) : null;
                       })()}
                     </button>
+
+                    {plan === 'sharp' ? (
+                      <button
+                        onClick={() => {
+                          setView('linemovement');
+                          setMobileMenuOpen(false);
+                        }}
+                        className={`flex items-center justify-between px-4 py-3.5 border rounded-xl transition-all text-left ${view === 'linemovement'
+                            ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                            : 'bg-white/[0.02] border-white/5 text-white/60 hover:text-white hover:bg-white/[0.05]'
+                          }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Activity size={16} className={view === 'linemovement' ? 'text-white' : 'text-emerald-400/70'} />
+                          <span className="text-[11px] font-black uppercase tracking-wider">Line Movements</span>
+                        </div>
+                        {lineMovements.length > 0 && (
+                          <span className={`px-2 py-0.5 text-[9px] font-black rounded-full ${view === 'linemovement' ? 'bg-white/20 text-white' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                            {lineMovements.length}
+                          </span>
+                        )}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal', { detail: { targetPlan: 'sharp' } }));
+                          setMobileMenuOpen(false);
+                        }}
+                        className="flex items-center justify-between px-4 py-3.5 border border-white/5 rounded-xl transition-all text-left bg-white/[0.02] text-white/30 hover:bg-emerald-500/5 hover:text-white/50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Lock size={16} className="text-emerald-500/40" />
+                          <span className="text-[11px] font-black uppercase tracking-wider">Line Movements</span>
+                        </div>
+                        <span className="px-2 py-0.5 text-[9px] font-black rounded border border-emerald-500/25 bg-emerald-500/10 text-emerald-400/70">Sharp</span>
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {
@@ -1769,7 +2458,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
       {stopLossState.suspensaoAtiva && (
         <div className="bg-[#A32D2D]/10 border-b border-[#A32D2D]/20 py-3 transition-all">
-          <div className="max-w-[1600px] mx-auto px-6 flex items-center justify-between flex-wrap gap-x-4 gap-y-2">
+          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 flex items-center justify-between flex-wrap gap-x-4 gap-y-2">
             <div className="flex items-center gap-2">
               <AlertTriangle size={16} className="text-[#A32D2D] shrink-0" />
               <div className="text-left">
@@ -1835,7 +2524,11 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                 {motivo}
               </p>
               <button
-                onClick={() => { sessionStorage.clear(); window.location.reload(); }}
+                onClick={() => {
+                  localStorage.removeItem('odds_api_error_status');
+                  sessionStorage.clear();
+                  window.location.reload();
+                }}
                 className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[9px] font-black uppercase tracking-widest rounded transition-all border border-amber-500/30"
               >
                 Limpar Cache e Recarregar
@@ -1861,7 +2554,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         </div>
       )}
 
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-8 sm:py-10 overflow-x-hidden relative">
+      <main className="max-w-[1600px] mx-auto px-3 sm:px-6 py-5 sm:py-10 overflow-x-hidden relative">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={view}
@@ -1953,154 +2646,344 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               </div>
             ) : (
               <>
-                {/* Intro & Summary */}
+                {/* ── Hero Header ── */}
                 {!loading && matches.length > 0 && (
-                  <div className="mb-12 space-y-8">
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-3">
-                          <motion.div
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            className="px-3 py-1 bg-blue-500/10 text-blue-400 text-[10px] font-black rounded-full uppercase tracking-[0.2em] border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.05)] flex items-center gap-2"
-                          >
-                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)] animate-pulse" />
-                            <span>Neural Intelligence Feed</span>
-                          </motion.div>
-                        </div>
-                        <h2 className="text-4xl sm:text-5xl font-black text-white mb-3 tracking-tight leading-none uppercase">
-                          Próximas <span className="text-white/20 italic">Partidas</span>
-                        </h2>
-                        <div className="flex items-center gap-4 text-white/40 text-xs sm:text-sm font-medium">
-                          <p className="max-w-lg leading-relaxed">
-                            Detectamos <span className="text-white font-bold"><span>{filteredMatches.length}</span> confrontos</span> com liquidez estatística para análise.
-                          </p>
-                          <div className="h-4 w-px bg-white/10 hidden sm:block" />
-                          <p className="hidden sm:block">Foco em padrões de gols e chances combinadas.</p>
-                        </div>
-                      </div>
+                  <div className="mb-6 sm:mb-10 space-y-4">
+                    {(() => {
+                      const userId2 = profile?.id || user?.id;
+                      const isAnalyzed2 = (m: Match) => !!analyzedMatches[m.id] || remoteAnalyzedIds.has(m.id) || wasAnalyzedWithin24h(m.id, userId2);
+                      const analyzedCount = filteredMatches.filter(isAnalyzed2).length;
+                      const pendingCount = filteredMatches.filter(m => !isAnalyzed2(m)).length;
+                      return (
+                        <div className="flex flex-col lg:flex-row lg:items-start gap-6 lg:gap-8">
 
-                      <div className="flex flex-col sm:flex-row items-center gap-3">
-                        {/* SearchBar (Unified Height: h-11) */}
-                        <div className="relative w-full sm:w-80 group">
-                          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-blue-500 transition-colors pointer-events-none z-10">
-                            <Search size={16} />
-                          </div>
-                          <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Buscar time ou liga..."
-                            className="w-full h-11 bg-[#0d0d0f] border border-white/5 rounded-xl pl-11 pr-10 text-xs font-semibold text-white placeholder:text-white/20 focus:outline-none focus:border-blue-500/30 focus:bg-white/[0.03] transition-all focus:shadow-[0_0_20px_rgba(59,130,246,0.03)]"
-                          />
-                          {searchQuery && (
-                            <button
-                              onClick={() => setSearchQuery('')}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 hover:bg-white/5 rounded-xl text-white/20 hover:text-white transition-colors"
-                            >
-                              <X size={14} />
-                            </button>
-                          )}
-                        </div>
+                          {/* ── Esquerda: hero (sem card/box) ── */}
+                          <div className="flex-1 flex flex-col gap-4">
 
-                        <div className="flex items-center gap-3 w-full sm:w-auto">
-                          {/* Interactive Date Filter (Unified Height: h-11) */}
-                          <div className="h-11 flex items-center gap-1 bg-[#0d0d0f] border border-white/5 rounded-xl p-1">
-                            {[
-                              { value: 1, label: 'Hoje' },
-                              { value: 2, label: '48h' },
-                              { value: 3, label: '72h' },
-                              { value: 7, label: '7 Dias' },
-                            ].map((opt) => (
-                              <button
-                                key={opt.value}
-                                onClick={() => setFilterDate(opt.value)}
-                                className={`h-full flex items-center px-4 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all select-none hover:scale-[1.02] active:scale-98 cursor-pointer ${filterDate === opt.value
-                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
-                                    : 'text-white/40 hover:text-white/60 hover:bg-white/5'
-                                  }`}
-                              >
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
+                            {/* Badge */}
+                            <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                              className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-full w-fit">
+                              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shadow-[0_0_6px_rgba(96,165,250,0.8)]" />
+                              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400">Neural Intelligence Feed</span>
+                            </motion.div>
 
-                          {/* Live 24H Badge (Unified Height: h-11 & style) */}
-                          <div className="h-11 flex items-center justify-center gap-2.5 bg-blue-600/5 border border-blue-500/20 text-blue-400 px-4 rounded-xl font-mono text-[9px] uppercase font-black tracking-[0.2em] shadow-[0_0_15px_rgba(37,99,235,0.02)] select-none whitespace-nowrap">
-                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)] animate-pulse" />
-                            <span>Live 24H</span>
-                          </div>
+                            {/* Radar + título + stats na mesma linha */}
+                            <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04 }}
+                              className="flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-6">
 
-                          {/* Gate Approved Filter */}
-                          <button
-                            onClick={() => setShowApprovedOnly(prev => !prev)}
-                            className={`h-11 flex items-center justify-center gap-2 px-4 rounded-xl font-mono text-[9px] uppercase font-black tracking-[0.2em] border transition-all ${showApprovedOnly
-                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
-                                : 'bg-[#0d0d0f] border-white/5 text-white/40 hover:text-white/60 hover:bg-white/5'
-                              }`}
-                            title={approvedCount > 0 ? `${approvedCount} partida(s) aprovada(s) pelo Gate` : 'Nenhuma aprovada ainda — analise os jogos primeiro'}
-                          >
-                            <Shield size={12} className={showApprovedOnly ? 'text-emerald-400' : 'text-white/20'} />
-                            <span>Gate</span>
-                            {approvedCount > 0 && (
-                              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black ${showApprovedOnly
-                                  ? 'bg-emerald-500 text-black'
-                                  : 'bg-white/10 text-white/60'
-                                }`}>
-                                {approvedCount}
+                              {/* Radar SVG animado */}
+                              <div className="relative flex-shrink-0 w-20 h-20 sm:w-24 sm:h-24 lg:w-28 lg:h-28">
+                                <svg viewBox="0 0 80 80" className="w-full h-full" style={{ overflow: 'visible' }}>
+                                  <defs>
+                                    <radialGradient id="radarSweep2" cx="50%" cy="50%" r="50%">
+                                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.55" />
+                                      <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+                                    </radialGradient>
+                                    <clipPath id="radarCircle2"><circle cx="40" cy="40" r="36" /></clipPath>
+                                  </defs>
+                                  <circle cx="40" cy="40" r="36" fill="none" stroke="#3b82f6" strokeOpacity="0.15" strokeWidth="0.8" />
+                                  <circle cx="40" cy="40" r="24" fill="none" stroke="#3b82f6" strokeOpacity="0.15" strokeWidth="0.8" />
+                                  <circle cx="40" cy="40" r="12" fill="none" stroke="#3b82f6" strokeOpacity="0.2" strokeWidth="0.8" />
+                                  <line x1="40" y1="4" x2="40" y2="76" stroke="#3b82f6" strokeOpacity="0.1" strokeWidth="0.6" />
+                                  <line x1="4" y1="40" x2="76" y2="40" stroke="#3b82f6" strokeOpacity="0.1" strokeWidth="0.6" />
+                                  <g clipPath="url(#radarCircle2)" style={{ transformOrigin: '40px 40px', animation: 'radarRotate 2.8s linear infinite' }}>
+                                    <path d="M40,40 L40,4 A36,36 0 0,1 76,40 Z" fill="url(#radarSweep2)" opacity="0.85" />
+                                    <line x1="40" y1="40" x2="40" y2="4" stroke="#60a5fa" strokeWidth="1.2" strokeOpacity="0.9" />
+                                  </g>
+                                  <circle cx="40" cy="40" r="2.5" fill="#3b82f6" />
+                                  <circle cx="40" cy="40" r="2.5" fill="#3b82f6" style={{ animation: 'radarPulse 2.8s ease-out infinite' }} />
+                                  <circle cx="52" cy="28" r="1.8" fill="#34d399" style={{ animation: 'blipFade 2.8s ease-out infinite 0.6s' }} />
+                                  <circle cx="30" cy="50" r="1.4" fill="#34d399" style={{ animation: 'blipFade 2.8s ease-out infinite 1.4s' }} />
+                                  <circle cx="58" cy="48" r="1.2" fill="#34d399" style={{ animation: 'blipFade 2.8s ease-out infinite 0.2s' }} />
+                                </svg>
+                                <style>{`
+                                  @keyframes radarRotate { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+                                  @keyframes radarPulse { 0%{r:2.5;opacity:1} 100%{r:10;opacity:0} }
+                                  @keyframes blipFade { 0%,40%{opacity:0} 60%{opacity:1} 100%{opacity:0} }
+                                `}</style>
+                              </div>
+
+                              {/* Título + live */}
+                              <div className="flex-shrink-0">
+                                <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-[0.88] uppercase">
+                                  <span className="text-white">Radar de</span><br />
+                                  <span className="text-blue-500 italic">Partidas</span>
+                                </h2>
+                                <div className="mt-2.5 flex items-center gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Live 24H</span>
+                                  <span className="text-white/20">|</span>
+                                  <span className="text-xs text-white/40">Monitoramento ativo</span>
+                                </div>
+                              </div>
+
+                              {/* Stat cards + busca agrupados (desktop) — alinhados à direita do título */}
+                              <div className="hidden sm:flex flex-col gap-2 ml-auto">
+                                {/* 3 stat cards */}
+                                <div className="flex items-stretch gap-3">
+                                  {[
+                                    { icon: Users, color: 'text-blue-400', num: filteredMatches.length, label: filteredMatches.length === 1 ? 'Confronto' : 'Confrontos', sub: 'encontrado' },
+                                    { icon: Eye, color: 'text-emerald-400', num: analyzedCount, label: 'Analisadas', sub: 'concluídas' },
+                                    { icon: Zap, color: 'text-amber-400', num: pendingCount, label: 'Pendentes', sub: 'aguardando' },
+                                  ].map(({ icon: Icon, color, num, label, sub }) => (
+                                    <div key={label} className="bg-white/[0.03] border border-white/[0.07] rounded-xl px-4 py-3 flex flex-col items-center text-center min-w-[90px]">
+                                      <Icon size={18} className={`${color} mb-2`} />
+                                      <span className={`text-3xl font-black tabular-nums leading-none ${color}`}>{String(num).padStart(2, '0')}</span>
+                                      <span className="text-[10px] font-black uppercase tracking-wider text-white mt-1.5">{label}</span>
+                                      <span className="text-[10px] text-white/30">{sub}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                {/* Busca — exatamente abaixo dos cards */}
+                                <div className="relative group">
+                                  <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10 text-white/25 group-focus-within:text-blue-400 transition-colors">
+                                    <Search size={14} />
+                                  </div>
+                                  <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder="Buscar time ou liga..."
+                                    className="w-full h-10 bg-white/[0.04] border border-white/[0.08] rounded-xl pl-9 pr-9 text-sm font-medium text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/40 focus:bg-white/[0.06] transition-all"
+                                  />
+                                  {searchQuery && (
+                                    <button onClick={() => setSearchQuery('')}
+                                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-white/25 hover:text-white transition-colors">
+                                      <X size={12} />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </motion.div>
+
+                            {/* 3 stat cards + busca — mobile (abaixo do título) */}
+                            <div className="flex sm:hidden flex-col gap-2">
+                              <div className="flex items-stretch gap-3">
+                                {[
+                                  { icon: Users, color: 'text-blue-400', num: filteredMatches.length, label: filteredMatches.length === 1 ? 'Confronto' : 'Confrontos', sub: 'encontrado' },
+                                  { icon: Eye, color: 'text-emerald-400', num: analyzedCount, label: 'Analisadas', sub: 'concluídas' },
+                                  { icon: Zap, color: 'text-amber-400', num: pendingCount, label: 'Pendentes', sub: 'aguardando' },
+                                ].map(({ icon: Icon, color, num, label, sub }) => (
+                                  <div key={label} className="flex-1 bg-white/[0.03] border border-white/[0.07] rounded-xl py-3 flex flex-col items-center text-center">
+                                    <Icon size={16} className={`${color} mb-1.5`} />
+                                    <span className={`text-2xl font-black tabular-nums leading-none ${color}`}>{String(num).padStart(2, '0')}</span>
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-white mt-1">{label}</span>
+                                    <span className="text-[10px] text-white/30">{sub}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              {/* Busca mobile */}
+                              <div className="relative group">
+                                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10 text-white/25 group-focus-within:text-blue-400 transition-colors">
+                                  <Search size={14} />
+                                </div>
+                                <input
+                                  type="text"
+                                  value={searchQuery}
+                                  onChange={(e) => setSearchQuery(e.target.value)}
+                                  placeholder="Buscar time ou liga..."
+                                  className="w-full h-10 bg-white/[0.04] border border-white/[0.08] rounded-xl pl-9 pr-9 text-sm font-medium text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/40 focus:bg-white/[0.06] transition-all"
+                                />
+                                {searchQuery && (
+                                  <button onClick={() => setSearchQuery('')}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-white/25 hover:text-white transition-colors">
+                                    <X size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Chip de modelos */}
+                            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.05] w-fit">
+                              <Activity size={13} className="text-blue-400/70 flex-shrink-0" />
+                              <span className="text-[11px] text-white/50 font-medium">
+                                Monitorando <span className="text-white/75">ELO</span> • <span className="text-white/75">Poisson</span> • <span className="text-white/75">Odds</span> • <span className="text-white/75">Sharp Money</span> • <span className="text-white/75">IA</span>
                               </span>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                            </div>
 
-                    {/* League Quick Filters */}
-                    <div className="relative group">
-                      <div className="flex items-center gap-3 overflow-x-auto no-scrollbar pb-4 -mx-1 px-1">
+                          </div>
+
+                          {/* ── Direita: Gate card + filtros ── */}
+                          <div className="flex flex-col gap-3 w-full lg:w-[320px] xl:w-[360px]">
+
+                            {/* GATE card */}
+                            <style>{`
+                              @keyframes gateShieldPulse {
+                                0%   { box-shadow: 0 0 0 0 rgba(59,130,246,0.5), 0 0 0 0 rgba(59,130,246,0.25); }
+                                50%  { box-shadow: 0 0 0 7px rgba(59,130,246,0.12), 0 0 0 14px rgba(59,130,246,0.04); }
+                                100% { box-shadow: 0 0 0 0 rgba(59,130,246,0), 0 0 0 0 rgba(59,130,246,0); }
+                              }
+                              @keyframes gateShieldScan {
+                                0%   { transform: translateY(110%) scaleX(0.6); opacity: 0; }
+                                30%  { opacity: 0.7; }
+                                70%  { opacity: 0.7; }
+                                100% { transform: translateY(-110%) scaleX(0.6); opacity: 0; }
+                              }
+                              @keyframes gateShieldGlow {
+                                0%, 100% { opacity: 0.7; }
+                                50%       { opacity: 1; }
+                              }
+                              .gate-shield-active {
+                                animation: gateShieldPulse 2.4s ease-out infinite;
+                              }
+                              .gate-scan-line {
+                                animation: gateShieldScan 2.4s ease-in-out infinite;
+                              }
+                              .gate-shield-icon {
+                                animation: gateShieldGlow 2.4s ease-in-out infinite;
+                              }
+                            `}</style>
+                            <button
+                              onClick={() => setShowApprovedOnly(prev => !prev)}
+                              title={approvedCount > 0 ? `${approvedCount} aprovada(s) pelo Gate` : 'Nenhuma aprovada ainda'}
+                              className={`w-full flex items-center gap-4 px-4 py-4 rounded-xl border transition-all text-left ${
+                                showApprovedOnly
+                                  ? 'bg-blue-600/12 border-blue-500/35'
+                                  : 'bg-white/[0.03] border-white/[0.07] hover:border-blue-500/25 hover:bg-blue-500/[0.04]'
+                              }`}
+                            >
+                              {/* Shield icon com animação de proteção quando ativo */}
+                              <div className={`relative flex-shrink-0 w-14 h-14 rounded-xl bg-blue-600/15 border border-blue-500/25 flex items-center justify-center overflow-hidden ${showApprovedOnly ? 'gate-shield-active' : ''}`}>
+                                {/* Linha de scan (só quando ativo) */}
+                                {showApprovedOnly && (
+                                  <div className="gate-scan-line absolute inset-x-0 h-[2px] bg-gradient-to-r from-transparent via-blue-400/70 to-transparent pointer-events-none" />
+                                )}
+                                <Shield size={26} className={`text-blue-400 relative z-10 ${showApprovedOnly ? 'gate-shield-icon' : ''}`} />
+                                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-[#0a0a0b] flex items-center justify-center z-20">
+                                  <CheckCircle size={11} className="text-white" />
+                                </div>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-0.5">
+                                  <span className="text-base font-black text-blue-400 uppercase tracking-wider">Gate</span>
+                                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/25 text-[10px] font-black text-emerald-400 uppercase tracking-wider">
+                                    <CheckCircle size={9} />
+                                    Ativo
+                                  </span>
+                                </div>
+                                <div className="text-[12px] text-white/50">Filtro inteligente</div>
+                                <div className="text-[12px] text-blue-400/70">Proteção de entradas</div>
+                              </div>
+                              {approvedCount > 0 && (
+                                <span className={`text-sm font-black px-2.5 py-1 rounded-lg tabular-nums flex-shrink-0 ${showApprovedOnly ? 'bg-blue-600 text-white' : 'bg-white/[0.08] text-white/50'}`}>
+                                  {approvedCount}
+                                </span>
+                              )}
+                            </button>
+
+                            {/* Período */}
+                            <div className="flex flex-col gap-2">
+                              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/25 px-0.5">Período</span>
+                              <div className="flex items-center h-10 bg-white/[0.04] border border-white/[0.08] rounded-lg p-0.5 gap-0.5">
+                                {[
+                                  { value: 1, label: 'Hoje' },
+                                  { value: 2, label: '48H' },
+                                  { value: 3, label: '72H' },
+                                  { value: 7, label: '7 Dias' },
+                                ].map((opt) => (
+                                  <button
+                                    key={opt.value}
+                                    onClick={() => setFilterDate(opt.value)}
+                                    className={`h-full flex-1 rounded-md text-xs font-black uppercase tracking-wide transition-all select-none ${
+                                      filterDate === opt.value
+                                        ? 'bg-blue-600 text-white shadow-sm'
+                                        : 'text-white/35 hover:text-white/70 hover:bg-white/[0.06]'
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Analisadas / Pendentes */}
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setFilterAnalyzed(prev => prev === 'analyzed' ? 'all' : 'analyzed')}
+                                className={`flex-1 h-11 flex items-center justify-center gap-2 rounded-xl text-xs font-black uppercase tracking-wide border transition-all ${
+                                  filterAnalyzed === 'analyzed'
+                                    ? 'bg-blue-500/15 border-blue-500/30 text-blue-400'
+                                    : 'bg-white/[0.04] border-white/[0.08] text-white/35 hover:text-white/70'
+                                }`}
+                              >
+                                <Eye size={13} />
+                                <span>Analisadas</span>
+                                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${filterAnalyzed === 'analyzed' ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/40'}`}>
+                                  {analyzedCount}
+                                </span>
+                              </button>
+                              <button
+                                onClick={() => setFilterAnalyzed(prev => prev === 'pending' ? 'all' : 'pending')}
+                                className={`flex-1 h-11 flex items-center justify-center gap-2 rounded-xl text-xs font-black uppercase tracking-wide border transition-all ${
+                                  filterAnalyzed === 'pending'
+                                    ? 'bg-amber-500/15 border-amber-500/30 text-amber-400'
+                                    : 'bg-white/[0.04] border-white/[0.08] text-white/35 hover:text-white/70'
+                                }`}
+                              >
+                                <Zap size={13} />
+                                <span>Pendentes</span>
+                                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${filterAnalyzed === 'pending' ? 'bg-amber-500 text-black' : 'bg-white/10 text-white/40'}`}>
+                                  {pendingCount}
+                                </span>
+                              </button>
+                            </div>
+
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Divider */}
+                    <div className="h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
+
+                                        {/* League Quick Filters */}
+                    <div className="relative">
+                      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
+
                         <button
                           onClick={() => toggleFilterLeague('all')}
-                          className={`flex items-center gap-3 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] border transition-all whitespace-nowrap shadow-sm ${filterLeagues.includes('all')
-                            ? 'bg-white text-black border-white shadow-lg shadow-white/10 scale-[1.02]'
-                            : 'bg-[#0d0d0f] text-white/40 border-white/5 hover:border-white/10 hover:text-white'
-                            }`}
+                          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs sm:text-[13px] font-black uppercase tracking-[0.12em] border transition-all whitespace-nowrap flex-shrink-0 ${
+                            filterLeagues.includes('all')
+                              ? 'bg-white text-black border-transparent shadow-md shadow-white/10'
+                              : 'bg-white/[0.04] text-white/40 border-white/[0.08] hover:border-white/15 hover:text-white/70'
+                          }`}
                         >
-                          <Filter size={14} className={filterLeagues.includes('all') ? 'text-black' : 'text-blue-500/60'} />
+                          <Filter size={13} className={filterLeagues.includes('all') ? 'text-black' : 'text-blue-400/60'} />
                           <span>Todas as Ligas</span>
                         </button>
 
                         <button
                           onClick={() => setIsSidebarOpen(true)}
-                          className="flex items-center gap-3 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] border border-blue-500/20 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 transition-all whitespace-nowrap"
+                          className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs sm:text-[13px] font-black uppercase tracking-[0.12em] border border-blue-500/25 bg-blue-600/10 text-blue-400 hover:bg-blue-600/18 transition-all whitespace-nowrap flex-shrink-0"
                         >
-                          <Filter size={14} className="text-blue-400" />
+                          <Filter size={13} />
                           <span>Filtro de Ligas</span>
                         </button>
 
-                        <div className="w-px h-8 bg-white/5 mx-1 flex-shrink-0" />
+                        <div className="w-px h-5 bg-white/[0.08] flex-shrink-0" />
 
                         {LEAGUES.filter(l => selectedLeagues.includes(l.key)).map(league => {
-                          const Icon = leagueIcons[league.symbol as string] || Trophy;
                           const isActive = filterLeagues.includes(league.key);
                           return (
                             <button
                               key={league.key}
                               onClick={() => toggleFilterLeague(league.key)}
-                              className={`flex items-center gap-3 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] border transition-all whitespace-nowrap group/btn ${isActive
-                                ? 'bg-blue-600 text-white border-blue-500 shadow-xl shadow-blue-600/20 scale-[1.02]'
-                                : 'bg-[#0d0d0f] text-white/40 border-white/5 hover:border-white/10 hover:text-white'
-                                }`}
+                              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs sm:text-[13px] font-black uppercase tracking-[0.12em] border transition-all whitespace-nowrap flex-shrink-0 group/btn ${
+                                isActive
+                                  ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-900/30'
+                                  : 'bg-white/[0.04] text-white/40 border-white/[0.08] hover:border-white/15 hover:text-white/70'
+                              }`}
                             >
-                              <Icon size={14} className={isActive ? 'text-white' : 'text-blue-500/40 group-hover/btn:text-blue-400 transition-colors'} />
+                              <LeagueEmblem sportKey={league.key} size={16} active={isActive} />
                               <span>{league.name}</span>
                             </button>
                           );
                         })}
                       </div>
 
-                      {/* Fade edges for scroll */}
-                      <div className="absolute right-0 top-0 bottom-4 w-20 bg-gradient-to-l from-[#0a0a0b] to-transparent pointer-events-none hidden sm:block" />
+                      <div className="absolute right-0 top-0 bottom-1 w-16 bg-gradient-to-l from-[#0a0a0b] to-transparent pointer-events-none hidden sm:block" />
                     </div>
+
                   </div>
                 )}
 
@@ -2139,83 +3022,154 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                       <Search size={32} className="text-white/10" />
                     </div>
                     <h3 className="text-2xl font-black text-white mb-3 uppercase tracking-tighter italic">
-                      {searchQuery ? <span>Sem Resultados</span> : showApprovedOnly ? <span>Sem Aprovadas</span> : <span>Vazio</span>}
+                      {searchQuery ? <span>Sem Resultados</span> : showApprovedOnly ? <span>Sem Aprovadas</span> : filterAnalyzed === 'analyzed' ? <span>Nenhuma Analisada</span> : filterAnalyzed === 'pending' ? <span>Todas Analisadas</span> : <span>Vazio</span>}
                     </h3>
                     <p className="text-white/40 text-center max-w-sm px-6 font-medium leading-relaxed">
                       {searchQuery
                         ? <span>Nenhum confronto encontrado para "{searchQuery}". Verifique a ortografia ou tente outro termo.</span>
                         : showApprovedOnly
                           ? <span>Nenhuma partida aprovada pelo Gate com os filtros atuais. Analise mais partidas para ver as aprovadas.</span>
-                          : <span>Nenhuma partida encontrada para o período selecionado.</span>}
+                          : filterAnalyzed === 'analyzed'
+                            ? <span>Nenhuma partida foi analisada ainda no período selecionado. Clique em "Analisar" em qualquer card para começar.</span>
+                            : filterAnalyzed === 'pending'
+                              ? <span>Todas as partidas do período selecionado já foram analisadas. Parabéns!</span>
+                              : <span>Nenhuma partida encontrada para o período selecionado.</span>}
                     </p>
-                    {searchQuery && (
+                    {(searchQuery || filterAnalyzed !== 'all') && (
                       <button
-                        onClick={() => setSearchQuery('')}
+                        onClick={() => { setSearchQuery(''); setFilterAnalyzed('all'); }}
                         className="mt-6 px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] font-bold text-white uppercase tracking-widest transition-all"
                       >
-                        Limpar Busca
+                        Limpar Filtros
                       </button>
                     )}
                   </div>
                 ) : (
-                  <div className="space-y-20">
+                  <div className="space-y-10 sm:space-y-20">
                     {/* Engine Legend */}
                     <motion.div
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="bg-white/[0.02] border border-white/5 rounded-[2.5rem] p-10 mb-16 relative overflow-hidden group"
+                      className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-white/[0.07] bg-white/[0.02] mb-8 sm:mb-14"
                     >
-                      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                      {/* subtle gradient overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-600/[0.04] via-transparent to-purple-600/[0.04] pointer-events-none" />
 
-                      <div className="relative flex flex-col md:flex-row justify-between items-center gap-8">
-                        <div>
-                          <h4 className="text-white font-black text-xl uppercase tracking-tighter mb-1">Guia de Análise Tipster</h4>
-                          <p className="text-[10px] text-white/30 uppercase font-bold tracking-widest">Critérios de Validação da EVEngine AI</p>
+                      <div className="relative p-5 sm:p-8">
+                        {/* Header row */}
+                        <div className="flex items-center gap-3 mb-6 sm:mb-8">
+                          <div className="w-1 h-8 rounded-full bg-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.5)]" />
+                          <div>
+                            <h4 className="text-white font-black text-base sm:text-lg uppercase tracking-tight leading-none">
+                              Guia de Análise Tipster
+                            </h4>
+                            <p className="text-[10px] text-white/30 uppercase font-semibold tracking-[0.18em] mt-0.5">
+                              Critérios de Validação · EVEngine AI
+                            </p>
+                          </div>
                         </div>
 
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-12 w-full md:w-auto">
+                        {/* Cards grid */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                           {[
-                            { tier: 'S/A', color: 'text-emerald-400', dot: 'bg-emerald-500', label: 'APOSTE', desc: 'Alta Confiança' },
-                            { tier: 'B', color: 'text-blue-400', dot: 'bg-blue-500', label: 'APOSTE', desc: 'Boa Oportunidade' },
-                            { tier: 'C', color: 'text-amber-400', dot: 'bg-amber-500', label: 'MONITORAR', desc: 'Risco Médio' },
-                            { tier: 'D', color: 'text-rose-400', dot: 'bg-rose-500', label: 'EVITAR', desc: 'Baixa Confiança' }
+                            {
+                              tier: 'S/A',
+                              color: 'text-emerald-400',
+                              border: 'border-emerald-500/25',
+                              bg: 'bg-emerald-500/[0.07]',
+                              dot: 'bg-emerald-400',
+                              glow: 'shadow-[0_0_16px_rgba(52,211,153,0.25)]',
+                              label: 'APOSTE',
+                              desc: 'Alta Confiança',
+                              hint: 'Melhor edge detectado'
+                            },
+                            {
+                              tier: 'B',
+                              color: 'text-blue-400',
+                              border: 'border-blue-500/25',
+                              bg: 'bg-blue-500/[0.07]',
+                              dot: 'bg-blue-400',
+                              glow: 'shadow-[0_0_16px_rgba(96,165,250,0.25)]',
+                              label: 'APOSTE',
+                              desc: 'Boa Oportunidade',
+                              hint: 'Value positivo confirmado'
+                            },
+                            {
+                              tier: 'C',
+                              color: 'text-amber-400',
+                              border: 'border-amber-500/25',
+                              bg: 'bg-amber-500/[0.07]',
+                              dot: 'bg-amber-400',
+                              glow: 'shadow-[0_0_16px_rgba(251,191,36,0.2)]',
+                              label: 'MONITORAR',
+                              desc: 'Risco Médio',
+                              hint: 'Aguarde mais dados'
+                            },
+                            {
+                              tier: 'D',
+                              color: 'text-rose-400',
+                              border: 'border-rose-500/25',
+                              bg: 'bg-rose-500/[0.07]',
+                              dot: 'bg-rose-400',
+                              glow: 'shadow-[0_0_16px_rgba(251,113,133,0.2)]',
+                              label: 'EVITAR',
+                              desc: 'Baixa Confiança',
+                              hint: 'Sem edge estatístico'
+                            },
                           ].map(item => (
-                            <div key={item.tier} className="flex items-center gap-4">
-                              <div className="relative">
-                                <div className={`w-8 h-8 rounded-lg bg-white/[0.03] border border-white/5 flex items-center justify-center font-black text-[9px] ${item.color}`}>
+                            <div
+                              key={item.tier}
+                              className={`flex flex-col gap-3 p-4 sm:p-5 rounded-xl border ${item.border} ${item.bg}`}
+                            >
+                              {/* Tier badge + dot */}
+                              <div className="flex items-center justify-between">
+                                <div className={`relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-black/20 border ${item.border} flex items-center justify-center font-black text-sm sm:text-base ${item.color} ${item.glow}`}>
                                   {item.tier}
+                                  <div className={`absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full border-2 border-[#0d0d0f] ${item.dot}`} />
                                 </div>
-                                <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-[#141416] shadow-[0_0_8px_currentcolor] ${item.dot} ${item.color}`} />
                               </div>
+
+                              {/* Label + desc */}
                               <div>
-                                <p className={`text-[9px] font-black uppercase tracking-[0.1em] ${item.color}`}>{item.label}</p>
-                                <p className="text-[8px] text-white/30 font-bold uppercase tracking-tighter">{item.desc}</p>
+                                <p className={`text-sm sm:text-base font-black uppercase tracking-wide leading-none ${item.color}`}>
+                                  {item.label}
+                                </p>
+                                <p className="text-xs sm:text-sm font-semibold text-white/60 mt-1 leading-none">
+                                  {item.desc}
+                                </p>
                               </div>
+
+                              {/* Hint */}
+                              <p className="text-[10px] sm:text-xs text-white/25 font-medium leading-snug">
+                                {item.hint}
+                              </p>
                             </div>
                           ))}
                         </div>
                       </div>
                     </motion.div>
                     {Object.entries(groupedMatches).map(([leagueName, leagueMatches]) => (
-                      <section key={leagueName} className="space-y-8">
-                        <div className="flex items-center gap-6">
-                          <div className="flex items-center gap-3">
-                            <div className="w-2 h-7 bg-blue-600 rounded-full shadow-[0_0_15px_#2563eb]" />
-                            <h3 className="text-white font-bold text-2xl uppercase tracking-tight">
+                      <section key={leagueName} className="space-y-5 sm:space-y-8">
+                        <div className="flex items-center gap-3 sm:gap-6 min-w-0">
+                          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                            <div className="w-1.5 sm:w-2 h-6 sm:h-7 bg-blue-600 rounded-full shadow-[0_0_15px_#2563eb]" />
+                            <h3 className="text-white font-bold text-lg sm:text-2xl uppercase tracking-tight truncate max-w-[160px] sm:max-w-none">
                               {leagueName}
                             </h3>
                           </div>
-                          <div className="h-[1px] bg-white/5 grow mt-1 mr-4" />
-                          <span className="text-white/20 text-[10px] font-black uppercase tracking-[0.3em] font-mono whitespace-nowrap">
-                            <span>{(leagueMatches as Match[]).length}</span> <span>AVAILABLE SESSIONS</span>
+                          <div className="h-[1px] bg-white/5 grow mt-1" />
+                          <span className="text-white/20 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] font-mono whitespace-nowrap shrink-0">
+                            {(leagueMatches as Match[]).length} <span className="hidden sm:inline">AVAILABLE SESSIONS</span><span className="sm:hidden">jogos</span>
                           </span>
-
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-8">
 
-                          {(leagueMatches as Match[]).map((match: Match) => (
+                          {(leagueMatches as Match[]).map((match: Match) => {
+                            const isApproved = analyzedMatches[match.id]?.tipsterEngine?.status === 'APROVADO';
+                            const isPlaced = placedBets.has(match.id);
+                            return (
+                            <div key={match.id} id={`match-card-${match.id}`} className="flex flex-col gap-2">
                             <MatchCardTipster
-                              key={match.id}
                               deepAnalysis={analyzedMatches[match.id]}
                               match={{
                                 id: match.id,
@@ -2268,7 +3222,26 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                                 setResultadoModalOpen(true);
                               }}
                             />
-                          ))}
+                            {/* FEITO button — visible only on Gate APROVADO entries */}
+                            {isApproved && (
+                              isPlaced ? (
+                                <div className="flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-[10px] font-black uppercase tracking-widest">
+                                  <CheckCircle size={13} className="shrink-0" />
+                                  <span>Apostado</span>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleOpenConfirmBet(match)}
+                                  className="flex items-center justify-center gap-2 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 border border-emerald-500/60 rounded-xl text-white text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 shadow-md shadow-emerald-600/20"
+                                >
+                                  <CheckCircle size={13} className="shrink-0" />
+                                  <span>Marcar como Feito</span>
+                                </button>
+                              )
+                            )}
+                            </div>
+                            );
+                          })}
                         </div>
                       </section>
                     ))}
@@ -2281,7 +3254,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       </main>
 
       {/* Footer */}
-      <footer className="max-w-[1600px] mx-auto px-6 py-20 border-t border-white/10 mt-20 text-center border-dashed">
+      <footer className="max-w-[1600px] mx-auto px-4 sm:px-6 py-10 sm:py-20 border-t border-white/10 mt-10 sm:mt-20 text-center border-dashed">
         <div className="flex flex-col items-center">
           <div className="flex items-center gap-3 mb-8 bg-blue-600/10 px-4 py-2 rounded-full border border-blue-500/20">
             <TrendingUp size={16} className="text-blue-500" />
@@ -2325,22 +3298,24 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
       {/* API-Football error banner (Apenas admin se for erro de cota) */}
       <ApiErrorBanner
-        errorType={apiFootballError?.kind === 'quota' && user?.email !== 'grampinelli1985@gmail.com' ? null : apiFootballError}
+        errorType={apiFootballError?.kind === 'quota' && (plan === 'pro' || plan === 'sharp') ? null : apiFootballError}
         onDismiss={() => setApiFootballError(null)}
       />
 
-      {/* Live Notifications Container */}
-      <div className="fixed top-20 right-6 z-[60] flex flex-col gap-3 pointer-events-none">
-        <AnimatePresence mode="popLayout">
-          {liveNotifications.map(match => (
-            <LiveNotification
-              key={match.id}
-              match={match}
-              onClose={removeNotification}
-            />
-          ))}
-        </AnimatePresence>
-      </div>
+      {/* Live Notifications Container — restrito a planos pro/sharp */}
+      {(plan === 'pro' || plan === 'sharp') && (
+        <div className="fixed top-[4.5rem] right-3 sm:right-6 z-[60] flex flex-col gap-3 pointer-events-none max-w-[calc(100vw-1.5rem)] sm:max-w-sm">
+          <AnimatePresence mode="popLayout">
+            {liveNotifications.map(match => (
+              <LiveNotification
+                key={match.id}
+                match={match}
+                onClose={removeNotification}
+              />
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
 
 
 
@@ -2351,9 +3326,9 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-4xl"
+            className="fixed bottom-4 sm:bottom-8 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-1.5rem)] sm:w-[calc(100%-2rem)] max-w-4xl"
           >
-            <div className="bg-[#141416]/90 backdrop-blur-xl border border-white/[0.08] p-4 rounded-[2rem] shadow-2xl flex items-center justify-between gap-4">
+            <div className="bg-[#141416]/90 backdrop-blur-xl border border-white/[0.08] p-3 sm:p-4 rounded-2xl sm:rounded-[2rem] shadow-2xl flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-4 pl-4">
                 <div className="flex flex-col min-w-0">
                   <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest leading-none mb-1 truncate">Candidatos ao Bilhete</span>
@@ -2430,6 +3405,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       <HistoricoModal
         isOpen={historicoModalOpen}
         onClose={() => setHistoricoModalOpen(false)}
+        plan={plan}
       />
 
       <ResultadoModal
@@ -2457,21 +3433,29 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             atualizarEloPartida(jogo.home_team, jogo.away_team, resultado);
           }
 
-          // Gravar no cache local
+          // Gravar no cache local — normalizar estrutura flat vs { data: {...} }
           const cacheKey = `analysis_${matchId}`;
           const cached = localStorage.getItem(cacheKey);
           if (cached) {
             try {
               const parsed = JSON.parse(cached);
-              parsed.data.resultado_registrado = true;
-              parsed.data.resultado_placar = placar;
-              parsed.data.resultado_data = new Date().toISOString();
+              const payload = parsed.data ?? parsed; // suporta ambas as estruturas
+              payload.resultado_registrado = true;
+              payload.resultado_placar = placar;
+              payload.resultado_data = new Date().toISOString();
               localStorage.setItem(cacheKey, JSON.stringify(parsed));
-            } catch (e) { }
+            } catch (e) { console.error('[Cache] Falha ao atualizar resultado no localStorage:', e); }
           }
 
-          // Gravar no Supabase
-          await updateMatchResultInSupabase(matchId, placar, false);
+          // Atualizar analyzedMatches em memória para evitar estado stale
+          setAnalyzedMatches(prev => {
+            const existing = prev[matchId];
+            if (!existing) return prev;
+            return { ...prev, [matchId]: { ...existing, resultado_registrado: true, resultado_placar: placar, resultado_data: new Date().toISOString() } as any };
+          });
+
+          // Gravar no Supabase — terceiro argumento é resultado_registrado (deve ser true)
+          await updateMatchResultInSupabase(matchId, placar, true);
         }}
       />
       <AnimatePresence>
@@ -2484,6 +3468,57 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             className="fixed inset-0 z-[60] bg-[#0a0a0b] overflow-y-auto"
           >
             <TelemetryView onBack={() => setView('main')} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {view === 'linemovement' && plan === 'sharp' && (
+          <motion.div
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 30, stiffness: 250 }}
+            className="fixed inset-0 z-[60] bg-[#0a0a0b] overflow-y-auto"
+          >
+            <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+              {/* Back button */}
+              <button
+                onClick={() => setView('main')}
+                className="flex items-center gap-2 text-white/40 hover:text-white text-xs font-black uppercase tracking-widest mb-8 transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                Voltar
+              </button>
+              <LineMovementsView
+                records={lineMovements}
+                plan={plan}
+                onRefresh={() => loadMatches(true)}
+                onGoToMatch={(matchId) => {
+                  // Limpa todos os filtros para garantir que a partida seja visível
+                  setFilterDate(7);
+                  setFilterLeagues(['all']);
+                  setFilterAnalyzed('all');
+                  setSearchQuery('');
+                  setShowApprovedOnly(false);
+                  setView('main');
+                  // Aguarda a view renderizar com os filtros limpos antes de scrollar
+                  setTimeout(() => {
+                    const el = document.getElementById(`match-card-${matchId}`);
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      el.classList.add('lm-highlight');
+                      setTimeout(() => el.classList.remove('lm-highlight'), 2000);
+                    } else {
+                      // Partida não encontrada na lista atual — pode ter saído da janela da API
+                      const rec = lineMovements.find(r => r.matchId === matchId);
+                      const matchName = rec ? `${rec.homeTeam} vs ${rec.awayTeam}` : 'a partida';
+                      showToast.warning(`${matchName} não está mais disponível na janela de busca atual. Tente recarregar o painel.`);
+                    }
+                  }, 500);
+                }}
+              />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2529,6 +3564,61 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       )}
       <UpgradeModal />
       <ToastContainer />
+
+      {/* Modal de confirmação de odd real */}
+      {confirmBet && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-[#141416] border border-white/[0.08] rounded-3xl shadow-2xl p-6 space-y-5">
+            <div>
+              <p className="text-[9px] font-black text-white/30 uppercase tracking-widest">Confirmar Entrada</p>
+              <h3 className="text-sm font-black text-white uppercase mt-1">
+                {confirmBet.match.home_team} <span className="text-white/30">×</span> {confirmBet.match.away_team}
+              </h3>
+              <p className="text-[10px] text-white/40 mt-0.5">
+                {(confirmBet.analysis as any)?.resultado?.mercado_selecionado?.nome ||
+                 (confirmBet.analysis as any)?.tipster_engine?.mercado_selecionado?.nome || 'Mercado'}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[9px] font-bold text-white/40 uppercase tracking-widest block">
+                Odd que você entrou
+              </label>
+              <p className="text-[8px] text-white/25 mb-1.5">
+                Referência Pinnacle: <span className="text-blue-400 font-mono">{confirmBet.suggestedOdd.toFixed(2)}</span>
+              </p>
+              <input
+                type="number"
+                step="0.01"
+                min="1.01"
+                value={confirmBetOdd}
+                onChange={(e) => setConfirmBetOdd(e.target.value)}
+                className="w-full bg-[#0d0d0f] border border-white/10 rounded-xl px-4 py-3 text-sm font-mono font-black text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmBet(null)}
+                className="w-1/2 py-3 bg-white/5 hover:bg-white/10 text-white/60 font-black text-[10px] uppercase tracking-widest rounded-xl transition-all border border-white/5"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  const odd = parseFloat(confirmBetOdd);
+                  await handleMarcarFeito(confirmBet.match, confirmBet.analysis, isNaN(odd) ? undefined : odd);
+                  setConfirmBet(null);
+                }}
+                className="w-1/2 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-600/15"
+              >
+                Registrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

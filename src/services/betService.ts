@@ -304,6 +304,102 @@ export function calculatePerformanceMetrics(bets: Bet[]): {
   };
 }
 
+// ─── Auto-resolve helpers ────────────────────────────────────────────────────
+
+function determineOutcome(
+  market: string,
+  homeGoals: number,
+  awayGoals: number
+): 'green' | 'red' | null {
+  const m = market.toLowerCase();
+  const total = homeGoals + awayGoals;
+
+  if (m.includes('vitória casa') || m === 'home' || m === 'casa') {
+    return homeGoals > awayGoals ? 'green' : 'red';
+  }
+  if (m.includes('vitória fora') || m.includes('visitante') || m === 'away') {
+    return awayGoals > homeGoals ? 'green' : 'red';
+  }
+  if (m.includes('empate') || m === 'draw') {
+    return homeGoals === awayGoals ? 'green' : 'red';
+  }
+  if (m.includes('dupla chance 1x')) {
+    return homeGoals >= awayGoals ? 'green' : 'red';
+  }
+  if (m.includes('dupla chance x2')) {
+    return awayGoals >= homeGoals ? 'green' : 'red';
+  }
+  if (m.includes('dupla chance 12')) {
+    return homeGoals !== awayGoals ? 'green' : 'red';
+  }
+
+  const overMatch = m.match(/over\s+(\d+[.,]?\d*)/);
+  if (overMatch) {
+    const line = parseFloat(overMatch[1].replace(',', '.'));
+    return total > line ? 'green' : 'red';
+  }
+  const underMatch = m.match(/under\s+(\d+[.,]?\d*)/);
+  if (underMatch) {
+    const line = parseFloat(underMatch[1].replace(',', '.'));
+    return total < line ? 'green' : 'red';
+  }
+
+  if (m.includes('ambos marcam') || m.includes('btts') || m.includes('both teams')) {
+    if (m.includes('sim') || m.includes('yes')) {
+      return homeGoals > 0 && awayGoals > 0 ? 'green' : 'red';
+    }
+    if (m.includes('não') || m.includes('no')) {
+      return homeGoals === 0 || awayGoals === 0 ? 'green' : 'red';
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve automaticamente apostas pendentes quando um resultado ao vivo chega.
+ * Retorna quantas apostas foram resolvidas automaticamente.
+ */
+export async function autoResolveBetFromLiveResult(params: {
+  matchId: string;
+  homeGoals: number;
+  awayGoals: number;
+  placar: string;
+}): Promise<number> {
+  if (!supabase) return 0;
+
+  try {
+    const { data: bets, error } = await supabase
+      .from('bets')
+      .select('*')
+      .eq('status', 'pending');
+
+    if (error || !bets) return 0;
+
+    const matching = bets.filter((b: any) =>
+      b.notes?.includes(`matchId:${params.matchId}`)
+    );
+
+    let resolved = 0;
+    for (const bet of matching) {
+      const outcome = determineOutcome(bet.market, params.homeGoals, params.awayGoals);
+      if (!outcome) continue;
+
+      const result = await resolveBet(bet.id, {
+        status: outcome,
+        match_score: params.placar,
+      });
+
+      if (result) resolved++;
+    }
+
+    return resolved;
+  } catch (e) {
+    console.warn('[BetService] Erro ao auto-resolver apostas:', e);
+    return 0;
+  }
+}
+
 /**
  * Remove todas as apostas registradas no banco de dados.
  * Requer `confirmed = true` para evitar reset acidental — o caller deve
