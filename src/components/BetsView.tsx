@@ -14,7 +14,7 @@ import { useUserPlan } from '../hooks/useUserPlan';
 import { canViewHistory, canTrackCLV, canExportCSV } from '../services/planService';
 import { supabase } from '../services/supabaseClient';
 import { showToast } from './Toast';
-import { atualizarResultadoCLV } from '../services/clvService';
+import { atualizarResultadoCLV, getEntradasCLV, getCLVSummary } from '../services/clvService';
 
 interface BetsViewProps {
   onBack: () => void;
@@ -189,48 +189,91 @@ export default function BetsView({ onBack }: BetsViewProps) {
       window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal', { detail: { targetPlan: 'sharp' } }));
       return;
     }
-    
-    // Export resolved bets
+
     const resolvedBets = bets.filter(b => b.status !== 'pending');
-    if (resolvedBets.length === 0) {
-      showToast.info('Nenhuma aposta resolvida para exportar.');
+    const clvEntries = getEntradasCLV();
+    const clvSummary = getCLVSummary();
+    const bancaState = getBanca();
+    const metrics = calculatePerformanceMetrics(bets);
+
+    if (resolvedBets.length === 0 && clvEntries.length === 0) {
+      showToast.info('Nenhum dado para exportar.');
       return;
     }
-    
-    const headers = ['Data', 'Confronto', 'Mercado', 'Odd', 'Stake', 'Resultado', 'PnL', 'CLV (%)'];
-    const rows = resolvedBets.map(b => {
-      const pnl = b.status === 'green' ? (b.stake_amount * (b.odd_taken - 1)) : b.status === 'red' ? -b.stake_amount : 0;
-      
-      let clv = '0.00';
-      if ((b as any).closing_odd_pinnacle) {
-        clv = ((b.odd_taken / (b as any).closing_odd_pinnacle - 1) * 100).toFixed(2);
-      }
-      
-      const home = b.analyses?.home_team || '';
-      const away = b.analyses?.away_team || '';
-      const dateStr = new Date(b.created_at).toLocaleDateString('pt-BR');
-      
-      return [
-        dateStr,
-        `"${home} vs ${away}"`,
+
+    const lines: string[] = [];
+
+    // ── Seção 1: Resumo Geral ──
+    lines.push('=== RESUMO GERAL ===');
+    lines.push(`Data,${new Date().toLocaleDateString('pt-BR')}`);
+    lines.push(`Banca Atual,${bancaState.total.toFixed(2)}`);
+    lines.push(`PnL Diário,${bancaState.pnl_diario.toFixed(2)}`);
+    lines.push(`Total Apostas,${metrics.totalSettled}`);
+    lines.push(`Win Rate,${metrics.hitRate}%`);
+    lines.push(`ROI,${metrics.roi}%`);
+    lines.push(`Resultado Líquido,${metrics.netResult.toFixed(2)}`);
+    lines.push('');
+
+    // ── Seção 2: Apostas ──
+    lines.push('=== APOSTAS ===');
+    lines.push('Data,Confronto,Liga,Mercado,Odd,Stake,Resultado,PnL,CLV%,Casa de Aposta');
+    resolvedBets.forEach(b => {
+      const pnl = b.status === 'green'
+        ? (b.stake_amount * (b.odd_taken - 1))
+        : b.status === 'red' ? -b.stake_amount
+        : b.status === 'cashout' ? ((b.result_amount ?? b.stake_amount) - b.stake_amount)
+        : 0;
+      const clvPct = b.closing_odd && b.closing_odd > 0
+        ? ((b.odd_taken / b.closing_odd - 1) * 100).toFixed(2)
+        : '';
+      const confronto = `${b.analyses?.home_team || ''} vs ${b.analyses?.away_team || ''}`;
+      lines.push([
+        new Date(b.created_at).toLocaleDateString('pt-BR'),
+        `"${confronto}"`,
+        `"${b.analyses?.league || ''}"`,
         `"${b.market}"`,
         b.odd_taken.toFixed(2),
         b.stake_amount.toFixed(2),
         b.status.toUpperCase(),
         pnl.toFixed(2),
-        clv
-      ].join(',');
+        clvPct,
+        `"${b.bookmaker || ''}"`
+      ].join(','));
     });
-    
-    const csvContent = [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    lines.push('');
+
+    // ── Seção 3: CLV Tracker ──
+    if (clvEntries.length > 0) {
+      lines.push('=== CLV TRACKER ===');
+      lines.push(`CLV Médio Geral,${clvSummary.clvMedioGeral}%`);
+      lines.push(`Taxa CLV Positivo,${clvSummary.positivoCLVRate}%`);
+      lines.push(`Perfil Sharp,${clvSummary.isSharp ? 'SIM' : 'NÃO'}`);
+      lines.push('');
+      lines.push('Data,Confronto,Mercado,Odd Usada,Odd Fechamento,CLV%,Resultado');
+      clvEntries.forEach(e => {
+        lines.push([
+          new Date(e.analyzedAt).toLocaleDateString('pt-BR'),
+          `"${e.homeTeam} vs ${e.awayTeam}"`,
+          `"${e.mercado}"`,
+          e.oddUtilizada.toFixed(2),
+          e.oddFechamento !== null ? e.oddFechamento.toFixed(2) : '',
+          e.clvPct !== null ? e.clvPct.toFixed(2) : '',
+          e.resultado
+        ].join(','));
+      });
+    }
+
+    const csvContent = lines.join('\n');
+    const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `evengine_apostas_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `evengine_relatorio_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast.success('Relatório exportado com sucesso!');
   };
 
   const handleResetBets = async () => {
@@ -495,11 +538,22 @@ export default function BetsView({ onBack }: BetsViewProps) {
           <div className="space-y-4">
             {bets.map((bet) => {
               const profit = bet.result_amount !== null ? bet.result_amount - bet.stake_amount : null;
-              
+
               // CLV Cálculo
               let clv: number | null = null;
               if (bet.closing_odd && bet.closing_odd > 0) {
                 clv = ((bet.odd_taken / bet.closing_odd) - 1) * 100;
+              }
+
+              // Extrair nomes dos times do campo notes como fallback (padrão: "Time A × Time B | Liga | ...")
+              let homeTeam = bet.analyses?.home_team || '';
+              let awayTeam = bet.analyses?.away_team || '';
+              if ((!homeTeam || !awayTeam) && bet.notes) {
+                const match = bet.notes.match(/^([^×]+)\s*×\s*([^|]+)/);
+                if (match) {
+                  homeTeam = homeTeam || match[1].trim();
+                  awayTeam = awayTeam || match[2].trim();
+                }
               }
 
               return (
@@ -522,7 +576,7 @@ export default function BetsView({ onBack }: BetsViewProps) {
                     {/* Matchup & Market */}
                     <div>
                       <h3 className="text-sm font-black text-white tracking-tight uppercase">
-                        {bet.analyses?.home_team || 'Time Casa'} <span className="text-white/20 mx-1">vs</span> {bet.analyses?.away_team || 'Time Fora'}
+                        {homeTeam || 'Time Casa'} <span className="text-white/20 mx-1">vs</span> {awayTeam || 'Time Fora'}
                       </h3>
                       <p className="text-[10px] font-bold text-white/50 uppercase tracking-wider mt-0.5">
                         Palpite: <span className="text-white font-black">{bet.market}</span> @ <span className="font-mono text-emerald-400 font-bold">{bet.odd_taken.toFixed(2)}</span>
@@ -622,7 +676,17 @@ export default function BetsView({ onBack }: BetsViewProps) {
               {/* Event detail */}
               <div className="p-3 bg-white/[0.02] border border-white/5 rounded-xl text-xs space-y-1">
                 <p className="text-white/40 uppercase font-black tracking-widest text-[8px]">Confronto</p>
-                <p className="text-white font-bold uppercase">{resolvingBet.analyses?.home_team} x {resolvingBet.analyses?.away_team}</p>
+                <p className="text-white font-bold uppercase">
+                  {(() => {
+                    let h = resolvingBet.analyses?.home_team || '';
+                    let a = resolvingBet.analyses?.away_team || '';
+                    if ((!h || !a) && resolvingBet.notes) {
+                      const m = resolvingBet.notes.match(/^([^×]+)\s*×\s*([^|]+)/);
+                      if (m) { h = h || m[1].trim(); a = a || m[2].trim(); }
+                    }
+                    return `${h || 'Time Casa'} x ${a || 'Time Fora'}`;
+                  })()}
+                </p>
                 <p className="text-white/60">Palpite: <strong>{resolvingBet.market}</strong> @ <strong>{resolvingBet.odd_taken.toFixed(2)}</strong> (R$ {resolvingBet.stake_amount.toFixed(0)})</p>
               </div>
 
