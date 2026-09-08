@@ -14,7 +14,7 @@ import { useUserPlan } from '../hooks/useUserPlan';
 import { canViewHistory, canTrackCLV, canExportCSV } from '../services/planService';
 import { supabase } from '../services/supabaseClient';
 import { showToast } from './Toast';
-import { atualizarResultadoCLV, getEntradasCLV, getCLVSummary } from '../services/clvService';
+import { atualizarResultadoCLV, sincronizarResultadoCLV, getEntradasCLV, getCLVSummary } from '../services/clvService';
 
 interface BetsViewProps {
   onBack: () => void;
@@ -160,10 +160,11 @@ export default function BetsView({ onBack }: BetsViewProps) {
             .eq('id', resolvingBet.id);
         }
 
-        // Sincronizar resultado no tracker CLV local (localStorage)
+        // Sincronizar resultado no tracker CLV — localStorage + Supabase
         const clvStatus = resStatus === 'green' ? 'GREEN' : resStatus === 'red' ? 'RED' : 'VOID';
         if (resolvingBet.analysis_id) {
           atualizarResultadoCLV(resolvingBet.analysis_id, clvStatus);
+          sincronizarResultadoCLV(resolvingBet.analysis_id, clvStatus).catch(console.warn);
         }
 
         setResolvingBet(null);
@@ -281,7 +282,7 @@ export default function BetsView({ onBack }: BetsViewProps) {
     if (!confirmed) return;
 
     try {
-      const success = await resetBets();
+      const success = await resetBets(true);
       if (success) {
         showToast.success("Todos os registros de apostas foram excluídos com sucesso!");
         loadBetsData();
@@ -549,10 +550,40 @@ export default function BetsView({ onBack }: BetsViewProps) {
               let homeTeam = bet.analyses?.home_team || '';
               let awayTeam = bet.analyses?.away_team || '';
               if ((!homeTeam || !awayTeam) && bet.notes) {
-                const match = bet.notes.match(/^([^×]+)\s*×\s*([^|]+)/);
-                if (match) {
-                  homeTeam = homeTeam || match[1].trim();
-                  awayTeam = awayTeam || match[2].trim();
+                // Tenta padrão com × (bets novas)
+                const matchX = bet.notes.match(/^([^×]+)\s*×\s*([^|]+)/);
+                if (matchX) {
+                  homeTeam = homeTeam || matchX[1].trim();
+                  awayTeam = awayTeam || matchX[2].trim();
+                }
+                // Tenta padrão "vs" como fallback (bets antigas)
+                if (!homeTeam && !awayTeam) {
+                  const matchVs = bet.notes.match(/^([^vs]+)\s+vs\s+([^|]+)/i);
+                  if (matchVs) {
+                    homeTeam = matchVs[1].trim();
+                    awayTeam = matchVs[2].trim();
+                  }
+                }
+              }
+              // Última tentativa: cache localStorage de análises
+              if (!homeTeam && !awayTeam && bet.analysis_id) {
+                try {
+                  const cache = JSON.parse(localStorage.getItem('evengine_analyzed_matches') || '{}');
+                  const cached = cache[bet.analysis_id];
+                  if (cached) {
+                    homeTeam = cached.home_team || cached.homeTeam || '';
+                    awayTeam = cached.away_team || cached.awayTeam || '';
+                  }
+                } catch {}
+              }
+
+              // Extrai data do jogo dos notes (formato: "Time A × Time B | Liga | DD/MM/YYYY | matchId:...")
+              let matchDateDisplay = new Date(bet.created_at).toLocaleDateString('pt-BR');
+              if (bet.notes) {
+                const parts = bet.notes.split('|');
+                if (parts.length >= 3) {
+                  const datePart = parts[2].trim();
+                  if (/^\d{2}\/\d{2}\/\d{4}$/.test(datePart)) matchDateDisplay = datePart;
                 }
               }
 
@@ -568,7 +599,7 @@ export default function BetsView({ onBack }: BetsViewProps) {
                         {bet.analyses?.league || 'LIGA GERAL'}
                       </span>
                       <span>•</span>
-                      <span>{new Date(bet.created_at).toLocaleDateString('pt-BR')}</span>
+                      <span>{matchDateDisplay}</span>
                       <span>•</span>
                       <span className="font-mono text-white/40">{bet.bookmaker}</span>
                     </div>
@@ -681,8 +712,19 @@ export default function BetsView({ onBack }: BetsViewProps) {
                     let h = resolvingBet.analyses?.home_team || '';
                     let a = resolvingBet.analyses?.away_team || '';
                     if ((!h || !a) && resolvingBet.notes) {
-                      const m = resolvingBet.notes.match(/^([^×]+)\s*×\s*([^|]+)/);
-                      if (m) { h = h || m[1].trim(); a = a || m[2].trim(); }
+                      const mX = resolvingBet.notes.match(/^([^×]+)\s*×\s*([^|]+)/);
+                      if (mX) { h = h || mX[1].trim(); a = a || mX[2].trim(); }
+                      if (!h && !a) {
+                        const mVs = resolvingBet.notes.match(/^([^vs]+)\s+vs\s+([^|]+)/i);
+                        if (mVs) { h = mVs[1].trim(); a = mVs[2].trim(); }
+                      }
+                    }
+                    if (!h && !a && resolvingBet.analysis_id) {
+                      try {
+                        const cache = JSON.parse(localStorage.getItem('evengine_analyzed_matches') || '{}');
+                        const cached = cache[resolvingBet.analysis_id];
+                        if (cached) { h = cached.home_team || cached.homeTeam || ''; a = cached.away_team || cached.awayTeam || ''; }
+                      } catch {}
                     }
                     return `${h || 'Time Casa'} x ${a || 'Time Fora'}`;
                   })()}
