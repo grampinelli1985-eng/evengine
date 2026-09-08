@@ -4,27 +4,25 @@
  */
 
 /**
- * Cache compartilhado de análises no Supabase.
- * Independente de usuário — qualquer sessão autenticada lê e escreve o mesmo cache.
+ * Cache compartilhado de análises no Supabase, isolado por plan_tier.
+ *
+ * [C-01 FIX] Adicionada coluna plan_tier: uma análise cacheada para um plano
+ * superior NÃO é retornada para usuários de planos inferiores.
+ * Hierarquia: free < pro < sharp
  *
  * TTL:
  *   - Análise normal (>60min pré-jogo): 4 horas
  *   - Pré-jogo (<60min): 20 minutos
- *   - Line movement ≥8% detectado: invalida imediatamente
+ *   - Line movement ≥3pp detectado: invalida imediatamente
  *   - Jogo ao vivo / passado: não cacheia
- *
- * Economia:
- *   - Evita 3-8 chamadas Gemini por análise repetida
- *   - Preserva quota API-Football e The Odds API
  */
 
 import { supabase } from './supabaseClient';
 
-// ─── Tipos ───────────────────────────────────────────────────
-
 export interface CacheEntry {
   id: string;
   fixture_key: string;
+  plan_tier: string;
   data: any;
   opening_odds: any | null;
   created_at: string;
@@ -34,20 +32,19 @@ export interface CacheEntry {
 }
 
 export type InvalidationReason = 'line_movement' | 'manual' | 'ttl';
+export type PlanTier = 'free' | 'pro' | 'sharp';
 
-// ─── TTL ─────────────────────────────────────────────────────
+const TTL_NORMAL_MIN   = 240;
+const TTL_PREMATCH_MIN = 20;
+const LINE_MOVEMENT_THRESHOLD = 0.03;
 
-const TTL_NORMAL_MIN   = 240;  // 4h — análise padrão
-const TTL_PREMATCH_MIN = 20;   // 20min — <1h para o jogo
-const LINE_MOVEMENT_THRESHOLD = 0.05; // 5% de variação de odd (Gate B7)
+// [C-01] Plans a given tier is allowed to access (own tier + lower tiers' cache)
+const ACCESSIBLE_TIERS: Record<PlanTier, PlanTier[]> = {
+  free:  ['free'],
+  pro:   ['free', 'pro'],
+  sharp: ['free', 'pro', 'sharp'],
+};
 
-// ─── Helpers ─────────────────────────────────────────────────
-
-/**
- * Gera a chave canônica do fixture.
- * Formato: "homeSlug-awaySlug-YYYYMMDD"
- * Ex: "arsenal-chelsea-20260315"
- */
 export function buildFixtureKey(homeTeam: string, awayTeam: string, matchDate?: string): string {
   const slug = (s: string) =>
     s.toLowerCase()
@@ -64,22 +61,14 @@ export function buildFixtureKey(homeTeam: string, awayTeam: string, matchDate?: 
   return `${slug(homeTeam)}-${slug(awayTeam)}-${dateStr}`;
 }
 
-/**
- * Calcula TTL baseado no tempo restante para o jogo.
- * @param matchDatetime ISO string da partida (ex: "2026-03-15T20:00:00Z")
- */
 function calcTTL(matchDatetime?: string): number {
   if (!matchDatetime) return TTL_NORMAL_MIN;
   const minutesUntilMatch = (new Date(matchDatetime).getTime() - Date.now()) / 60000;
-  if (minutesUntilMatch < 0) return 0;       // jogo passado — não cacheia
+  if (minutesUntilMatch < 0) return 0;
   if (minutesUntilMatch < 60) return TTL_PREMATCH_MIN;
   return TTL_NORMAL_MIN;
 }
 
-/**
- * Detecta line movement comparando odds atuais com odds salvas no cache.
- * Retorna true se qualquer odd principal caiu ≥8%.
- */
 export function detectLineMovement(
   savedOdds: Record<string, number> | null,
   currentOdds: Record<string, number>
@@ -87,58 +76,57 @@ export function detectLineMovement(
   if (!savedOdds) return false;
 
   for (const key of Object.keys(currentOdds)) {
-    const saved  = savedOdds[key];
+    const saved   = savedOdds[key];
     const current = currentOdds[key];
-    if (!saved || !current || saved <= 1) continue;
+    if (!saved || !current || saved <= 1 || current <= 1) continue;
 
-    const drop = (saved - current) / saved;
-    if (drop >= LINE_MOVEMENT_THRESHOLD) {
-      console.info(`[Cache] Line movement detectado em "${key}": ${saved} → ${current} (${(drop * 100).toFixed(1)}%)`);
+    const probDelta = Math.abs(1 / current - 1 / saved);
+    if (probDelta >= LINE_MOVEMENT_THRESHOLD) {
+      const direction = (1 / current) > (1 / saved) ? '↑' : '↓';
+      console.info(`[Cache] Line movement em "${key}": ${saved}→${current} (${direction}${(probDelta * 100).toFixed(1)}pp)`);
       return true;
     }
   }
   return false;
 }
 
-// ─── API Pública ─────────────────────────────────────────────
-
 /**
- * Busca análise cacheada no Supabase.
- * Retorna null se:
- *   - Cache miss
- *   - Expirado
- *   - Invalidado
- *   - Line movement detectado nas odds atuais
+ * [C-01 FIX] planTier param required — filters cache to entries accessible
+ * by the user's current plan. Free users never see pro/sharp cached analyses.
  */
 export async function getCachedAnalysis(
   fixtureKey: string,
+  planTier: PlanTier = 'free',
   currentOdds?: Record<string, number>
 ): Promise<any | null> {
-  // 1. Tentar ler do localStorage local primeiro (velocidade máxima + resiliência)
+  // Local cache check (no plan isolation at localStorage level — data is same device)
   try {
-    const localRaw = localStorage.getItem(`ev_cache_${fixtureKey}`);
+    const localRaw = localStorage.getItem(`ev_cache_${fixtureKey}_${planTier}`);
     if (localRaw) {
       const parsed = JSON.parse(localRaw);
       if (parsed.expiresAt && new Date(parsed.expiresAt).getTime() > Date.now()) {
-        console.info(`[Cache Local] HIT para "${fixtureKey}"`);
+        console.info(`[Cache Local] HIT para "${fixtureKey}" (${planTier})`);
         return parsed.data;
       } else {
-        localStorage.removeItem(`ev_cache_${fixtureKey}`);
+        localStorage.removeItem(`ev_cache_${fixtureKey}_${planTier}`);
       }
     }
-  } catch (e) {
-    // Ignora erros de localStorage (ex: quota excedida)
-  }
+  } catch {}
 
   if (!supabase) return null;
 
   try {
+    const allowedTiers = ACCESSIBLE_TIERS[planTier];
+
     const { data, error } = await supabase
       .from('analysis_cache')
       .select('*')
       .eq('fixture_key', fixtureKey)
       .eq('invalidated', false)
       .gt('expires_at', new Date().toISOString())
+      .in('plan_tier', allowedTiers)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (error) {
@@ -150,21 +138,19 @@ export async function getCachedAnalysis(
 
     const entry = data as CacheEntry;
 
-    // Verifica line movement se odds atuais foram fornecidas
     if (currentOdds && detectLineMovement(entry.opening_odds, currentOdds)) {
       await invalidateCacheEntry(fixtureKey, 'line_movement');
       return null;
     }
 
-    // Salva no localStorage local para chamadas subsequentes instantâneas
     try {
-      localStorage.setItem(`ev_cache_${fixtureKey}`, JSON.stringify({
+      localStorage.setItem(`ev_cache_${fixtureKey}_${planTier}`, JSON.stringify({
         data: entry.data,
         expiresAt: entry.expires_at
       }));
-    } catch (e) {}
+    } catch {}
 
-    console.info(`[Cache Supabase] HIT para "${fixtureKey}" (expira ${entry.expires_at})`);
+    console.info(`[Cache Supabase] HIT para "${fixtureKey}" (plan: ${entry.plan_tier}, expira ${entry.expires_at})`);
     return entry.data;
   } catch (err) {
     console.warn('[Cache Supabase] Exceção ao buscar cache:', err);
@@ -173,11 +159,13 @@ export async function getCachedAnalysis(
 }
 
 /**
- * Salva análise no Supabase e no localStorage.
+ * [C-01 FIX] planTier param required — tags cache entry with the plan tier
+ * that generated it, so lower-tier users cannot consume it.
  */
 export async function setCachedAnalysis(
   fixtureKey: string,
   result: any,
+  planTier: PlanTier = 'free',
   currentOdds?: Record<string, number>,
   matchDatetime?: string
 ): Promise<void> {
@@ -189,13 +177,12 @@ export async function setCachedAnalysis(
 
   const expires_at = new Date(Date.now() + ttlMin * 60000).toISOString();
 
-  // 1. Salvar no localStorage local
   try {
-    localStorage.setItem(`ev_cache_${fixtureKey}`, JSON.stringify({
+    localStorage.setItem(`ev_cache_${fixtureKey}_${planTier}`, JSON.stringify({
       data: result,
       expiresAt: expires_at
     }));
-  } catch (e) {}
+  } catch {}
 
   if (!supabase) return;
 
@@ -205,29 +192,26 @@ export async function setCachedAnalysis(
       .upsert(
         {
           fixture_key: fixtureKey,
+          plan_tier: planTier,
           data: result,
           opening_odds: currentOdds ?? null,
           expires_at,
           invalidated: false,
           invalidation_reason: null,
         },
-        { onConflict: 'fixture_key' }
+        { onConflict: 'fixture_key,plan_tier' }
       );
 
     if (error) {
       console.warn('[Cache Supabase] Erro ao salvar no Supabase:', error.message);
     } else {
-      console.info(`[Cache Supabase] SALVO "${fixtureKey}" — TTL ${ttlMin}min (expira ${expires_at})`);
+      console.info(`[Cache Supabase] SALVO "${fixtureKey}" (plan: ${planTier}) — TTL ${ttlMin}min`);
     }
   } catch (err) {
     console.warn('[Cache Supabase] Exceção ao salvar cache:', err);
   }
 }
 
-/**
- * Invalida uma entrada de cache.
- * Chamado quando line movement é detectado ou manualmente.
- */
 export async function invalidateCacheEntry(
   fixtureKey: string,
   reason: InvalidationReason = 'manual'
@@ -246,10 +230,6 @@ export async function invalidateCacheEntry(
   }
 }
 
-/**
- * Limpa entradas expiradas do cache.
- * Chamar periodicamente (ex: 1x por dia no mount do app).
- */
 export async function cleanExpiredCache(): Promise<void> {
   if (!supabase) return;
 
@@ -267,20 +247,19 @@ export async function cleanExpiredCache(): Promise<void> {
   }
 }
 
-/**
- * Verifica se existe cache válido para um fixture (sem retornar os dados).
- * Útil para mostrar indicador de "análise cacheada" na UI.
- */
-export async function hasCachedAnalysis(fixtureKey: string): Promise<boolean> {
+export async function hasCachedAnalysis(fixtureKey: string, planTier: PlanTier = 'free'): Promise<boolean> {
   if (!supabase) return false;
 
   try {
+    const allowedTiers = ACCESSIBLE_TIERS[planTier];
     const { data } = await supabase
       .from('analysis_cache')
       .select('id')
       .eq('fixture_key', fixtureKey)
       .eq('invalidated', false)
       .gt('expires_at', new Date().toISOString())
+      .in('plan_tier', allowedTiers)
+      .limit(1)
       .maybeSingle();
 
     return !!data;
@@ -289,11 +268,7 @@ export async function hasCachedAnalysis(fixtureKey: string): Promise<boolean> {
   }
 }
 
-/**
- * Retorna metadados do cache para um fixture (sem os dados da análise).
- * Útil para mostrar "última análise há X min" na UI.
- */
-export async function getCacheMetadata(fixtureKey: string): Promise<{
+export async function getCacheMetadata(fixtureKey: string, planTier: PlanTier = 'free'): Promise<{
   cached: boolean;
   created_at: string | null;
   expires_at: string | null;
@@ -302,10 +277,14 @@ export async function getCacheMetadata(fixtureKey: string): Promise<{
   if (!supabase) return null;
 
   try {
+    const allowedTiers = ACCESSIBLE_TIERS[planTier];
     const { data } = await supabase
       .from('analysis_cache')
-      .select('cached:id, created_at, expires_at, invalidated')
+      .select('id, created_at, expires_at, invalidated')
       .eq('fixture_key', fixtureKey)
+      .in('plan_tier', allowedTiers)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (!data) return { cached: false, created_at: null, expires_at: null, invalidated: false };
@@ -318,5 +297,87 @@ export async function getCacheMetadata(fixtureKey: string): Promise<{
     };
   } catch {
     return null;
+  }
+}
+
+// ─── Registro persistente de análises feitas (TTL 24h) ──────────────────────
+// Permite que o filtro "ANALISADAS" funcione mesmo após logout/login.
+
+const ANALYZED_LOG_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
+
+function getAnalyzedLogKey(userId?: string): string {
+  return `evengine_analyzed_log${userId ? `_${userId}` : ''}`;
+}
+
+export interface AnalyzedLogEntry {
+  fixtureKey: string;
+  matchId: string;
+  analyzedAt: string; // ISO
+}
+
+export function markMatchAsAnalyzed(matchId: string, fixtureKey: string, userId?: string): void {
+  try {
+    const key = getAnalyzedLogKey(userId);
+    const raw = localStorage.getItem(key);
+    const log: Record<string, AnalyzedLogEntry> = raw ? JSON.parse(raw) : {};
+    log[matchId] = { fixtureKey, matchId, analyzedAt: new Date().toISOString() };
+    localStorage.setItem(key, JSON.stringify(log));
+  } catch {}
+}
+
+export function getAnalyzedLog(userId?: string): Record<string, AnalyzedLogEntry> {
+  try {
+    const key = getAnalyzedLogKey(userId);
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const log: Record<string, AnalyzedLogEntry> = JSON.parse(raw);
+    const now = Date.now();
+    // Limpar entradas expiradas
+    const cleaned: Record<string, AnalyzedLogEntry> = {};
+    for (const [id, entry] of Object.entries(log)) {
+      if (now - new Date(entry.analyzedAt).getTime() < ANALYZED_LOG_TTL_MS) {
+        cleaned[id] = entry;
+      }
+    }
+    if (Object.keys(cleaned).length !== Object.keys(log).length) {
+      localStorage.setItem(key, JSON.stringify(cleaned));
+    }
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+
+export function wasAnalyzedWithin24h(matchId: string, userId?: string): boolean {
+  const log = getAnalyzedLog(userId);
+  const entry = log[matchId];
+  if (!entry) return false;
+  return Date.now() - new Date(entry.analyzedAt).getTime() < ANALYZED_LOG_TTL_MS;
+}
+
+export function clearAnalyzedLog(userId?: string): void {
+  try {
+    localStorage.removeItem(getAnalyzedLogKey(userId));
+  } catch {}
+}
+
+/**
+ * Busca do Supabase os match_ids que o usuário analisou nas últimas 24h.
+ * Usado para sincronizar o filtro "ANALISADAS" entre dispositivos.
+ */
+export async function fetchAnalyzedMatchIdsLast24h(userId: string): Promise<Set<string>> {
+  if (!supabase || !userId) return new Set();
+  try {
+    const since = new Date(Date.now() - ANALYZED_LOG_TTL_MS).toISOString();
+    const { data, error } = await supabase
+      .from('analyses')
+      .select('match_id')
+      .eq('user_id', userId)
+      .gte('created_at', since);
+
+    if (error || !data) return new Set();
+    return new Set(data.map((r: any) => r.match_id).filter(Boolean));
+  } catch {
+    return new Set();
   }
 }
