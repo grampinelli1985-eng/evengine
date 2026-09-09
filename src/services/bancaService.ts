@@ -1,17 +1,37 @@
 /**
- * bancaService.ts
- *
- * [D-1 FIX] Stop-loss state now persisted to `bancas.stop_loss_state` JSONB column.
- * localStorage is kept as a fast read cache; DB is the authoritative source loaded
- * on mount and written on every state mutation.
- *
- * Requires migration: supabase/migrations/add_stop_loss_state.sql
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
  */
 
+import { BancaState } from '../types';
 import { supabase } from './supabaseClient';
 import { getCachedProfile } from './planService';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+function getStorageKey(): string {
+  const profile = getCachedProfile();
+  return `evengine_banca_state${profile?.id ? `_${profile.id}` : ''}`;
+}
+
+function getResetKey(): string {
+  const profile = getCachedProfile();
+  return `evengine_banca_last_reset${profile?.id ? `_${profile.id}` : ''}`;
+}
+
+// [H-01 FIX] Stop loss key now user-scoped to prevent cross-user contamination
+function getStopLossKey(): string {
+  const profile = getCachedProfile();
+  return `evengine_stop_loss_state${profile?.id ? `_${profile.id}` : ''}`;
+}
+
+function getActiveBancaKey(): string {
+  const profile = getCachedProfile();
+  return `evengine_active_banca_id${profile?.id ? `_${profile.id}` : ''}`;
+}
+
+export function getStopLossAlertKey(): string {
+  const profile = getCachedProfile();
+  return `evengine_stop_loss_alert_dismissed${profile?.id ? `_${profile.id}` : ''}`;
+}
 
 export interface BancaDB {
   id: string;
@@ -20,161 +40,217 @@ export interface BancaDB {
   valor_inicial: number;
   valor_atual: number;
   created_at: string;
+  // [D-1 FIX] Stop-loss state persisted server-side
   stop_loss_state?: StopLossState | null;
 }
 
-export interface StopLossState {
-  consecutiveRedCount: number;
-  isBlocked: boolean;
-  blockReason: string | null;
-  lastRedDate: string | null;
-  dailyRedCount: number;
-  lastDailyReset: string | null;
+const DEFAULT_BANCA: BancaState = {
+  total: 1000,
+  pnl_diario: 0,
+  stake_recomendado: 0,
+  kelly: 0,
+  stops: { win: false, loss: false }
+};
+
+export function getBanca(): BancaState {
+  const stored = localStorage.getItem(getStorageKey());
+  return stored ? JSON.parse(stored) : { ...DEFAULT_BANCA };
 }
 
-// ─── localStorage keys (userId-scoped) ────────────────────────────────────────
+export function checkAndResetDaily(): void {
+  const lastReset = localStorage.getItem(getResetKey());
+  const today = new Date().toISOString().split('T')[0];
 
-function getStopLossKey(userId: string): string {
-  return `evengine_stop_loss_state_${userId}`;
+  if (lastReset !== today) {
+    const state = getBanca();
+    state.pnl_diario = 0;
+    state.stops = { win: false, loss: false };
+    state.apostasHoje = 0;
+    localStorage.setItem(getResetKey(), today);
+    saveBanca(state);
+  }
 }
 
-function getBancaKey(): string {
-  return 'evengine_banca_atual';
-}
-
-function getActiveBancaIdKey(): string {
-  return 'evengine_active_banca_id';
-}
-
-// ─── Banca local helpers ──────────────────────────────────────────────────────
-
-export function getBancaAtual(): number {
-  const raw = localStorage.getItem(getBancaKey());
-  return raw ? parseFloat(raw) : 1000;
-}
-
-/** Alias mantido para compatibilidade com componentes legados */
-export function getBanca(): number {
-  return getBancaAtual();
+export function saveBanca(state: BancaState) {
+  localStorage.setItem(getStorageKey(), JSON.stringify(state));
 }
 
 export function setBancaAtual(valor: number): void {
-  localStorage.setItem(getBancaKey(), String(valor));
+  const state = getBanca();
+  state.bancaAtual = valor;
+  state.total = valor;
+  localStorage.setItem(getStorageKey(), JSON.stringify(state));
+}
+
+export function getBancaAtual(): number {
+  try {
+    const raw = localStorage.getItem(getStorageKey());
+    if (!raw) return 1000;
+    const state = JSON.parse(raw);
+    return state.bancaAtual ?? state.total ?? 1000;
+  } catch {
+    return 1000;
+  }
+}
+
+export function resetarContadores(): void {
+  const state = getBanca();
+  state.apostasHoje = 0;
+  state.stops = { win: false, loss: false };
+  localStorage.setItem(getStorageKey(), JSON.stringify(state));
+  salvarStopLossState(STOP_LOSS_INICIAL);
+  window.dispatchEvent(new CustomEvent('evengine_stop_loss_changed', { detail: STOP_LOSS_INICIAL }));
+
+  // Limpa caches BLOQUEADO ao resetar manualmente o stop-loss
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k?.startsWith('ev_bloqueado_')) keys.push(k);
+  }
+  keys.forEach(k => localStorage.removeItem(k));
+}
+
+export function calculateKellyStake(prob: number, odd: number, bancaTotal: number, fraction: number = 0.25): number {
+  if (odd <= 1) return 0;
+
+  const p = prob / 100;
+  const b = odd - 1;
+  const q = 1 - p;
+
+  const kelly = (p * b - q) / b;
+  if (kelly <= 0) return 0;
+
+  const stakeValue = bancaTotal * kelly * fraction;
+  if (stakeValue <= 0) return 0;
+
+  return Math.min(stakeValue, bancaTotal * 0.03);
+}
+
+export function getStopStatus(banca: BancaState) {
+  const winLimit = banca.total * 0.15;
+  const lossLimit = -banca.total * 0.05;
+
+  return {
+    win: banca.pnl_diario >= winLimit,
+    loss: banca.pnl_diario <= lossLimit
+  };
+}
+
+export function registrarResultadoDiario(valor: number) {
+  const banca = getBanca();
+  const bancaBase = banca.total;
+  banca.pnl_diario += valor;
+  banca.total += valor;
+  banca.picoHistorico = Math.max(banca.picoHistorico || bancaBase, banca.total);
+
+  const stops = getStopStatus({ ...banca, total: bancaBase });
+  banca.stops = stops;
+
+  saveBanca(banca);
+}
+
+export function getDrawdownAtual(): number {
+  const state = getBanca();
+  const pico = state.picoHistorico || state.total;
+  if (pico <= 0) return 0;
+  return (pico - state.total) / pico;
+}
+
+export function emModoConservador(): boolean {
+  return getDrawdownAtual() > 0.20;
+}
+
+export function aplicarModoConservador(stakeCalculada: number): number {
+  return emModoConservador() ? stakeCalculada * 0.50 : stakeCalculada;
+}
+
+export function getEstadoProtecao() {
+  const banca = getBanca();
+  const stops = getStopStatus(banca);
+
+  return {
+    stop_loss_ativo: stops.loss,
+    stop_win_ativo: stops.win,
+    pnl_diario: banca.pnl_diario,
+    banca_total: banca.total
+  };
+}
+
+export interface StopLossState {
+  redStreakAtual: number;
+  suspensaoAtiva: boolean;
+  timestampUltimoRed: number;
+  historicoStreak: number[];
+  winsDesdeUltimoRed: number;
+}
+
+const STOP_LOSS_INICIAL: StopLossState = {
+  redStreakAtual: 0,
+  suspensaoAtiva: false,
+  timestampUltimoRed: 0,
+  historicoStreak: [],
+  winsDesdeUltimoRed: 0,
+};
+
+export function carregarStopLossState(): StopLossState {
+  try {
+    const raw = localStorage.getItem(getStopLossKey());
+    if (!raw) return { ...STOP_LOSS_INICIAL };
+    const parsed = JSON.parse(raw);
+    const redStreakAtual = parsed.redStreakAtual ?? 0;
+    const suspensaoAtiva = (parsed.suspensaoAtiva ?? false) && redStreakAtual >= getStopLossLimite();
+    return {
+      redStreakAtual,
+      suspensaoAtiva,
+      timestampUltimoRed: parsed.timestampUltimoRed ?? 0,
+      historicoStreak: parsed.historicoStreak ?? [],
+      winsDesdeUltimoRed: parsed.winsDesdeUltimoRed ?? 0,
+    };
+  } catch {
+    return { ...STOP_LOSS_INICIAL };
+  }
 }
 
 /**
- * Calcula o stake pelo critério de Kelly fracionário.
- * @param prob  Probabilidade estimada (0-1)
- * @param odd   Odd decimal
- * @param frac  Fração de Kelly (default 0.25 = quarter-Kelly)
+ * [D-1 FIX] Loads stop-loss state from DB (authoritative source).
+ * Falls back to localStorage if DB is unavailable.
+ * Call this on app mount after authentication.
  */
-export function calculateKellyStake(prob: number, odd: number, frac = 0.25): number {
-  if (prob <= 0 || prob >= 1 || odd <= 1) return 0;
-  const b = odd - 1;
-  const q = 1 - prob;
-  const kelly = (b * prob - q) / b;
-  if (kelly <= 0) return 0;
-  const banca = getBancaAtual();
-  return parseFloat((banca * kelly * frac).toFixed(2));
-}
-
-/** Registra uma entrada aprovada pelo gate (sem efeito sobre contadores de stop-loss) */
-export function registrarEntradaAprovada(): void {
-  // Hook para telemetria futura — sem efeito sobre stop-loss
-}
-
-// ─── Supabase CRUD ────────────────────────────────────────────────────────────
-
-export async function getBancasFromSupabase(userId: string): Promise<BancaDB[]> {
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from('bancas')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: true });
-  if (error) {
-    console.warn('[BancaService] getBancasFromSupabase error:', error.message);
-    return [];
-  }
-  return (data as BancaDB[]) ?? [];
-}
-
-export async function updateBancaBalance(bancaId: string, novoValor: number): Promise<void> {
-  if (!supabase) return;
-  const { error } = await supabase
-    .from('bancas')
-    .update({ valor_atual: novoValor })
-    .eq('id', bancaId);
-  if (error) console.warn('[BancaService] updateBancaBalance error:', error.message);
-}
-
-// ─── Stop-loss state ──────────────────────────────────────────────────────────
-
-const DEFAULT_STOP_LOSS_STATE: StopLossState = {
-  consecutiveRedCount: 0,
-  isBlocked: false,
-  blockReason: null,
-  lastRedDate: null,
-  dailyRedCount: 0,
-  lastDailyReset: null,
-};
-
-function getUserId(): string | null {
-  return getCachedProfile()?.id ?? null;
-}
-
-export function carregarStopLossState(): StopLossState {
-  const userId = getUserId();
-  if (!userId) return { ...DEFAULT_STOP_LOSS_STATE };
-  try {
-    const raw = localStorage.getItem(getStopLossKey(userId));
-    if (raw) return JSON.parse(raw) as StopLossState;
-  } catch { /* ignore */ }
-  return { ...DEFAULT_STOP_LOSS_STATE };
-}
-
 export async function carregarStopLossStateFromDB(): Promise<StopLossState> {
-  const userId = getUserId();
-  if (!userId || !supabase) return carregarStopLossState();
-
+  if (!supabase) return carregarStopLossState();
   try {
-    // Find the active banca for this user
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return carregarStopLossState();
 
+    const userId = session.user.id;
     const bancas = await getBancasFromSupabase(userId);
-    const storedActiveId = localStorage.getItem(getActiveBancaIdKey());
-    const active = (storedActiveId ? bancas.find(b => b.id === storedActiveId) : null) ?? bancas[0];
+    const activeId = localStorage.getItem(getActiveBancaKey());
+    const active = (activeId ? bancas.find(b => b.id === activeId) : null) ?? bancas[0];
 
     if (active?.stop_loss_state) {
-      // Sync DB state to localStorage cache
-      localStorage.setItem(getStopLossKey(userId), JSON.stringify(active.stop_loss_state));
+      localStorage.setItem(getStopLossKey(), JSON.stringify(active.stop_loss_state));
       return active.stop_loss_state as StopLossState;
     }
   } catch (e) {
     console.warn('[BancaService] carregarStopLossStateFromDB error:', e);
   }
-
-  // Fall back to localStorage
   return carregarStopLossState();
 }
 
+/**
+ * [D-1 FIX] Persists stop-loss state to localStorage (sync) and DB (async).
+ */
 export function salvarStopLossState(state: StopLossState): void {
-  const userId = getUserId();
-  if (!userId) return;
+  localStorage.setItem(getStopLossKey(), JSON.stringify(state));
 
-  // 1. Write to localStorage immediately (fast / sync)
-  try {
-    localStorage.setItem(getStopLossKey(userId), JSON.stringify(state));
-  } catch { /* ignore */ }
-
-  // 2. Persist to DB asynchronously (fire-and-forget)
+  // Persist to DB asynchronously so incognito/multi-device sessions can't bypass the gate
   if (supabase) {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) return;
+      const userId = session.user.id;
       getBancasFromSupabase(userId).then(bancas => {
-        const storedActiveId = localStorage.getItem(getActiveBancaIdKey());
-        const active = (storedActiveId ? bancas.find(b => b.id === storedActiveId) : null) ?? bancas[0];
+        const activeId = localStorage.getItem(getActiveBancaKey());
+        const active = (activeId ? bancas.find(b => b.id === activeId) : null) ?? bancas[0];
         if (!active) return;
         supabase!
           .from('bancas')
@@ -189,102 +265,218 @@ export function salvarStopLossState(state: StopLossState): void {
   }
 }
 
-// ─── Stop-loss logic ──────────────────────────────────────────────────────────
-
-export function checkAndResetDaily(): StopLossState {
-  const state = carregarStopLossState();
-  const todayUTC = new Date().toISOString().split('T')[0];
-
-  if (state.lastDailyReset !== todayUTC) {
-    const updated: StopLossState = {
-      ...state,
-      dailyRedCount: 0,
-      lastDailyReset: todayUTC,
-    };
-    salvarStopLossState(updated);
-    return updated;
-  }
-  return state;
+export interface Aposta {
+  resultado: string;
 }
 
-export function registrarResultadoDiario(resultado: 'green' | 'red' | 'void'): void {
-  let state = checkAndResetDaily();
+export function registrarResultado(aposta: Aposta): StopLossState {
+  const estado = carregarStopLossState();
+  const res = aposta.resultado.toLowerCase();
 
-  if (resultado === 'red') {
-    const updated: StopLossState = {
-      ...state,
-      consecutiveRedCount: state.consecutiveRedCount + 1,
-      dailyRedCount: state.dailyRedCount + 1,
-      lastRedDate: new Date().toISOString(),
+  if (res === 'green' || res === 'win') {
+    const novoEstado: StopLossState = {
+      ...estado,
+      redStreakAtual: 0,
+      suspensaoAtiva: false,
+      winsDesdeUltimoRed: (estado.winsDesdeUltimoRed || 0) + 1,
     };
+    salvarStopLossState(novoEstado);
+    window.dispatchEvent(new CustomEvent('evengine_stop_loss_changed', { detail: novoEstado }));
 
-    // Bloqueia após 3 REDs consecutivos ou 5 REDs no dia
-    if (updated.consecutiveRedCount >= 3) {
-      updated.isBlocked = true;
-      updated.blockReason = `Stop-loss ativado: ${updated.consecutiveRedCount} reds consecutivos.`;
-    } else if (updated.dailyRedCount >= 5) {
-      updated.isBlocked = true;
-      updated.blockReason = `Stop-loss ativado: ${updated.dailyRedCount} reds no dia.`;
+    // Libera caches BLOQUEADO ao desativar o stop-loss com o primeiro GREEN
+    if (estado.suspensaoAtiva) {
+      const keys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k?.startsWith('ev_bloqueado_')) keys.push(k);
+      }
+      keys.forEach(k => localStorage.removeItem(k));
     }
 
-    salvarStopLossState(updated);
-  } else if (resultado === 'green') {
-    const updated: StopLossState = {
-      ...state,
-      consecutiveRedCount: 0,
-    };
-    salvarStopLossState(updated);
+    return novoEstado;
   }
-  // 'void' não altera contadores
+
+  if (res === 'red' || res === 'loss') {
+    const novoStreak = estado.redStreakAtual + 1;
+    const suspender = novoStreak >= getStopLossLimite();
+
+    const novoEstado: StopLossState = {
+      redStreakAtual: novoStreak,
+      suspensaoAtiva: suspender,
+      timestampUltimoRed: Date.now(),
+      historicoStreak: [...(estado.historicoStreak || []), novoStreak],
+      winsDesdeUltimoRed: 0,
+    };
+
+    salvarStopLossState(novoEstado);
+    window.dispatchEvent(new CustomEvent('evengine_stop_loss_changed', { detail: novoEstado }));
+
+    if (suspender) {
+      dispararAlertaStopLoss(novoStreak);
+    }
+    return novoEstado;
+  }
+
+  return estado;
 }
 
-export function registrarResultado(resultado: 'green' | 'red' | 'void'): void {
-  registrarResultadoDiario(resultado);
+export function podeAumentarStake(stakeAnterior: number, stakeCalculada: number): boolean {
+  if (stakeCalculada <= stakeAnterior) return true;
+  const estado = carregarStopLossState();
+  return (estado.winsDesdeUltimoRed || 0) >= 2;
 }
 
-export function resetarStopLoss(): void {
-  salvarStopLossState({ ...DEFAULT_STOP_LOSS_STATE });
-}
-
-export function isStopLossAtivo(): boolean {
-  return carregarStopLossState().isBlocked;
-}
-
-export function getStopLossReason(): string | null {
-  return carregarStopLossState().blockReason;
-}
-
-// ─── Cleanup on sign-out ──────────────────────────────────────────────────────
-
-export function clearBancaOnSignOut(userId: string): void {
-  localStorage.removeItem(getStopLossKey(userId));
-  localStorage.removeItem(getBancaKey());
-  localStorage.removeItem(getActiveBancaIdKey());
-}
-
-// ─── Funções de gate / proteção (usadas por tipsterEngine) ───────────────────
-
-export interface EstadoProtecao {
-  bloqueado: boolean;
-  motivo: string | null;
-  consecutiveRedCount: number;
-  dailyRedCount: number;
-}
-
-export function getEstadoProtecao(): EstadoProtecao {
-  const state = carregarStopLossState();
-  return {
-    bloqueado: state.isBlocked,
-    motivo: state.blockReason,
-    consecutiveRedCount: state.consecutiveRedCount,
-    dailyRedCount: state.dailyRedCount,
-  };
-}
-
-export function podeEntrarNovaAposta(): boolean {
-  return !carregarStopLossState().isBlocked;
+export function registrarEntradaAprovada(): void {
+  const state = getBanca();
+  state.apostasHoje = (state.apostasHoje || 0) + 1;
+  saveBanca(state);
 }
 
 export function limiteEntradasAtingido(): boolean {
-  return carregarStopLossState().isBlocked;
+  const state = getBanca();
+  return (state.apostasHoje || 0) >= 10;
+}
+
+export function limiteJogosSimultaneosAtingido(pendentesCount: number): boolean {
+  return pendentesCount >= 10;
+}
+
+export function podeEntrarNovaAposta(pendentesCount?: number): boolean {
+  const streak = carregarStopLossState();
+  if (streak.suspensaoAtiva) return false;
+
+  const protecao = getEstadoProtecao();
+  if (protecao.stop_loss_ativo || protecao.stop_win_ativo) return false;
+
+  if (limiteEntradasAtingido()) return false;
+  if (pendentesCount !== undefined && limiteJogosSimultaneosAtingido(pendentesCount)) return false;
+
+  return true;
+}
+
+export function dispararAlertaStopLoss(streak: number): void {
+  localStorage.setItem(getStopLossAlertKey(), 'false');
+  window.dispatchEvent(new CustomEvent('evengine_stop_loss_alert_trigger', { detail: { streak } }));
+}
+
+// ─── Limite de streak configurável ─────────────────────────────────────────
+
+function getStopLossLimiteKey(): string {
+  const profile = getCachedProfile();
+  return `evengine_stop_loss_limite${profile?.id ? `_${profile.id}` : ''}`;
+}
+
+export const STOP_LOSS_LIMITE_DEFAULT = 3;
+
+export function getStopLossLimite(): number {
+  try {
+    const raw = localStorage.getItem(getStopLossLimiteKey());
+    if (!raw) return STOP_LOSS_LIMITE_DEFAULT;
+    const n = parseInt(raw, 10);
+    return isNaN(n) || n < 1 ? STOP_LOSS_LIMITE_DEFAULT : n;
+  } catch {
+    return STOP_LOSS_LIMITE_DEFAULT;
+  }
+}
+
+export function setStopLossLimite(limite: number): void {
+  const val = Math.max(1, Math.min(10, limite));
+  localStorage.setItem(getStopLossLimiteKey(), String(val));
+  window.dispatchEvent(new CustomEvent('evengine_stop_loss_limite_changed', { detail: { limite: val } }));
+}
+
+/**
+ * [H-01 FIX] Clear all user-scoped localStorage keys on logout.
+ * Call this inside supabaseClient's SIGNED_OUT handler.
+ */
+export function clearBancaOnSignOut(userId: string): void {
+  const suffix = `_${userId}`;
+  localStorage.removeItem(`evengine_banca_state${suffix}`);
+  localStorage.removeItem(`evengine_banca_last_reset${suffix}`);
+  localStorage.removeItem(`evengine_stop_loss_state${suffix}`);
+  localStorage.removeItem(`evengine_active_banca_id${suffix}`);
+  localStorage.removeItem(`evengine_stop_loss_alert_dismissed${suffix}`);
+  localStorage.removeItem(`evengine_stop_loss_limite${suffix}`);
+  localStorage.removeItem(`evengine_pending_bets${suffix}`);
+  localStorage.removeItem(`evengine_placed_bets${suffix}`);
+  localStorage.removeItem(`evengine_active_view${suffix}`);
+  localStorage.removeItem(`evengine_selected_leagues${suffix}`);
+  localStorage.removeItem('evengine_cached_profile');
+
+  // Limpa caches BLOQUEADO que pertencem a este usuário (prefixo ev_bloqueado_)
+  const bloqueadoKeys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k?.startsWith('ev_bloqueado_')) bloqueadoKeys.push(k);
+  }
+  bloqueadoKeys.forEach(k => localStorage.removeItem(k));
+}
+
+export async function getBancasFromSupabase(userId: string): Promise<BancaDB[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from('bancas')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Erro ao buscar bancas no Supabase:', err);
+    return [];
+  }
+}
+
+export async function addBancaToSupabase(userId: string, nome: string, valorInicial: number): Promise<BancaDB | null> {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('bancas')
+      .insert({
+        user_id: userId,
+        nome: nome,
+        valor_inicial: valorInicial,
+        valor_atual: valorInicial
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao adicionar banca no Supabase:', err);
+    return null;
+  }
+}
+
+export async function switchActiveBanca(banca: BancaDB): Promise<void> {
+  localStorage.setItem(getActiveBancaKey(), banca.id);
+
+  const state = getBanca();
+  state.bancaAtual = Number(banca.valor_atual);
+  state.total = Number(banca.valor_atual);
+  saveBanca(state);
+
+  window.dispatchEvent(new CustomEvent('evengine_banca_changed'));
+}
+
+export async function updateBancaBalance(bancaId: string, novoValor: number): Promise<void> {
+  if (supabase) {
+    try {
+      await supabase
+        .from('bancas')
+        .update({ valor_atual: novoValor })
+        .eq('id', bancaId);
+    } catch (err) {
+      console.error('Erro ao atualizar saldo da banca no Supabase:', err);
+    }
+  }
+
+  const state = getBanca();
+  state.bancaAtual = novoValor;
+  state.total = novoValor;
+  saveBanca(state);
+  window.dispatchEvent(new CustomEvent('evengine_banca_changed'));
 }
