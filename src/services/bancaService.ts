@@ -53,8 +53,34 @@ export function getBancaAtual(): number {
   return raw ? parseFloat(raw) : 1000;
 }
 
+/** Alias mantido para compatibilidade com componentes legados */
+export function getBanca(): number {
+  return getBancaAtual();
+}
+
 export function setBancaAtual(valor: number): void {
   localStorage.setItem(getBancaKey(), String(valor));
+}
+
+/**
+ * Calcula o stake pelo critério de Kelly fracionário.
+ * @param prob  Probabilidade estimada (0-1)
+ * @param odd   Odd decimal
+ * @param frac  Fração de Kelly (default 0.25 = quarter-Kelly)
+ */
+export function calculateKellyStake(prob: number, odd: number, frac = 0.25): number {
+  if (prob <= 0 || prob >= 1 || odd <= 1) return 0;
+  const b = odd - 1;
+  const q = 1 - prob;
+  const kelly = (b * prob - q) / b;
+  if (kelly <= 0) return 0;
+  const banca = getBancaAtual();
+  return parseFloat((banca * kelly * frac).toFixed(2));
+}
+
+/** Registra uma entrada aprovada pelo gate (sem efeito sobre contadores de stop-loss) */
+export function registrarEntradaAprovada(): void {
+  // Hook para telemetria futura — sem efeito sobre stop-loss
 }
 
 // ─── Supabase CRUD ────────────────────────────────────────────────────────────
