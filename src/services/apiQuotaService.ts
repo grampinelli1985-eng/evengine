@@ -65,22 +65,7 @@ const SYNC_TS_KEY = 'evengine_quota_sync_ts';
 const SYNC_TTL_MS = 60 * 60 * 1000; // 1 hora
 
 export async function syncQuotaFromAPI(): Promise<void> {
-  const lastSync = Number(localStorage.getItem(SYNC_TS_KEY) || 0);
-  if (Date.now() - lastSync < SYNC_TTL_MS) return;
-
-  try {
-    const response = await fetch('/api/football/status', {
-      signal: AbortSignal.timeout(3000)
-    });
-    if (!response.ok) return;
-    const data = await response.json();
-    if (data.response && data.response.requests) {
-      const state = getQuotaState();
-      state.requests = data.response.requests.current;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      localStorage.setItem(SYNC_TS_KEY, String(Date.now()));
-    }
-  } catch {
-    console.warn('Quota sync indisponível — continuando offline');
-  }
+  // Quota agora é rastreada via headers da The Odds API (trackOddsApiRequest).
+  // A chamada à API-Football foi removida — conta suspensa não deve bloquear o startup.
+  return;
 }

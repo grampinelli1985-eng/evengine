@@ -24,6 +24,9 @@ export interface CLVEntry {
   resultado: 'GREEN' | 'RED' | 'VOID' | 'PENDENTE';
   analyzedAt: string;
   closedAt: string | null;
+  // Distingue análises sem aposta (false) de apostas efetivamente confirmadas (true).
+  // Entradas antigas sem este campo são tratadas como false para compatibilidade.
+  apostaConfirmada: boolean;
 }
 
 export interface CLVSummary {
@@ -158,6 +161,12 @@ function getPinnacleOdd(match: Match, mercado: string): number | null {
 
 // ─── API pública ───────────────────────────────────────────────────────────
 
+/**
+ * Registra uma entrada CLV.
+ * `apostaConfirmada: true` → usuário clicou em "Marcar como Feito" (aposta real).
+ * `apostaConfirmada: false` (padrão) → só análise, sem aposta confirmada.
+ * O CLV Dashboard filtra por `apostaConfirmada: true` para métricas limpas.
+ */
 export function registrarEntradaCLV(params: {
   matchId: string;
   homeTeam: string;
@@ -166,24 +175,41 @@ export function registrarEntradaCLV(params: {
   commenceTime: string;
   mercado: string;
   oddUtilizada: number;
+  apostaConfirmada?: boolean;
 }): void {
   const entries = loadEntries();
-  if (entries.find(e => e.matchId === params.matchId && e.mercado === params.mercado)) return;
+  const existing = entries.find(e => e.matchId === params.matchId && e.mercado === params.mercado);
+
+  if (existing) {
+    // Se o usuário confirmar uma aposta em partida já analisada, promove para confirmada
+    if (params.apostaConfirmada && !existing.apostaConfirmada) {
+      existing.apostaConfirmada = true;
+      saveEntries(entries);
+    }
+    return;
+  }
 
   const now = new Date().toISOString();
   entries.push({
-    ...params,
+    matchId: params.matchId,
+    homeTeam: params.homeTeam,
+    awayTeam: params.awayTeam,
+    sportKey: params.sportKey,
+    commenceTime: params.commenceTime,
+    mercado: params.mercado,
+    oddUtilizada: params.oddUtilizada,
     oddFechamento: null,
     clvPct: null,
     resultado: 'PENDENTE',
     analyzedAt: now,
-    closedAt: null
+    closedAt: null,
+    apostaConfirmada: params.apostaConfirmada ?? false,
   });
 
   saveEntries(entries);
 
-  // Sincronizar com Supabase para captura server-side de odds de fechamento
-  if (supabase) {
+  // Sincronizar com Supabase apenas apostas confirmadas
+  if (supabase && params.apostaConfirmada) {
     const profile = getCachedProfile();
     supabase.from('clv_entries').upsert({
       match_id: params.matchId,
@@ -213,6 +239,7 @@ export function capturarOddsFechamento(matchesAtivos: Match[]): void {
   entries.forEach(entry => {
     if (entry.oddFechamento !== null) return;
     if (entry.resultado !== 'PENDENTE') return;
+    if (!entry.apostaConfirmada) return; // só captura fechamento para apostas reais
 
     const kickoff = new Date(entry.commenceTime).getTime();
     const afterKickoff = now >= kickoff;
@@ -260,12 +287,19 @@ export function atualizarResultadoCLV(matchId: string, resultado: 'GREEN' | 'RED
   }
 }
 
-export function getEntradasCLV(): CLVEntry[] {
-  return loadEntries();
+/**
+ * Retorna entradas CLV.
+ * @param apenasConfirmadas true → só apostas com "Marcar como Feito" (padrão para o dashboard)
+ */
+export function getEntradasCLV(apenasConfirmadas = true): CLVEntry[] {
+  const entries = loadEntries();
+  if (!apenasConfirmadas) return entries;
+  return entries.filter(e => e.apostaConfirmada);
 }
 
 export function getCLVSummary(): CLVSummary {
-  const entries = loadEntries();
+  // Métricas calculadas apenas sobre apostas confirmadas
+  const entries = loadEntries().filter(e => e.apostaConfirmada);
   const comCLV = entries.filter(e => e.clvPct !== null);
 
   const clvMedioGeral = comCLV.length > 0
@@ -293,26 +327,41 @@ export function getCLVSummary(): CLVSummary {
 
 export function limparEntradasAntigas(): void {
   const CUTOFF_90D = Date.now() - 90 * 24 * 60 * 60 * 1000;
-  const CUTOFF_24H = Date.now() - 24 * 60 * 60 * 1000;
+  const CUTOFF_GAME_OVER = Date.now() - 3 * 60 * 60 * 1000;
 
-  const entries = loadEntries().filter(e => {
-    if (new Date(e.analyzedAt).getTime() <= CUTOFF_90D) return false;
-    if (
-      e.resultado === 'PENDENTE' &&
-      e.oddFechamento === null &&
-      new Date(e.commenceTime).getTime() < CUTOFF_24H
-    ) {
-      console.info(`[CLV] Entrada expirada removida: ${e.homeTeam} × ${e.awayTeam} (${e.commenceTime})`);
+  const entries = loadEntries();
+  let changed = false;
+
+  const kept = entries.filter(e => {
+    if (new Date(e.analyzedAt).getTime() <= CUTOFF_90D) {
+      changed = true;
       return false;
     }
     return true;
   });
 
-  saveEntries(entries);
+  kept.forEach(e => {
+    // Apenas apostas confirmadas ficam como VOID — análises sem aposta são removidas silenciosamente
+    if (
+      e.resultado === 'PENDENTE' &&
+      e.oddFechamento === null &&
+      new Date(e.commenceTime).getTime() < CUTOFF_GAME_OVER
+    ) {
+      if (e.apostaConfirmada) {
+        e.resultado = 'VOID';
+        e.closedAt = new Date().toISOString();
+        console.info(`[CLV] Aposta expirada → VOID: ${e.homeTeam} × ${e.awayTeam}`);
+      }
+      // análises sem aposta confirmada: mantém sem alterar resultado (serão limpas pelo CUTOFF_90D)
+      changed = true;
+    }
+  });
+
+  if (changed) saveEntries(kept);
 }
 
 export function exportarCLVcsv(): string {
-  const entries = loadEntries();
+  const entries = getEntradasCLV(true);
   const header = 'Data,Casa,Visitante,Mercado,Odd Utilizada,Odd Fechamento,CLV%,Resultado';
   const rows = entries.map(e => [
     e.analyzedAt.split('T')[0],
@@ -347,7 +396,6 @@ export function corrigirEntradaCLV(matchId: string, novoMercado: string, novaOdd
 
 /**
  * Sincroniza o resultado (GREEN/RED/VOID) de uma entrada CLV com o Supabase.
- * Chamado automaticamente após auto-resolve de apostas.
  */
 export async function sincronizarResultadoCLV(
   matchId: string,
@@ -374,7 +422,6 @@ export async function sincronizarResultadoCLV(
 
 /**
  * [M-01 FIX] Limpa todas as chaves CLV do usuário no logout.
- * Chamar no handler SIGNED_OUT do supabaseClient.
  */
 export function clearCLVOnSignOut(userId: string): void {
   localStorage.removeItem(`evengine_clv_entries_${userId}`);

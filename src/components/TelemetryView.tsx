@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchRecentAnalyses, fetchStats } from '../services/telemetryService';
 import { supabase } from '../services/supabaseClient';
-import { BarChart3, Clock, Target, AlertTriangle, ShieldCheck, Activity, ArrowLeft } from 'lucide-react';
+import { BarChart3, Clock, AlertTriangle, ShieldCheck, Activity, ArrowLeft, Download } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface TelemetryViewProps {
@@ -13,6 +13,40 @@ export default function TelemetryView({ onBack }: TelemetryViewProps) {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'TODOS' | 'APROVADO' | 'BLOQUEADO'>('TODOS');
+  const [exporting, setExporting] = useState(false);
+
+  async function exportAllCSV() {
+    if (!supabase) return;
+    setExporting(true);
+    try {
+      const { data, error } = await supabase
+        .from('analyses')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error || !data) { setExporting(false); return; }
+
+      const headers = ['created_at','home_team','away_team','league','market','ev_execution','kelly_calculated','composite_score','gate_status','block_reasons'];
+      const rows = data.map((r: any) => headers.map(h => {
+        const v = r[h];
+        if (Array.isArray(v)) return `"${v.join(' | ')}"`;
+        if (typeof v === 'string' && v.includes(',')) return `"${v}"`;
+        return v ?? '';
+      }).join(','));
+
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `telemetria_completa_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('[Telemetry] Erro ao exportar:', e);
+    }
+    setExporting(false);
+  }
 
   async function loadData() {
     setLoading(true);
@@ -36,8 +70,7 @@ export default function TelemetryView({ onBack }: TelemetryViewProps) {
   }
 
   const displayAnalyses = rawAnalyses
-    .filter(a => filter === 'TODOS' || a.gate_status === filter)
-    .slice(0, 50);
+    .filter(a => filter === 'TODOS' || a.gate_status === filter);
 
   useEffect(() => {
     loadData();
@@ -123,7 +156,12 @@ export default function TelemetryView({ onBack }: TelemetryViewProps) {
               <div className="px-8 py-6 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="flex items-center gap-3">
                   <Clock size={16} className="text-white/40" />
-                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Log de Análises (Últimas 50)</h3>
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">
+                    Log de Análises
+                    <span className="ml-2 text-white/30 font-mono normal-case tracking-normal">
+                      ({displayAnalyses.length}{rawAnalyses.length !== displayAnalyses.length ? ` de ${rawAnalyses.length}` : ''})
+                    </span>
+                  </h3>
                 </div>
                 
                 <div className="flex items-center gap-2">
@@ -142,7 +180,15 @@ export default function TelemetryView({ onBack }: TelemetryViewProps) {
                       </button>
                     ))}
                   </div>
-                  <button 
+                  <button
+                    onClick={exportAllCSV}
+                    disabled={exporting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-600/20 rounded-lg text-[9px] font-black text-blue-400 uppercase tracking-widest transition-all disabled:opacity-40"
+                  >
+                    <Download size={10} />
+                    {exporting ? 'Exportando...' : 'Exportar CSV'}
+                  </button>
+                  <button
                     onClick={() => loadData()}
                     className="text-[9px] font-black text-white/20 hover:text-white uppercase tracking-widest transition-colors flex items-center gap-2"
                   >

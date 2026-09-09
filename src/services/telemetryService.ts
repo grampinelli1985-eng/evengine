@@ -20,6 +20,17 @@ export function trackPrecheckSkip(motivo: string): void {
   console.info(`[Telemetry] Fallback Gemini evitado via pre-check: ${motivo}`);
 }
 
+// ─── Helper: retorna user_id autenticado ────────────────────────────────────
+async function getCurrentUserId(): Promise<string | null> {
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    return data.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function sanitizarNumerico(valor: any, max = 999.99, casas = 2): number | null {
   if (valor === null || valor === undefined) return null;
   const n = Number(valor);
@@ -28,16 +39,16 @@ function sanitizarNumerico(valor: any, max = 999.99, casas = 2): number | null {
   return Number(clamped.toFixed(casas));
 }
 
-
 function sanitizarPayload(p: any): any {
   return {
+    user_id: p.user_id,           // [SEC-FIX] obrigatório para RLS
     match_id: p.match_id,
     home_team: p.home_team,
     away_team: p.away_team,
     league: p.league,
     tier: p.tier ?? null,
     market: p.market ?? 'h2h',
-    odd_bet365_manual: p.odd_manual ?? p.odd_bet365_manual ?? null,
+    odd_bet365_manual: p.odd_bet365_manual ?? null,
     odd_pinnacle: p.odd_pinnacle ?? null,
     odd_betfair: p.odd_betfair ?? null,
     prob_fair: p.prob_fair ?? null,
@@ -57,13 +68,9 @@ function sanitizarPayload(p: any): any {
   };
 }
 
-
 /**
- * Grava uma análise no Supabase. Falhas NÃO propagam —
- * apenas são logadas via console.warn. A app continua funcionando
- * normalmente mesmo se o Supabase estiver fora do ar.
- * 
- * @returns o ID gerado pela inserção, ou null se falhou
+ * Grava uma análise no Supabase vinculada ao usuário autenticado.
+ * [SEC-FIX] Adicionado user_id ao payload — sem ele, a inserção falha por RLS.
  */
 export async function logAnalysis(
   matchData: any,
@@ -71,16 +78,20 @@ export async function logAnalysis(
   oddManual: number | null,
   poissonSource?: string
 ): Promise<string | null> {
-
   if (!supabase) return null;
-  
-  // Ignorar gravação se for um jogo em modo MOCK para não poluir os dados
-  if (matchData.id && matchData.id.startsWith('mock_match_')) {
+
+  if (matchData.id && matchData.id.startsWith('mock_match_')) return null;
+
+  // [SEC-FIX] Exige usuário autenticado para gravar análise
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    console.warn('[Telemetry] Usuário não autenticado — análise não gravada.');
     return null;
   }
-  
+
   try {
     const payload = {
+      user_id: userId,             // [SEC-FIX] vincula análise ao usuário
       match_id: matchData.id,
       home_team: matchData.home_team,
       away_team: matchData.away_team,
@@ -107,8 +118,6 @@ export async function logAnalysis(
       match_datetime: matchData.commence_time || matchData.date || null
     };
 
-
-
     const payloadSeguro = sanitizarPayload(payload);
 
     const { data, error } = await supabase
@@ -117,12 +126,11 @@ export async function logAnalysis(
       .select('id')
       .single();
 
-    
     if (error) {
       console.warn('[Telemetry] Falha ao gravar análise:', error.message);
       return null;
     }
-    
+
     return data?.id || null;
   } catch (err) {
     console.warn('[Telemetry] Erro inesperado:', err);
@@ -131,18 +139,23 @@ export async function logAnalysis(
 }
 
 /**
- * Retorna as últimas N análises gravadas (mais recentes primeiro)
+ * Retorna as últimas N análises do usuário autenticado (mais recentes primeiro).
+ * [SEC-FIX] Era sem filtro — retornava análises de TODOS os usuários.
  */
 export async function fetchRecentAnalyses(limit = 50): Promise<any[]> {
   if (!supabase) return [];
-  
+
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
   try {
     const { data, error } = await supabase
       .from('analyses')
       .select('*')
+      .eq('user_id', userId)          // [SEC-FIX] filtro por usuário
       .order('created_at', { ascending: false })
       .limit(limit);
-    
+
     if (error) {
       console.warn('[Telemetry] Falha ao buscar análises:', error.message);
       return [];
@@ -155,7 +168,8 @@ export async function fetchRecentAnalyses(limit = 50): Promise<any[]> {
 }
 
 /**
- * Retorna estatísticas agregadas do período (default: últimos 7 dias)
+ * Retorna estatísticas agregadas do período (default: últimos 7 dias).
+ * [SEC-FIX] Filtrado por user_id — antes agregava dados de todos os usuários.
  */
 export async function fetchStats(daysBack = 7): Promise<{
   total: number;
@@ -165,29 +179,31 @@ export async function fetchStats(daysBack = 7): Promise<{
   motivosTop: { reason: string; count: number }[];
   ligasTop: { league: string; count: number }[];
 }> {
-  if (!supabase) {
-    return { total: 0, aprovados: 0, bloqueados: 0, taxaBloqueio: 0, motivosTop: [], ligasTop: [] };
-  }
-  
+  const empty = { total: 0, aprovados: 0, bloqueados: 0, taxaBloqueio: 0, motivosTop: [], ligasTop: [] };
+  if (!supabase) return empty;
+
+  const userId = await getCurrentUserId();
+  if (!userId) return empty;
+
   try {
     const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
-    
+
     const { data, error } = await supabase
       .from('analyses')
       .select('gate_status, block_reasons, league')
+      .eq('user_id', userId)          // [SEC-FIX] filtro por usuário
       .gte('created_at', since);
-    
+
     if (error || !data) {
       console.warn('[Telemetry] Falha ao buscar stats:', error?.message);
-      return { total: 0, aprovados: 0, bloqueados: 0, taxaBloqueio: 0, motivosTop: [], ligasTop: [] };
+      return empty;
     }
-    
+
     const total = data.length;
     const aprovados = data.filter(d => d.gate_status === 'APROVADO').length;
     const bloqueados = total - aprovados;
     const taxaBloqueio = total > 0 ? (bloqueados / total) * 100 : 0;
-    
-    // Contagem de motivos de bloqueio
+
     const motivosMap = new Map<string, number>();
     data.forEach(d => {
       (d.block_reasons || []).forEach((r: string) => {
@@ -198,8 +214,7 @@ export async function fetchStats(daysBack = 7): Promise<{
       .map(([reason, count]) => ({ reason, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
-    
-    // Contagem de ligas
+
     const ligasMap = new Map<string, number>();
     data.forEach(d => {
       ligasMap.set(d.league, (ligasMap.get(d.league) || 0) + 1);
@@ -208,16 +223,17 @@ export async function fetchStats(daysBack = 7): Promise<{
       .map(([league, count]) => ({ league, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
-    
+
     return { total, aprovados, bloqueados, taxaBloqueio, motivosTop, ligasTop };
   } catch (err) {
     console.warn('[Telemetry] Erro inesperado:', err);
-    return { total: 0, aprovados: 0, bloqueados: 0, taxaBloqueio: 0, motivosTop: [], ligasTop: [] };
+    return empty;
   }
 }
 
 /**
- * Atualiza o resultado de uma partida no Supabase.
+ * Atualiza o resultado de uma partida — restrito ao usuário autenticado.
+ * [SEC-FIX] Era filtrado só por match_id — qualquer usuário podia sobrescrever resultado alheio.
  */
 export async function updateMatchResultInSupabase(
   matchId: string,
@@ -225,7 +241,10 @@ export async function updateMatchResultInSupabase(
   ignorado = false
 ): Promise<boolean> {
   if (!supabase) return false;
-  
+
+  const userId = await getCurrentUserId();
+  if (!userId) return false;
+
   try {
     const { error } = await supabase
       .from('analyses')
@@ -235,8 +254,9 @@ export async function updateMatchResultInSupabase(
         resultado_data: new Date().toISOString(),
         resultado_ignorado: ignorado
       })
-      .eq('match_id', matchId);
-      
+      .eq('match_id', matchId)
+      .eq('user_id', userId);         // [SEC-FIX] só atualiza análises do próprio usuário
+
     if (error) {
       console.warn('[Telemetry] Falha ao atualizar resultado no Supabase:', error.message);
       return false;
@@ -247,4 +267,3 @@ export async function updateMatchResultInSupabase(
     return false;
   }
 }
-

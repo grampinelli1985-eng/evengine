@@ -33,6 +33,13 @@ interface CalibracaoState {
   ultimaAtualizacao: string;
 }
 
+import { getCachedProfile } from './planService';
+
+function getScopedStorageKey(base: string): string {
+  const profile = getCachedProfile();
+  return profile?.id ? `${base}_${profile.id}` : base;
+}
+
 const STORAGE_KEY = 'evengine_calibracao';
 let isOddsApiUnauthorized = false;
 
@@ -189,7 +196,7 @@ async function fetchScoresForLeague(liga: string): Promise<any[]> {
   }
 
   const SCORES_CACHE_TTL = 30 * 60 * 1000; // 30 minutos
-  const cacheKey = `scores_cache_${liga}`;
+  const cacheKey = getScopedStorageKey(`scores_cache_${liga}`);
   const cached = localStorage.getItem(cacheKey);
   
   // Gate 2: Usar cache válido se disponível (zero req)
@@ -355,7 +362,7 @@ function calcularFaixa(previsoes: PrevisaoRegistrada[]) {
 
 function getCalibracaoState(): CalibracaoState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getScopedStorageKey(STORAGE_KEY));
     if (raw) return JSON.parse(raw);
   } catch {}
   return {
@@ -375,7 +382,7 @@ function getCalibracaoState(): CalibracaoState {
 }
 
 function salvarState(state: CalibracaoState): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(getScopedStorageKey(STORAGE_KEY), JSON.stringify(state));
 }
 
 export function getCalibracaoStats() {
@@ -443,6 +450,5 @@ export function registrarResultadoManual(dados: {
   recalibrarLimiares(state);
   salvarState(state);
 
-  console.log('Resultado registrado:', dados.homeTeam, 'vs',
-    dados.awayTeam, '→', dados.resultado);
+  if (import.meta.env.DEV) console.debug('[Calibration] Resultado registrado:', dados.homeTeam, 'vs', dados.awayTeam, '→', dados.resultado);
 }

@@ -4,7 +4,7 @@
  */
 
 import { callGeminiAPI } from './geminiService';
-import { calculatePoisson } from './poissonService';
+import { calculatePoisson, MEDIAS_XG_LIGA } from './poissonService';
 import { getFixtureStatsById } from './sportmonksService';
 
 export interface GoalsAnalysis {
@@ -110,12 +110,24 @@ export function calculateTeamPower(
   const lastFor = team?.jogos ? team.jogos.map(j => j.gols_for) : (team?.lastGoalsFor || []);
   const lastAgainst = team?.jogos ? team.jogos.map(j => j.gols_against) : (team?.lastGoalsAgainst || []);
 
-  const attackPower = lastFor.length > 0
-    ? parseFloat((lastFor.reduce((sum, g) => sum + g, 0) / lastFor.length).toFixed(2))
-    : 1.5;
-  const defensePower = lastAgainst.length > 0
-    ? parseFloat((lastAgainst.reduce((sum, g) => sum + g, 0) / lastAgainst.length).toFixed(2))
-    : 1.2;
+  const NEUTRAL_ATTACK = 1.5;
+  const NEUTRAL_DEFENSE = 1.2;
+
+  const rawAttack = lastFor.length > 0
+    ? lastFor.reduce((sum, g) => sum + g, 0) / lastFor.length
+    : NEUTRAL_ATTACK;
+  const rawDefense = lastAgainst.length > 0
+    ? lastAgainst.reduce((sum, g) => sum + g, 0) / lastAgainst.length
+    : NEUTRAL_DEFENSE;
+
+  const sampleSizeAttack = lastFor.length;
+  const sampleSizeDefense = lastAgainst.length;
+
+  const alphaAttack = Math.min(1, sampleSizeAttack / 20);
+  const alphaDefense = Math.min(1, sampleSizeDefense / 20);
+
+  const attackPower = parseFloat(((alphaAttack * rawAttack) + ((1 - alphaAttack) * NEUTRAL_ATTACK)).toFixed(2));
+  const defensePower = parseFloat(((alphaDefense * rawDefense) + ((1 - alphaDefense) * NEUTRAL_DEFENSE)).toFixed(2));
 
   return { attackPower, defensePower };
 }
@@ -209,10 +221,20 @@ export async function analyzeGoalsMarket(
   scoutingAway?: any,
   homeGeminiXg?: number,
   awayGeminiXg?: number,
-  fixtureId?: number
+  fixtureId?: number,
+  leagueName?: string
 ): Promise<GoalsAnalysis> {
-  const lambdaHome = homeAttackPower * awayDefensePower;
-  const lambdaAway = awayAttackPower * homeDefensePower;
+  const leagueKey = Object.keys(MEDIAS_XG_LIGA).find(k => leagueName?.includes(k));
+  const media = MEDIAS_XG_LIGA[leagueKey || ''] || { home: 1.45, away: 1.15 };
+
+  const homeAttackStrength = homeAttackPower / media.home;
+  const awayDefenseStrength = awayDefensePower / media.home;
+  const lambdaHome = homeAttackStrength * awayDefenseStrength * media.home;
+
+  const awayAttackStrength = awayAttackPower / media.away;
+  const homeDefenseStrength = homeDefensePower / media.away;
+  const lambdaAway = awayAttackStrength * homeDefenseStrength * media.away;
+
   const totalGoalsExpected = parseFloat((lambdaHome + lambdaAway).toFixed(2));
 
   let xgData: { home_xg: number | null; away_xg: number | null } | undefined = undefined;

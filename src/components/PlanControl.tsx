@@ -187,11 +187,11 @@ export function UpgradeModal({ isOpen: propIsOpen, onClose: propOnClose }: Upgra
                 <p className="text-[9px] text-white/30 mb-4">Teste por 15 dias · sem cartão</p>
                 <ul className="space-y-2.5 text-xs text-white/50 mb-6">
                   <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> 3 análises/dia</li>
-                  <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Apenas Tier A (Top 5 ligas)</li>
+                  <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Todas as ligas (trial)</li>
                   <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Histórico de 7 dias</li>
                   <li className="flex items-center gap-2 text-white/20"><X size={12} /> Sem Copa do Mundo</li>
                   <li className="flex items-center gap-2 text-white/20"><X size={12} /> Sem CLV tracking</li>
-                  <li className="flex items-center gap-2 text-white/20"><X size={12} /> Sem API key própria</li>
+                  <li className="flex items-center gap-2 text-white/20"><X size={12} /> Sem Line Movements</li>
                 </ul>
               </div>
               <button
@@ -224,11 +224,12 @@ export function UpgradeModal({ isOpen: propIsOpen, onClose: propOnClose }: Upgra
                 <div className="text-2xl font-black text-white mb-4">R$ 147 <span className="text-xs text-white/40 font-medium">/mês</span></div>
                 <ul className="space-y-2.5 text-xs text-white/60 mb-6">
                   <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Até 30 análises/dia</li>
-                  <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> 10 Ligas cobertas</li>
-                  <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Módulo Copa do Mundo 2026</li>
+                  <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Todas as ligas</li>
+                  <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Módulo Copa do Mundo</li>
                   <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Histórico 30 dias</li>
                   <li className="flex items-center gap-2"><Check size={12} className="text-blue-400" /> Alertas de odds ativos</li>
                   <li className="flex items-center gap-2 text-white/20"><X size={12} /> Sem CLV tracking</li>
+                  <li className="flex items-center gap-2 text-white/20"><X size={12} /> Sem Line Movements</li>
                 </ul>
               </div>
               <button
@@ -262,12 +263,14 @@ export function UpgradeModal({ isOpen: propIsOpen, onClose: propOnClose }: Upgra
                 <ul className="space-y-2.5 text-xs text-white/60 mb-6">
                   <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> Análises sem limite</li>
                   <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> Todas as ligas disponíveis</li>
-                  <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> Módulo Copa do Mundo 2026</li>
+                  <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> Módulo Copa do Mundo</li>
                   <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> Histórico 90 dias</li>
                   <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> CLV tracking ativo</li>
                   <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> Exportar CSV/JSON</li>
-                  <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> API key própria</li>
-                  <li className="flex items-center gap-2"><Check size={12} className="text-emerald-400" /> Até 5 bancas simultâneas</li>
+                  <li className="flex items-center gap-2 font-semibold">
+                    <Zap size={12} className="text-emerald-400 fill-emerald-400/20 flex-shrink-0" />
+                    <span className="text-emerald-300">Line Movements em tempo real</span>
+                  </li>
                 </ul>
               </div>
               <button

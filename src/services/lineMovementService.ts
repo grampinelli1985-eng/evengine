@@ -254,6 +254,33 @@ export function getLineMovement(matchId: string): LineMovementResult | null {
 }
 
 /**
+ * Retorna as odds de abertura registradas para um match.
+ * Usado para calcular OLV (Opening Line Value).
+ */
+export function getOpeningOddsForMatch(matchId: string): OddsSnapshot | null {
+  const stored = loadOpeningOdds();
+  return stored[matchId] ?? null;
+}
+
+/**
+ * Extrai a odd da Betfair Exchange para o mercado H2H de um match.
+ * A Betfair Exchange não tem vig embutida — a comissão é cobrada separada,
+ * tornando suas odds o benchmark vig-free real para CLV.
+ * Retorna null se Betfair não estiver disponível no match.
+ */
+export function extractBetfairH2H(match: Match): { home: number; draw: number; away: number } | null {
+  const bk = match.bookmakers?.find(b => b.key === 'betfair_ex_eu');
+  if (!bk) return null;
+  const h2h = bk.markets?.find(m => m.key === 'h2h');
+  if (!h2h) return null;
+  const home = h2h.outcomes.find(o => o.name === match.home_team)?.price ?? 0;
+  const away = h2h.outcomes.find(o => o.name === match.away_team)?.price ?? 0;
+  const draw = h2h.outcomes.find(o => o.name === 'Draw')?.price ?? 0;
+  if (!home || !away) return null;
+  return { home, draw, away };
+}
+
+/**
  * Limpa dados de movimentação para matches antigos (> 3 dias).
  */
 export function cleanOldLineMovements(): void {

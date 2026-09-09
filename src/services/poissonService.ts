@@ -5,7 +5,7 @@
 
 import { PoissonData } from '../types';
 
-const MEDIAS_XG_LIGA: Record<string, { home: number; away: number }> = {
+export const MEDIAS_XG_LIGA: Record<string, { home: number; away: number }> = {
   'Bundesliga': { home: 1.55, away: 1.20 },
   'Premier League': { home: 1.60, away: 1.25 },
   'La Liga': { home: 1.45, away: 1.15 },
@@ -16,6 +16,15 @@ const MEDIAS_XG_LIGA: Record<string, { home: number; away: number }> = {
   'Eredivisie': { home: 1.78, away: 1.42 },
   'Netherlands Eredivisie': { home: 1.78, away: 1.42 },
   'Primeira Liga': { home: 1.50, away: 1.20 },
+  'Portugal Primeira Liga': { home: 1.50, away: 1.20 },
+  'EFL Championship': { home: 1.52, away: 1.22 },
+  'Championship': { home: 1.52, away: 1.22 },
+  'Brasileirão Série B': { home: 1.38, away: 1.05 },
+  'Brazil Série B': { home: 1.38, away: 1.05 },
+  'UEFA Champions League': { home: 1.72, away: 1.35 },
+  'Champions League': { home: 1.72, away: 1.35 },
+  'UEFA Europa League': { home: 1.65, away: 1.30 },
+  'Europa League': { home: 1.65, away: 1.30 },
 };
 
 export function calculatePoisson(homeExpected: number, awayExpected: number, league?: string): PoissonData {
@@ -110,7 +119,7 @@ export function calculatePoisson(homeExpected: number, awayExpected: number, lea
   });
 
   // PSN-03: Proportional float normalization for 1x2
-  const total1x2 = probCasa + probEmpate + probFora;
+  const total1x2 = (probCasa + probEmpate + probFora) || 100;
 
   // PSN-05: Cap at 95% applied AFTER renormalization — values now reflect true normalized probs
   return {
@@ -132,7 +141,7 @@ export function calculatePoisson(homeExpected: number, awayExpected: number, lea
 }
 
 export function debugPoisson(homeXg: number, awayXg: number, probPoisson: any, fonte: string) {
-  if (process.env.NODE_ENV !== 'production') {
+  if (import.meta.env.DEV) {
     console.log('[POISSON DEBUG]', {
       home_xg_input: homeXg,
       away_xg_input: awayXg,

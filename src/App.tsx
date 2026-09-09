@@ -3,6 +3,7 @@ import { useAuth } from './contexts/AuthContext';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import EngineApp from './EngineApp';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -31,7 +32,7 @@ export default function App() {
 
   // Usuário autenticado — acesso completo (plano demo, free, pro ou sharp)
   if (user) {
-    return <EngineApp onSignOut={() => {}} />;
+    return <ErrorBoundary><EngineApp onSignOut={() => {}} /></ErrorBoundary>;
   }
 
   // Auth modal sobre o preview (usuário clicou "Criar Conta" dentro do engine)
@@ -46,7 +47,7 @@ export default function App() {
 
   // Preview mode: UI visível, análises bloqueadas — incentiva cadastro
   if (previewMode) {
-    return <EngineApp isPreviewMode={true} onSignOut={() => setPreviewMode(false)} />;
+    return <ErrorBoundary><EngineApp isPreviewMode={true} onSignOut={() => setPreviewMode(false)} /></ErrorBoundary>;
   }
 
   // Landing Page

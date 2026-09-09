@@ -4,7 +4,7 @@
  */
 
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Trophy, ChevronRight, Globe, LayoutGrid, Zap, Flame, Shield, Activity, Crown, Star, Sun, Compass, Award } from 'lucide-react';
+import { X, Trophy, ChevronRight, Globe, LayoutGrid, Zap, Flame, Shield, Activity, Crown, Star, Sun, Compass, Award, Flag, TrendingUp, Layers } from 'lucide-react';
 import { LEAGUES, Match } from '../types';
 
 const leagueIcons: Record<string, any> = {
@@ -17,6 +17,9 @@ const leagueIcons: Record<string, any> = {
   sun: Sun,
   compass: Compass,
   award: Award,
+  flag: Flag,
+  'trending-up': TrendingUp,
+  layers: Layers,
 };
 
 interface LeagueSidebarProps {

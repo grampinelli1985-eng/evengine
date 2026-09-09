@@ -290,7 +290,10 @@ export const LEAGUES: League[] = [
   { key: 'soccer_brazil_campeonato', name: 'Brasileirão Série A', symbol: 'sun', imprevisibilidade: 'alta' },
   { key: 'soccer_netherlands_eredivisie', name: 'Eredivisie', symbol: 'award', imprevisibilidade: 'media' },
   { key: 'soccer_conmebol_copa_libertadores', name: 'Copa Libertadores', symbol: 'compass', imprevisibilidade: 'muito_alta' },
-  { key: 'soccer_conmebol_copa_sudamericana', name: 'Copa Sul-Americana', symbol: 'globe', imprevisibilidade: 'muito_alta' }
+  { key: 'soccer_conmebol_copa_sudamericana', name: 'Copa Sul-Americana', symbol: 'globe', imprevisibilidade: 'muito_alta' },
+  { key: 'soccer_portugal_primeira_liga', name: 'Primeira Liga', symbol: 'flag', imprevisibilidade: 'media' },
+  { key: 'soccer_efl_champ', name: 'Championship', symbol: 'trending-up', imprevisibilidade: 'media' },
+  { key: 'soccer_brazil_serie_b', name: 'Brasileirão Série B', symbol: 'layers', imprevisibilidade: 'alta' }
 ];
 
 export interface SportmonksXGData {

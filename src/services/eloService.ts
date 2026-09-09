@@ -107,7 +107,7 @@ export function resolveTeamName(name: string): string {
  * ELO-02 + ELO-05: Davidson draw model — real formula.
  */
 function calcDrawModel(dr: number): { probCasa: number; probEmpate: number; probFora: number } {
-  const theta = 0.15;
+  const theta = 0.667; // ~25% draw rate for equal teams (Davidson 2000)
   const expDelta = Math.pow(10, dr / 400);
   const denominator = expDelta + theta + 1;
   const probCasa = expDelta / denominator;

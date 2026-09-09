@@ -1338,11 +1338,11 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                           <span className="text-[9px] font-bold text-white/60">Validação Poisson × Gemini IA:</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className={`text-[10px] font-mono font-black ${(teEngine.goalsAnalysis.convergence ?? 0) <= 15 ? 'text-[#00e676]' : 'text-rose-500'}`}>
-                            {teEngine.goalsAnalysis.convergence ?? 'N/D'}% div.
+                          <span className={`text-[10px] font-mono font-black ${(teEngine?.goalsAnalysis?.convergence ?? 0) <= 15 ? 'text-[#00e676]' : 'text-rose-500'}`}>
+                            {teEngine?.goalsAnalysis?.convergence ?? 'N/D'}% div.
                           </span>
-                          <span className={`px-1.5 py-0.5 rounded text-[7px] font-black tracking-wider uppercase ${(teEngine.goalsAnalysis.convergence ?? 0) <= 15 ? 'bg-[#00e676]/10 text-[#00e676]' : 'bg-rose-500/10 text-rose-400'}`}>
-                            {(teEngine.goalsAnalysis.convergence ?? 0) <= 15 ? 'CONVERGENTE' : 'DIVERGENTE'}
+                          <span className={`px-1.5 py-0.5 rounded text-[7px] font-black tracking-wider uppercase ${(teEngine?.goalsAnalysis?.convergence ?? 0) <= 15 ? 'bg-[#00e676]/10 text-[#00e676]' : 'bg-rose-500/10 text-rose-400'}`}>
+                            {(teEngine?.goalsAnalysis?.convergence ?? 0) <= 15 ? 'CONVERGENTE' : 'DIVERGENTE'}
                           </span>
                         </div>
                       </div>
@@ -1351,20 +1351,20 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                       {/* Poisson Chart */}
                       <div className="lg:col-span-1">
-                        <PoissonChart lambda={teEngine.goalsAnalysis.totalGoalsExpected || 2.5} />
+                        <PoissonChart lambda={teEngine?.goalsAnalysis?.totalGoalsExpected || 2.5} />
                       </div>
 
                       {/* Cards de Valor de Gols */}
                       <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-4">
                         {['over_1.5', 'over_2.5', 'btb'].map((marketKey) => {
-                          const gm = teEngine.goalsAnalysis.markets?.find((m: any) => m.marketKey === marketKey);
+                          const gm = teEngine?.goalsAnalysis?.markets?.find((m: any) => m.marketKey === marketKey);
                           if (!gm) return null;
 
                           const isSelected = teEngine.mercado_selecionado?.nome === gm.market;
                           const edgePct = (gm.edge * 100).toFixed(1);
 
                           // Encontrar o melhor mercado de gols para destaque secundário inteligente
-                          const goalsMarkets = teEngine.goalsAnalysis.markets || [];
+                          const goalsMarkets = teEngine?.goalsAnalysis?.markets || [];
                           const bestGoalMarket = [...goalsMarkets]
                             .sort((a: any, b: any) => b.edge - a.edge)[0];
 
@@ -1372,11 +1372,11 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
 
                           // Um mercado de gols é indicado se for o melhor de gols, tiver EV positivo >= 3%
                           // e a convergência Gemini-Poisson for aceitável (divergência <= 15pp)
-                          const isConvergente = (teEngine.goalsAnalysis.convergence ?? 0) <= 15;
+                          const isConvergente = (teEngine?.goalsAnalysis?.convergence ?? 0) <= 15;
                           const isIndicado = isBestGoal && gm.edge >= 0.03 && isConvergente;
 
                           // Gemini and Poisson crossed probabilities
-                          const geminiProb = teEngine.goalsAnalysis.geminiProbs?.[marketKey] ?? null;
+                          const geminiProb = teEngine?.goalsAnalysis?.geminiProbs?.[marketKey] ?? null;
                           const poissonProb = gm.prob_ia; // mathematical probability is stored as gm.prob_ia
 
                           return (

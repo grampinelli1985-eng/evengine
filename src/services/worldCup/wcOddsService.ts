@@ -155,7 +155,7 @@ export async function fetchWCMatches(
   tournaments?: WCTournament[]
 ): Promise<WCMatch[]> {
   if (!apiKey || apiKey.length < 10) {
-    console.log('[WC] API key inválida — usando mock matches para calibração');
+    if (import.meta.env.DEV) console.log('[WC] API key inválida — usando mock matches para calibração');
     return WC_MOCK_MATCHES;
   }
 
@@ -171,7 +171,6 @@ export async function fetchWCMatches(
         const ttl = inactive ? 12 * 60 * 60 * 1000 : 30 * 60 * 1000; // 12h para inativo, 30min para ativo
         if (Date.now() - ts < ttl) {
           if (inactive) {
-            console.log(`[WC] Torneio ${key} inativo (cache hit) — pulando API call.`);
             continue;
           }
           results.push(...data);
@@ -187,11 +186,10 @@ export async function fetchWCMatches(
       if (!response.ok) {
         if (response.status === 404) {
           // Torneio inativo: cachear como inativo para poupar créditos da API
-          console.log(`[WC] Torneio ${key} inativo (404) — salvando cache de inatividade.`);
           localStorage.setItem(cacheKey, JSON.stringify({ data: [], ts: Date.now(), inactive: true }));
           continue;
         }
-        console.warn(`[WC] HTTP ${response.status} para ${key}`);
+        if (import.meta.env.DEV) console.warn(`[WC] HTTP ${response.status} para ${key}`);
         continue;
       }
 
@@ -206,7 +204,7 @@ export async function fetchWCMatches(
       localStorage.setItem(cacheKey, JSON.stringify({ data: enriched, ts: Date.now(), inactive: false }));
       results.push(...enriched);
     } catch (err: any) {
-      if (err?.name === 'TimeoutError') {
+      if (import.meta.env.DEV && err?.name === 'TimeoutError') {
         console.warn(`[WC] Timeout ao buscar ${key}`);
       }
     }

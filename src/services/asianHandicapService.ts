@@ -124,13 +124,19 @@ function oddDuplaChance12(h2h: OddsH2H): number {
  * Odd AH -0.5 Casa ≈ odd_home mas sem "seguro de empate"
  */
 function oddAHMenos05Casa(h2h: OddsH2H): number {
-  // AH -0.5 para casa: só ganha se casa vencer (igual ao H2H mas geralmente com menor overround em exchanges)
-  // Como aproximação: AH -0.5 odd ≈ 1X2 home odd * 0.98 (exchanges têm ~2% menos margem)
-  return parseFloat((h2h.home * 0.985).toFixed(3));
+  // [AUDIT-FIX] Exchange tem MENOS margem → odd justa é MAIOR, não menor.
+  // Multiplicar por 0.985 diminui a odd (preço pior). Correto: remover overround do
+  // bookmaker e aplicar margem real de exchange (~1.5%): odd = 1 / (prob_fair * 1.015)
+  const overroundFrac = calcOverroundH2H(h2h) / 100;
+  const probFair = probImplied(h2h.home) / (1 + overroundFrac);
+  return parseFloat((1 / (probFair * 1.015)).toFixed(3));
 }
 
 function oddAHMais05Visitante(h2h: OddsH2H): number {
-  return parseFloat((oddDuplaChanceX2(h2h) * 0.985).toFixed(3));
+  // [AUDIT-FIX] Mesma lógica: exchange → odd equivalente maior que bookmaker
+  const overroundFrac = calcOverroundH2H(h2h) / 100;
+  const probFairDCX2 = probImplied(oddDuplaChanceX2(h2h)) / (1 + overroundFrac);
+  return parseFloat((1 / (probFairDCX2 * 1.015)).toFixed(3));
 }
 
 /**

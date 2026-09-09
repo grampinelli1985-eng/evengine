@@ -21,15 +21,15 @@ export default function PlanosPage() {
       borderColor: 'border-[#1e2330]',
       features: [
         { name: 'Análises/dia', val: '3', checked: true },
-        { name: 'Ligas cobertas', val: 'Ligas Tier A + Brasileirão Série A', checked: true },
-        { name: 'Módulo Copa do Mundo 2026', val: false, checked: false },
+        { name: 'Ligas cobertas', val: 'Todas as ligas (trial)', checked: true },
+        { name: 'Módulo Copa do Mundo', val: false, checked: false },
         { name: 'ELO Engine (clubes)', val: 'básico', checked: true },
         { name: 'Filtros B-EV / B-MEFF', val: true, checked: true },
         { name: 'Histórico de análises', val: '7 dias', checked: true },
         { name: 'CLV Tracking (Closing Line Value)', val: false, checked: false },
         { name: 'Alertas de movimento de odds', val: false, checked: false },
         { name: 'Paper Trading (30 dias obrigatórios)', val: true, checked: true },
-        { name: 'Exportar CSV/JSON', val: false, checked: false },
+        { name: 'Exportar CSV', val: false, checked: false },
         { name: 'Suporte', val: 'Community', checked: true }
       ]
     },
@@ -43,15 +43,15 @@ export default function PlanosPage() {
       borderColor: 'border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.1)]',
       features: [
         { name: 'Análises/dia', val: 'Até 30/dia (fair use)', checked: true },
-        { name: 'Ligas cobertas', val: '10 Ligas (EPL, La Liga, Serie A, Bundesliga, Ligue 1, Champions, Brasileirão, Eredivisie, Libertadores, Sul-Americana)', checked: true },
-        { name: 'Módulo Copa do Mundo 2026', val: true, checked: true },
+        { name: 'Ligas cobertas', val: 'Todas as ligas', checked: true },
+        { name: 'Módulo Copa do Mundo', val: true, checked: true },
         { name: 'ELO Engine (clubes)', val: 'completo', checked: true },
         { name: 'Filtros B-EV / B-MEFF', val: true, checked: true },
         { name: 'Histórico de análises', val: '30 dias', checked: true },
         { name: 'CLV Tracking (Closing Line Value)', val: false, checked: false },
         { name: 'Alertas de movimento de odds', val: true, checked: true },
         { name: 'Paper Trading (30 dias obrigatórios)', val: true, checked: true },
-        { name: 'Exportar CSV/JSON', val: false, checked: false },
+        { name: 'Exportar CSV', val: false, checked: false },
         { name: 'Suporte', val: 'Email', checked: true }
       ]
     },
@@ -66,15 +66,15 @@ export default function PlanosPage() {
       features: [
         { name: 'Análises/dia', val: 'Sem limite (cache prioritário)', checked: true },
         { name: 'Ligas cobertas', val: 'Todas as ligas', checked: true },
-        { name: 'Módulo Copa do Mundo 2026', val: true, checked: true },
+        { name: 'Módulo Copa do Mundo', val: true, checked: true },
         { name: 'ELO Engine (clubes)', val: 'completo', checked: true },
         { name: 'Filtros B-EV / B-MEFF', val: true, checked: true },
         { name: 'Histórico de análises', val: '90 dias', checked: true },
         { name: 'CLV Tracking (Closing Line Value)', val: true, checked: true },
         { name: 'Alertas de movimento de odds', val: true, checked: true },
         { name: 'Paper Trading (30 dias obrigatórios)', val: true, checked: true },
-        { name: 'Exportar CSV/JSON', val: true, checked: true },
-        { name: 'Suporte', val: 'Prioritário', checked: true }
+        { name: 'Exportar CSV', val: true, checked: true },
+        { name: 'Suporte', val: 'Prioritário', checked: true },
       ]
     }
   ];

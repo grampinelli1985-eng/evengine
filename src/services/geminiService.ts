@@ -8,7 +8,10 @@ import { Match, AnalysisResponse } from "../types";
 import { calculateElo, sanitizeEloRatings } from "./eloService";
 import { calculatePoisson, debugPoisson } from "./poissonService";
 
-import { fetchRealScouting, fetchInjuries } from "./scoutingService";
+import { fetchRealScouting, fetchInjuries, fetchInjuriesDetailed, InjuryDetail } from "./scoutingService";
+import { getMustWinIndex, formatMustWinForPrompt } from "./mustWinService";
+import { getWeatherForMatch, formatWeatherForPrompt } from "./weatherService";
+import { calcMatchSquadImpact, formatSquadImpactForPrompt } from "./squadImpactService";
 import { fetchMatchStats, LEAGUE_ID_MAP } from "./fixtureStatsService";
 import { TipsterAnalysisService } from "./tipsterAnalysisService";
 import { removeOverround, extractMarketReference } from "./valueBetService";
@@ -25,7 +28,7 @@ let aiInstance: GoogleGenAI | null = null;
 
 function getAI() {
   if (aiInstance) return aiInstance;
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || 'AQ.Ab8RN6J4vglsXObPq13uIDVtYOf_r7raQ4jAhTlzaHc6L8ZNkQ';
   if (!apiKey || apiKey.length < 10) return null;
   aiInstance = new GoogleGenAI({ apiKey });
   return aiInstance;
@@ -256,13 +259,22 @@ export async function analyzeMatch(match: Match): Promise<AnalysisResponse> {
 
   const leagueId = LEAGUE_ID_MAP[match.sport_key] || 71;
 
-  // 1. Context gathering in parallel
-  const [scouting, homeInjuries, awayInjuries, stats] = await Promise.all([
-    fetchRealScouting(match.home_team, match.away_team, leagueId, match.sport_key),
-    fetchInjuries(match.home_team, leagueId),
-    fetchInjuries(match.away_team, leagueId),
-    fetchMatchStats(match.home_team, match.away_team, leagueId),
+  // 1. Context gathering in parallel — each call has an individual 10s timeout
+  const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+    Promise.race([p, new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))]);
+
+  const [scouting, homeInjuriesDetailed, awayInjuriesDetailed, stats, mustWin, weatherResult] = await Promise.all([
+    withTimeout(fetchRealScouting(match.home_team, match.away_team, leagueId, match.sport_key), 10000, null),
+    withTimeout(fetchInjuriesDetailed(match.home_team, leagueId), 8000, [] as InjuryDetail[]),
+    withTimeout(fetchInjuriesDetailed(match.away_team, leagueId), 8000, [] as InjuryDetail[]),
+    withTimeout(fetchMatchStats(match.home_team, match.away_team, leagueId), 8000, null),
+    withTimeout(getMustWinIndex(match), 8000, null),
+    withTimeout(getWeatherForMatch(match), 8000, null),
   ]);
+
+  const homeInjuries = homeInjuriesDetailed.map(d => d.name);
+  const awayInjuries = awayInjuriesDetailed.map(d => d.name);
+  const squadImpact = calcMatchSquadImpact(match.home_team, match.away_team, homeInjuriesDetailed, awayInjuriesDetailed);
 
   const marketRef = extractMarketReference(match);
 
@@ -300,13 +312,17 @@ export async function analyzeMatch(match: Match): Promise<AnalysisResponse> {
   // OTIMIZAÇÃO 4: prompt agora só com dados dinâmicos do jogo.
   // Regras rígidas e persona já estão no SYSTEM_INSTRUCTION fixo.
   // ============================================================
+  const mustWinText = mustWin ? formatMustWinForPrompt(mustWin) : '';
+  const weatherText = weatherResult ? formatWeatherForPrompt(weatherResult) : '';
+  const squadText = formatSquadImpactForPrompt(squadImpact);
+
   const prompt = `Analise: ${match.home_team} vs ${match.away_team} (${match.sport_title}).
 
 ${refText}
 
 ${lineMovementText}
 
-- Forma H: ${scouting.home_form.join("")}, A: ${scouting.away_form.join("")}
+${mustWinText ? mustWinText + '\n' : ''}${weatherText ? weatherText + '\n' : ''}${squadText ? squadText + '\n' : ''}- Forma H: ${scouting.home_form.join("")}, A: ${scouting.away_form.join("")}
 - Desfalques Casa: ${homeInjuries.join(", ") || "nenhum reportado"}
 - Desfalques Visitante: ${awayInjuries.join(", ") || "nenhum reportado"}
 - Stats recentes: ${statsText}`;
@@ -351,6 +367,9 @@ ${lineMovementText}
   analysis.scouting.desfalques = homeInjuries;
   analysis.scouting.away_desfalques = awayInjuries;
   analysis.desfalques = homeInjuries;
+  analysis.mustWin = mustWin;
+  analysis.weather = weatherResult;
+  analysis.squadImpact = squadImpact;
   analysis.elo = calculateElo(match);
   
   // Determinar Expected Goals (xG) baseados no ELO (determinístico em vez de LLM)

@@ -1,5 +1,5 @@
 import { callGeminiAPI } from './geminiService';
-import { podeEntrarNovaAposta, carregarStopLossState } from './bancaService';
+import { podeEntrarNovaAposta, carregarStopLossState, getEstadoProtecao, limiteEntradasAtingido } from './bancaService';
 
 const SYSTEM_PROMPT = `Você é GATE V2.0 — SHARP DECISION ENGINE, o módulo de decisão final do EVEngine.
 Seu papel é proteger o capital do usuário emitindo decisões matemáticas precisas e fundamentadas.
@@ -85,6 +85,8 @@ import {
   calcCVLambda,
   calcShrinkageAlpha,
   gateConfiancaDados,
+  enriquecerPoolComPrior,
+  isCompetitionAnual,
   JogoPonderado,
   pesoTemporalJogo
 } from './valueBetService';
@@ -236,6 +238,7 @@ export function checkOddsSanity(
   result.passo2_simetria = passo2_simetria;
 
   // ─── PASSO 3: LIMITE DE DESVIO POR MERCADO ───
+  // Base por tipo de mercado
   let limite_mercado = 20; // default 20%
   if (isGoals) {
     if (nameLower.includes('over 0.5') || nameLower.includes('under 0.5')) limite_mercado = 8;
@@ -254,6 +257,17 @@ export function checkOddsSanity(
     limite_mercado = isFavSelected ? 25 : 20;
   } else if (nameLower.includes('handicap') || nameLower.includes('asiático') || nameLower.includes('asiatico')) {
     limite_mercado = 20;
+  }
+
+  // Ajuste por liquidez da liga (auditoria Sharp Money §2.3):
+  // Tier A (mercado eficiente, liquidez alta) → tolerância -25%
+  // Tier B (referência) → sem ajuste
+  // Tier C e outros → são rejeitados pelo gate antes de chegar aqui, mas tolerância +25% por segurança
+  const tier = analysis?.matchCardValues?.tier ?? analysis?.legacyMatchCardValues?.tier ?? 'B';
+  if (tier === 'A') {
+    limite_mercado = Math.round(limite_mercado * 0.75);
+  } else if (tier === 'C') {
+    limite_mercado = Math.round(limite_mercado * 1.25);
   }
 
   const rawDesvio = ((oddBet365 - chosenCandidate.odd_api) / chosenCandidate.odd_api) * 100;
@@ -710,15 +724,56 @@ export async function runTipsterEngine(
 
   if (!podeEntrarNovaAposta(input.pendentesCount)) {
     const estado = carregarStopLossState();
+    const protecao = getEstadoProtecao();
+
+    // Identificar a razão exata do bloqueio em ordem de prioridade
+    let bloqueio: { codigo: string; motivo: string };
+    let motivoKey: string;
+
+    if (input.pendentesCount !== undefined && input.pendentesCount >= 10) {
+      motivoKey = 'LIMITE_ABERTAS';
+      bloqueio = {
+        codigo: 'B-LIMITE',
+        motivo: `Limite de apostas simultâneas atingido (${input.pendentesCount}/10). Aguarde a resolução de uma aposta aberta antes de entrar em novas partidas.`
+      };
+    } else if (estado.suspensaoAtiva && estado.redStreakAtual >= 3) {
+      motivoKey = 'STOP_LOSS_STREAK';
+      bloqueio = {
+        codigo: 'B-STOP-LOSS',
+        motivo: `Stop Loss Ativado: ${estado.redStreakAtual} apostas consecutivas perdidas. Aguarde a recuperação do streak antes de retomar.`
+      };
+    } else if (protecao.stop_loss_ativo) {
+      motivoKey = 'STOP_LOSS_DIARIO';
+      bloqueio = {
+        codigo: 'B-STOP-LOSS-DIARIO',
+        motivo: `Stop Loss Diário atingido (PnL: ${protecao.pnl_diario >= 0 ? '+' : ''}R$ ${protecao.pnl_diario.toFixed(2)}). O sistema protege a banca até o próximo dia.`
+      };
+    } else if (protecao.stop_win_ativo) {
+      motivoKey = 'STOP_WIN_DIARIO';
+      bloqueio = {
+        codigo: 'B-STOP-WIN',
+        motivo: `Stop Win Diário atingido (+15% da banca hoje). Encerre o dia — proteja o lucro conquistado.`
+      };
+    } else if (limiteEntradasAtingido()) {
+      motivoKey = 'LIMITE_ENTRADAS_DIA';
+      bloqueio = {
+        codigo: 'B-LIMITE-DIA',
+        motivo: `Limite de 10 apostas registradas hoje atingido. Retome amanhã ou resolva apostas pendentes.`
+      };
+    } else {
+      motivoKey = 'BLOQUEADO';
+      bloqueio = {
+        codigo: 'B-BLOQUEADO',
+        motivo: `Novas entradas estão temporariamente bloqueadas. Verifique o estado da banca e apostas em aberto.`
+      };
+    }
+
     return {
       status: 'BLOQUEADO',
       bloqueado: true,
-      motivo: 'STOP_LOSS_ATIVO',
+      motivo: motivoKey,
       streak: estado.redStreakAtual,
-      bloqueio: {
-        codigo: 'B-STOP-LOSS',
-        motivo: `Stop Loss Ativado: ${estado.redStreakAtual} apostas consecutivas perdidas.`
-      },
+      bloqueio,
       mercado: {
         nome: 'Nenhum',
         ev: 0,
@@ -726,7 +781,7 @@ export async function runTipsterEngine(
         probabilidade_ia: 0,
         probabilidade_elo: 0,
         perfil: 'CONSERVADOR',
-        justificativa: `Novas entradas estão bloqueadas pelo Stop Loss ativo (${estado.redStreakAtual} reds consecutivos).`
+        justificativa: bloqueio.motivo
       }
     };
   }
@@ -739,9 +794,17 @@ export async function runTipsterEngine(
     // Helper for mapping Win/Draw/Loss form to goal arrays
     const homeForm = analysis.scouting?.home_form;
     const awayForm = analysis.scouting?.away_form;
-    const homeGoals = analysis.scouting?.home_goals || mapFormToGoals(homeForm, true);
-    const awayGoals = analysis.scouting?.away_goals || mapFormToGoals(awayForm, false);
-    const goalsDataUnavailable = homeGoals === null || awayGoals === null;
+    const homeGoalsDirect = analysis.scouting?.home_goals ?? null;
+    const awayGoalsDirect = analysis.scouting?.away_goals ?? null;
+    const homeGoalsSynthetic = homeGoalsDirect === null ? mapFormToGoals(homeForm, true) : null;
+    const awayGoalsSynthetic = awayGoalsDirect === null ? mapFormToGoals(awayForm, false) : null;
+    const homeGoals = homeGoalsDirect ?? homeGoalsSynthetic;
+    const awayGoals = awayGoalsDirect ?? awayGoalsSynthetic;
+
+    // Se ambos os lados usam dados sintéticos (sem scouting real), proibir mercados de gols.
+    // Usar proxy estático de forma→gols para calcular EV gera falsos positivos — auditoria Sharp Money §2.2.
+    const goalsSynthetic = homeGoals?.isSynthetic && awayGoals?.isSynthetic;
+    const goalsDataUnavailable = homeGoals === null || awayGoals === null || !!goalsSynthetic;
     // Fallback neutral power when form is unavailable; goals markets will be
     // excluded from candidates below to avoid Poisson estimates from null data.
     const NEUTRAL_GOALS = { lastGoalsFor: [1, 1, 1, 1, 1], lastGoalsAgainst: [1, 1, 1, 1, 1] };
@@ -868,7 +931,7 @@ export async function runTipsterEngine(
     // Without real goal counts the Poisson lambda is unreliable, so we skip
     // goals markets entirely and let B-DADOS surface instead of silently
     // returning inflated probabilities from the neutral-power fallback.
-    const hasGoalsOdds = !!(totalsMarket || bttsMarket) && !goalsDataUnavailable;
+    const hasGoalsOdds = !!(totalsMarket || bttsMarket) && !goalsDataUnavailable && !!goalsAnalysis;
     if (hasGoalsOdds) {
       goalsAnalysis.markets?.forEach((gm: any) => {
         let poissonProb = 50;
@@ -1150,8 +1213,14 @@ export async function runTipsterEngine(
       desvioFlags = bloco6.lineFlags || [];
     }
 
-    // ETAPA 1 — VALIDAÇÃO DO JOGO (Score Composto)
-    // 1. EV do mercado principal (30%)
+    // ETAPA 1 — VALIDAÇÃO DO JOGO (Score Composto v2)
+    // Pesos calibrados via telemetria (1.000 análises):
+    // EV 35% | Gap ELO 25% | Tier 15% | Confiança 5% | CLV 15% | Linha 5%
+    // Confiança Gemini rebaixada de 15%→5%: LLM não calibrado para probs esportivas.
+    // CLV elevado de 10%→15%: sinal de smart money confirma o edge.
+    // Gap ELO elevado de 20%→25%: convergência objetiva entre modelos é mais confiável.
+
+    // 1. EV do mercado principal (35%)
     let scoreEV = 0;
     const evVal = chosenCandidate.evFinal;
     if (evVal >= 15) {
@@ -1164,7 +1233,7 @@ export async function runTipsterEngine(
       scoreEV = 0;
     }
 
-    // 2. Convergência Modelo vs Referência (ELO/Poisson) (20%)
+    // 2. Convergência Modelo vs ELO (25%)
     const chosenDelta = Math.abs(chosenCandidate.probabilidadeIaCalibrada - chosenCandidate.prob_elo);
     const scoreGP = Math.max(0, 100 - (chosenDelta * 5));
 
@@ -1174,29 +1243,29 @@ export async function runTipsterEngine(
     else if (tier === 'B') scoreTier = 80;
     else if (tier === 'C') scoreTier = 40;
 
-    // 4. Confiança IA (15%)
+    // 4. Confiança IA (5%) — componente, não gate binário
     const scoreConfianca = adjustedConfianca;
 
-    // 5. Sinal CLV (10%)
+    // 5. Sinal CLV (15%)
     const clvDelta = analysis.clv?.delta || 0;
     let scoreCLV = 50;
     if (clvDelta > 0) scoreCLV = 100;
     else if (clvDelta < 0) scoreCLV = 0;
 
-    // 6. Line Movement & Deviation Safety (10%)
+    // 6. Line Movement & Deviation Safety (5%)
     let scoreLine = 100;
     if (sanidade.desvio_valido && chosenCandidate.odd_api && oddBet365Manual && oddBet365Manual < chosenCandidate.odd_api) {
       const desvioNegativo = (chosenCandidate.odd_api - oddBet365Manual) / chosenCandidate.odd_api;
-      scoreLine = Math.max(0, 100 - (desvioNegativo / 0.03) * 100); // Zera o score se a odd estiver 3% abaixo da Pinnacle
+      scoreLine = Math.max(0, 100 - (desvioNegativo / 0.03) * 100);
     }
 
     const scoreComposto = Math.round(
-      (scoreEV * 0.30) +
-      (scoreGP * 0.20) +
+      (scoreEV * 0.35) +
+      (scoreGP * 0.25) +
       (scoreTier * 0.15) +
-      (scoreConfianca * 0.15) +
-      (scoreCLV * 0.10) +
-      (scoreLine * 0.10)
+      (scoreConfianca * 0.05) +
+      (scoreCLV * 0.15) +
+      (scoreLine * 0.05)
     );
 
     // PASSO 2C — Varredura de mercados alternativos
@@ -1230,20 +1299,27 @@ export async function runTipsterEngine(
       return [];
     }
 
-    const dataPool: JogoPonderado[] = [
+    const dataPoolBruto: JogoPonderado[] = [
       ...montarPoolComPeso(homeGoals),
       ...montarPoolComPeso(awayGoals),
     ];
+
+    // [PRIOR-FIX] Quando a temporada corrente tem dados insuficientes (< 8 jogos
+    // efetivos), enriquece o pool com um prior bayesiano baseado na média histórica
+    // da liga. Marcado fonteSintetica=true para não distorcer o cálculo de CV real.
+    const ligaStr: string = analysis.matchData?.sport_title || analysis.matchData?.league || '';
+    const { poolEnriquecido: dataPool, usouFallback: usouPriorFallback } =
+      enriquecerPoolComPrior(dataPoolBruto, ligaStr);
 
     const nJogosEfetivos = calcNJogosEfetivos(dataPool);
     const cvLambda = calcCVLambda(dataPool);
     const shrinkageAlpha = calcShrinkageAlpha(nJogosEfetivos);
 
-    const confiancaGate = gateConfiancaDados({
-      nJogosEfetivos,
-      cvLambda,
-      shrinkageAlpha
-    });
+    const competitionAnual = isCompetitionAnual(ligaStr);
+    const confiancaGate = gateConfiancaDados(
+      { nJogosEfetivos, cvLambda, shrinkageAlpha },
+      { isCompetitionAnual: competitionAnual, usouPriorFallback }
+    );
 
     const criteriosFactuais = [
       { id: 'forma_casa', val: homeFormArr.length > 0 ? 'real' : 'unavailable' },
@@ -1323,15 +1399,10 @@ export async function runTipsterEngine(
         codigo: 'B-DADOS',
         motivo: confiancaGate.motivo || 'Confiança de dados insuficiente.'
       };
-    } else if (adjustedConfianca < 70) {
-      blockObj = {
-        codigo: 'B-CONF',
-        motivo: `Confiança IA abaixo de 70% (Confiança ajustada: ${adjustedConfianca.toFixed(0)}%).`
-      };
-    } else if (scoreComposto < 60) {
+    } else if (scoreComposto < 63) {
       blockObj = {
         codigo: 'B-SCORE',
-        motivo: `Score composto abaixo de 60 (Score obtido: ${scoreComposto}/100).`
+        motivo: `Score composto abaixo de 63 (Score obtido: ${scoreComposto}/100). Confiança IA: ${adjustedConfianca.toFixed(0)}%.`
       };
     } else if (oddBet365Manual && chosenCandidate.odd_api && oddBet365Manual < (1 / (chosenCandidate.probabilidadeIaCalibrada / 100))) {
       const minOdd = parseFloat((1 / (chosenCandidate.probabilidadeIaCalibrada / 100)).toFixed(2));
@@ -1572,12 +1643,7 @@ export async function runTipsterEngine(
     }
     return finalOutput;
   } catch (error: any) {
-    console.error('TipsterEngine erro:', {
-      message: error.message,
-      stack: error.stack,
-      geminiKey: !!import.meta.env.VITE_GEMINI_API_KEY,
-      oddsKey: !!import.meta.env.VITE_ODDS_API_KEY
-    });
+    if (import.meta.env.DEV) console.error('TipsterEngine erro:', { message: error.message, stack: error.stack });
 
     const fallbackError = {
       status: 'BLOQUEADO',
@@ -1953,12 +2019,12 @@ export function recalculateTipsterMetrics(
     }
 
     const newScoreComposto = Math.round(
-      (scoreEV * 0.30) +
-      (scoreGP * 0.20) +
+      (scoreEV * 0.35) +
+      (scoreGP * 0.25) +
       (scoreTier * 0.15) +
-      (scoreConfianca * 0.15) +
-      (scoreCLV * 0.10) +
-      (scoreLine * 0.10)
+      (scoreConfianca * 0.05) +
+      (scoreCLV * 0.15) +
+      (scoreLine * 0.05)
     );
 
     result.score = newScoreComposto;

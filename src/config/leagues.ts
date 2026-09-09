@@ -7,7 +7,10 @@ export const LIGAS_OPERAVEIS = [
   'soccer_brazil_campeonato',      // Brasileirão Série A
   'soccer_uefa_champs_league',     // Champions
   'soccer_uefa_europa_league',     // Europa League
-  'soccer_netherlands_eredivisie', // Eredivisie (Holanda)
+  'soccer_netherlands_eredivisie',  // Eredivisie (Holanda)
+  'soccer_portugal_primeira_liga',  // Primeira Liga (Portugal)
+  'soccer_efl_champ',               // Championship (Inglaterra B)
+  'soccer_brazil_serie_b',     // Brasileirão Série B
 ] as const;
 
 export type LigaOperavel = typeof LIGAS_OPERAVEIS[number];

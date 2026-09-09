@@ -1,5 +1,27 @@
 import { supabase } from './supabaseClient';
-import { registrarResultadoDiario, registrarResultado } from './bancaService';
+import { registrarResultadoDiario, registrarResultado, getBancaAtual, setBancaAtual, getBancasFromSupabase, updateBancaBalance } from './bancaService';
+
+async function adjustBancaBy(delta: number): Promise<void> {
+  const current = getBancaAtual();
+  const next = Math.max(0, current + delta);
+  setBancaAtual(next);
+  window.dispatchEvent(new CustomEvent('evengine_banca_changed'));
+  // Persiste no Supabase se houver banca ativa
+  try {
+    const { data: { session } } = await supabase!.auth.getSession();
+    const userId = session?.user?.id;
+    if (!userId) return;
+    const bancas = await getBancasFromSupabase(userId);
+    const active = bancas[0];
+    if (active) await updateBancaBalance(active.id, next);
+  } catch { /* non-critical */ }
+}
+
+async function getCurrentUserId(): Promise<string | null> {
+  if (!supabase) return null;
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.user?.id ?? null;
+}
 
 export interface Bet {
   id: string;
@@ -31,6 +53,14 @@ export interface BetInput {
   stake_amount: number;
   bookmaker?: string;
   status?: 'pending' | 'green' | 'red' | 'void' | 'cashout';
+  notes?: string;
+  // Team info — always pass these so team names are saved directly in notes,
+  // independent of the Supabase analyses JOIN (which can fail silently).
+  home_team?: string;
+  away_team?: string;
+  league?: string;
+  opening_odd?: number;       // odd de abertura no momento do registro (para OLV)
+  betfair_closing_odd?: number; // odd Betfair no momento do registro (para CLV vig-free)
 }
 
 /**
@@ -43,13 +73,38 @@ export async function createBet(input: BetInput): Promise<Bet | null> {
   }
 
   try {
+    // Sempre prefixar notes com "HomeTeam × AwayTeam | League | matchId:..." para que
+    // os nomes dos times fiquem gravados mesmo se o JOIN com analyses falhar.
+    let notesValue = input.notes ?? '';
+
+    const homeTeam = input.home_team?.trim() || '';
+    const awayTeam = input.away_team?.trim() || '';
+    const league   = input.league?.trim() || '';
+    const matchId  = input.analysis_id || '';
+
+    // Só injeta o prefixo de times se temos pelo menos um dos nomes E o notes ainda não
+    // contém o separador × (evita duplicação se o caller já montou o prefixo).
+    if ((homeTeam || awayTeam) && !notesValue.includes('×')) {
+      const teamPrefix = `${homeTeam} × ${awayTeam}${league ? ' | ' + league : ''}${matchId ? ' | matchId:' + matchId : ''}`;
+      notesValue = teamPrefix + (notesValue ? ' ' + notesValue : '');
+    }
+
+    // Embute opening_odd e betfair_closing_odd no campo notes como sufixo JSON
+    const sharpMeta: Record<string, number> = {};
+    if (input.opening_odd && input.opening_odd > 0) sharpMeta.opening_odd = input.opening_odd;
+    if (input.betfair_closing_odd && input.betfair_closing_odd > 0) sharpMeta.betfair_odd = input.betfair_closing_odd;
+    if (Object.keys(sharpMeta).length > 0) {
+      notesValue = notesValue + (notesValue ? ' ' : '') + `##sharp##${JSON.stringify(sharpMeta)}`;
+    }
+
     const payload = {
       analysis_id: input.analysis_id,
       market: input.market,
       odd_taken: Number(input.odd_taken),
       stake_amount: Number(input.stake_amount),
       bookmaker: input.bookmaker || 'bet365',
-      status: input.status || 'pending'
+      status: input.status || 'pending',
+      ...(notesValue ? { notes: notesValue } : {})
     };
 
     const { data, error } = await supabase
@@ -62,6 +117,9 @@ export async function createBet(input: BetInput): Promise<Bet | null> {
       console.warn('[BetService] Falha ao inserir aposta:', error.message);
       return null;
     }
+
+    // Deduz stake da banca imediatamente ao registrar a aposta
+    await adjustBancaBy(-Number(input.stake_amount));
 
     return data as Bet;
   } catch (err) {
@@ -83,10 +141,15 @@ export async function fetchBets(filters: {
   if (!supabase) return [];
 
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return [];
+
     let query = supabase
       .from('bets')
       .select('*, analyses(home_team, away_team, league, created_at)')
-      .order('created_at', { ascending: false });
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(500);
 
     // Filtro por Status
     if (filters.status && filters.status !== 'all') {
@@ -129,6 +192,31 @@ export async function fetchBets(filters: {
     }
 
     let results = (data || []) as Bet[];
+
+    // Enriquece apostas sem times visíveis a partir do cache local de análises (apostas antigas).
+    // Guarda: só pula se o JOIN retornou home_team OU se notes já contém o separador ×.
+    try {
+      const analyzed: Record<string, any> = JSON.parse(localStorage.getItem('evengine_analyzed_matches') || '{}');
+      results = results.map(bet => {
+        // Se o JOIN funcionou e trouxe o nome do time, não precisamos enriquecer.
+        if (bet.analyses?.home_team) return bet;
+
+        // Se notes já tem o padrão "Time A × Time B", os nomes estão embutidos.
+        if (bet.notes && /[^×]+\s*×\s*[^|]+/.test(bet.notes)) return bet;
+
+        // Tenta enriquecer a partir do cache localStorage.
+        const matchId = bet.analysis_id;
+        if (matchId && analyzed[matchId]) {
+          const m = analyzed[matchId];
+          const teamNote = `${m.home_team || ''} × ${m.away_team || ''} | ${m.sport_title || ''} | matchId:${matchId}`;
+          return {
+            ...bet,
+            notes: teamNote + (bet.notes ? ' ' + bet.notes : '')
+          };
+        }
+        return bet;
+      });
+    } catch {}
 
     // Como as informações da liga e do mercado estão na tabela analyses ou bets, filtramos em JS se necessário
     if (filters.league && filters.league !== 'all') {
@@ -178,6 +266,8 @@ export async function resolveBet(
       return null;
     }
 
+    if (currentBet.status !== 'pending') return currentBet as Bet;
+
     const stake = Number(currentBet.stake_amount);
     const odd = Number(currentBet.odd_taken);
     let resultAmount = 0;
@@ -198,13 +288,20 @@ export async function resolveBet(
       netPnL = resultAmount - stake;
     }
 
+    // Preservar notes existentes (que contêm os nomes dos times e metadados sharp).
+    // Só sobrescreve se o usuário digitou uma nota nova.
+    const existingNotes = currentBet.notes || null;
+    const newNotes = params.notes
+      ? (existingNotes ? existingNotes + ' | ' + params.notes : params.notes)
+      : existingNotes;
+
     const updatePayload = {
       status: params.status,
       result_amount: Number(resultAmount.toFixed(2)),
       settled_at: new Date().toISOString(),
       match_score: params.match_score || null,
       closing_odd: params.closing_odd ? Number(params.closing_odd) : null,
-      notes: params.notes || null
+      notes: newNotes
     };
 
     const { data, error } = await supabase
@@ -219,7 +316,11 @@ export async function resolveBet(
       return null;
     }
 
-    // 2. Atualizar a banca local e persistente
+    // 2. Creditar resultado na banca (stake já foi deduzida no createBet)
+    // green: devolve stake + lucro; void/cashout: devolve result_amount; red: nada (já descontado)
+    if (params.status === 'green' || params.status === 'void' || params.status === 'cashout') {
+      await adjustBancaBy(resultAmount);
+    }
     registrarResultadoDiario(netPnL);
     registrarResultado({ resultado: params.status });
 
@@ -227,6 +328,20 @@ export async function resolveBet(
   } catch (err) {
     console.warn('[BetService] Erro inesperado ao resolver aposta:', err);
     return null;
+  }
+}
+
+/**
+ * Extrai metadados sharp embutidos no campo notes da aposta.
+ */
+export function extractSharpMeta(notes: string | null): { opening_odd?: number; betfair_odd?: number } {
+  if (!notes) return {};
+  const idx = notes.indexOf('##sharp##');
+  if (idx === -1) return {};
+  try {
+    return JSON.parse(notes.slice(idx + 9));
+  } catch {
+    return {};
   }
 }
 
@@ -243,9 +358,12 @@ export function calculatePerformanceMetrics(bets: Bet[]): {
   totalStake: number;
   netResult: number;
   avgCLV: number;
+  avgCLV_betfair: number;   // CLV usando Betfair como benchmark (vig-free real)
+  avgOLV: number;           // Opening Line Value — timing de entrada vs abertura
+  clvSource: 'betfair' | 'pinnacle_estimated'; // indica qual benchmark foi usado
 } {
   const settledBets = bets.filter((b) => b.status !== 'pending');
-  
+
   let wins = 0;
   let losses = 0;
   let voids = 0;
@@ -253,6 +371,10 @@ export function calculatePerformanceMetrics(bets: Bet[]): {
   let netResult = 0;
   let clvSum = 0;
   let clvCount = 0;
+  let clvBetfairSum = 0;
+  let clvBetfairCount = 0;
+  let olvSum = 0;
+  let olvCount = 0;
 
   settledBets.forEach((b) => {
     const stake = b.stake_amount;
@@ -271,25 +393,42 @@ export function calculatePerformanceMetrics(bets: Bet[]): {
       else voids++;
     }
 
+    const sharpMeta = extractSharpMeta(b.notes);
+
+    // CLV via Betfair (benchmark vig-free real — prioridade)
+    if (sharpMeta.betfair_odd && sharpMeta.betfair_odd > 0) {
+      const betfairFairOdd = sharpMeta.betfair_odd / 0.95;
+      const clvBetfair = ((b.odd_taken / betfairFairOdd) - 1) * 100;
+      clvBetfairSum += clvBetfair;
+      clvBetfairCount++;
+    }
+
+    // CLV via Pinnacle estimada (fallback quando Betfair não disponível)
     if (b.closing_odd && b.closing_odd > 0) {
-      // CLV = (odd_taken / closing_no_vig - 1) * 100
-      // Aproximação: multiplica a closing odd por 1.03 para estimar o preço
-      // vig-free (equivale a assumir ~3% de overround na Pinnacle). Preciso
-      // apenas para mercados binários; em mercados 3-way usa removeOverround.
-      const closingNoVig = b.closing_odd * 1.03;
+      const odd = b.closing_odd;
+      const vigFactor = odd < 1.5 ? 1.015 : odd < 2.5 ? 1.025 : odd < 5.0 ? 1.030 : 1.035;
+      const closingNoVig = odd * vigFactor;
       const clv = ((b.odd_taken / closingNoVig) - 1) * 100;
       clvSum += clv;
       clvCount++;
     }
+
+    // OLV — Opening Line Value
+    if (sharpMeta.opening_odd && sharpMeta.opening_odd > 0 && b.odd_taken > 0) {
+      const olv = ((b.odd_taken / sharpMeta.opening_odd) - 1) * 100;
+      olvSum += olv;
+      olvCount++;
+    }
   });
 
   const totalSettled = settledBets.length;
-  // Hit rate considera apenas apostas que não foram neutras/void
   const deciders = wins + losses;
   const hitRate = deciders > 0 ? (wins / deciders) * 100 : 0;
-  
   const roi = totalStake > 0 ? (netResult / totalStake) * 100 : 0;
   const avgCLV = clvCount > 0 ? clvSum / clvCount : 0;
+  const avgCLV_betfair = clvBetfairCount > 0 ? clvBetfairSum / clvBetfairCount : 0;
+  const avgOLV = olvCount > 0 ? olvSum / olvCount : 0;
+  const clvSource = clvBetfairCount > clvCount / 2 ? 'betfair' : 'pinnacle_estimated';
 
   return {
     wins,
@@ -300,7 +439,10 @@ export function calculatePerformanceMetrics(bets: Bet[]): {
     roi: parseFloat(roi.toFixed(1)),
     totalStake: parseFloat(totalStake.toFixed(2)),
     netResult: parseFloat(netResult.toFixed(2)),
-    avgCLV: parseFloat(avgCLV.toFixed(1))
+    avgCLV: parseFloat((avgCLV_betfair !== 0 ? avgCLV_betfair : avgCLV).toFixed(1)),
+    avgCLV_betfair: parseFloat(avgCLV_betfair.toFixed(1)),
+    avgOLV: parseFloat(avgOLV.toFixed(1)),
+    clvSource
   };
 }
 
@@ -369,9 +511,13 @@ export async function autoResolveBetFromLiveResult(params: {
   if (!supabase) return 0;
 
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return 0;
+
     const { data: bets, error } = await supabase
       .from('bets')
       .select('*')
+      .eq('user_id', userId)
       .eq('status', 'pending');
 
     if (error || !bets) return 0;
@@ -412,10 +558,13 @@ export async function resetBets(confirmed = false): Promise<boolean> {
   }
   if (!supabase) return false;
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return false;
+
     const { error } = await supabase
       .from('bets')
       .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000');
+      .eq('user_id', userId);
 
     if (error) {
       console.warn('[BetService] Falha ao deletar apostas:', error.message);

@@ -14,15 +14,15 @@ import AnalysisView from './components/AnalysisView';
 import TicketModal from './components/TicketModal';
 import LiveNotification from './components/LiveNotification';
 import LeagueSidebar from './components/LeagueSidebar';
-import { getBanca, calculateKellyStake, carregarStopLossState, salvarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada, getBancaAtual, setBancaAtual, getBancasFromSupabase, addBancaToSupabase, switchActiveBanca, updateBancaBalance, BancaDB } from './services/bancaService';
+import { getBanca, calculateKellyStake, carregarStopLossState, salvarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada, getBancaAtual, setBancaAtual, getBancasFromSupabase, addBancaToSupabase, switchActiveBanca, updateBancaBalance, BancaDB, getStopLossLimite, setStopLossLimite, podeEntrarNovaAposta, checkAndResetDaily, getStopLossAlertKey } from './services/bancaService';
 import { fetchBets, fetchAnalysisByMatchId, saveAnalysis, createBet, autoResolveBetFromLiveResult } from './services/betService';
 import { Trophy, Filter, RefreshCw, Search, AlertCircle, TrendingUp, Ticket, Menu, X, Zap, Flame, Shield, Activity, Crown, Star, Sun, Compass, Award, Home, BookOpen, ShieldOff, AlertTriangle, LogOut, FileText, CheckCircle, Eye, EyeOff, Users, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
 import { syncQuotaFromAPI } from './services/apiQuotaService';
 import { seedEloFromOdds, sanitizeEloRatings, calcularEstadoJogo, EstadoJogo, atualizarEloPartida } from './services/eloService';
-import { registerOpeningOdds, detectLineMovement } from './services/lineMovementService';
-import { registrarEntradaCLV, capturarOddsFechamento, corrigirEntradaCLV, sincronizarResultadoCLV } from './services/clvService';
+import { registerOpeningOdds, detectLineMovement, getOpeningOddsForMatch, extractBetfairH2H } from './services/lineMovementService';
+import { registrarEntradaCLV, capturarOddsFechamento, corrigirEntradaCLV, sincronizarResultadoCLV, limparEntradasAntigas } from './services/clvService';
 import { analisarMatchAH } from './services/asianHandicapService';
 import { calcularValueBets, validateReport } from './services/valueBetService';
 import { runTipsterEngine } from './services/tipsterEngine';
@@ -39,6 +39,7 @@ import { isLigaOperavel } from './config/leagues';
 import DocumentationView from './components/Documentation/DocumentationView';
 import WorldCupView from './components/WorldCup/WorldCupView';
 import LineMovementsView, { LineMovementRecord } from './components/LineMovementsView';
+import MonteCarloView from './components/MonteCarloView';
 import { useUserPlan } from './hooks/useUserPlan';
 import {
   canAnalyzeToday,
@@ -51,17 +52,34 @@ import {
   canAddBanca,
   getRemainingAnalysesToday,
   incrementAnalysesToday,
+  checkAndIncrementQuota,
   updateUserPlan,
   updateApiKeyOwn,
-  setCachedProfile
+  setCachedProfile,
+  getCachedProfile
 } from './services/planService';
 import { buildFixtureKey, getCachedAnalysis, setCachedAnalysis, cleanExpiredCache, markMatchAsAnalyzed, getAnalyzedLog, wasAnalyzedWithin24h, fetchAnalyzedMatchIdsLast24h } from './services/analysisCacheService';
 import { registerMatchForTracking, pollLiveResults, hasPendingLiveMatches, buildLiveKey, LiveScore, onApiError } from './services/liveTrackerService';
 import ApiErrorBanner, { ApiErrorType } from './components/ApiErrorBanner';
 import { PlanBadge, UpgradeModal, PlanLock } from './components/PlanControl';
 import { showToast, ToastContainer } from './components/Toast';
+import CLVDashboardView from './components/CLVDashboardView';
+import {
+  getNotificationPermission,
+  requestNotificationPermission,
+  notificarResultadoFinal,
+  notificarAnaliseAprovada,
+  notificarStopLoss,
+  notificarSteamMove,
+} from './services/pushNotificationService';
 
 const APP_VERSION = "BG_V9_TIPSTER_GATE_V3";
+
+// Returns a userId-scoped localStorage key to prevent cross-user data leaks
+function getScopedKey(base: string): string {
+  const profile = getCachedProfile();
+  return profile?.id ? `${base}_${profile.id}` : base;
+}
 
 const leagueIcons: Record<string, any> = {
   zap: Zap,
@@ -398,7 +416,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   const [filterAnalyzed, setFilterAnalyzed] = useState<'all' | 'analyzed' | 'pending'>('all');
   const [placedBets, setPlacedBets] = useState<Set<string>>(() => {
     try {
-      return new Set(JSON.parse(localStorage.getItem('evengine_placed_bets') || '[]'));
+      return new Set(JSON.parse(localStorage.getItem(getScopedKey('evengine_placed_bets')) || '[]'));
     } catch { return new Set(); }
   });
   const [bancaModalOpen, setBancaModalOpen] = useState(false);
@@ -411,8 +429,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   const [isExtraMenuOpen, setIsExtraMenuOpen] = useState(false);
   const extraMenuRef = useRef<HTMLDivElement>(null);
   const [lineMovements, setLineMovements] = useState<LineMovementRecord[]>([]);
-  const [view, setView] = useState<'dashboard' | 'main' | 'bets' | 'telemetry' | 'pendencias' | 'documentacao' | 'worldcup' | 'linemovement'>(() => {
-    const saved = localStorage.getItem('evengine_active_view');
+  const [view, setView] = useState<'dashboard' | 'main' | 'bets' | 'telemetry' | 'pendencias' | 'documentacao' | 'worldcup' | 'linemovement' | 'clv' | 'montecarlo'>(() => {
+    const saved = localStorage.getItem(getScopedKey('evengine_active_view'));
     return (saved as any) || 'dashboard';
   });
   const [prevView, setPrevView] = useState<string>(view);
@@ -420,16 +438,19 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
   const [stopLossState, setStopLossState] = useState(() => {
     const state = carregarStopLossState();
-    // Auto-correção na inicialização: suspensão inválida com streak < 3 → limpa
-    if (state.suspensaoAtiva && state.redStreakAtual < 3) {
+    const limite = getStopLossLimite();
+    // Auto-correção na inicialização: suspensão inválida com streak < limite → limpa
+    if (state.suspensaoAtiva && state.redStreakAtual < limite) {
       const corrected = { ...state, suspensaoAtiva: false, redStreakAtual: 0 };
       salvarStopLossState(corrected);
       return corrected;
     }
     return state;
   });
+  const [stopLossLimite, setStopLossLimiteState] = useState(() => getStopLossLimite());
+  const [notifPermission, setNotifPermission] = useState(() => getNotificationPermission());
   const [alertDismissed, setAlertDismissed] = useState(() => {
-    return localStorage.getItem('evengine_stop_loss_alert_dismissed') === 'true';
+    return localStorage.getItem(getStopLossAlertKey()) === 'true';
   });
   const [liveResults, setLiveResults] = useState<Record<string, string>>({}); // matchId → placar final
   const [liveScores, setLiveScores] = useState<Record<string, LiveScore>>({}); // matchId → placar parcial
@@ -450,14 +471,24 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     const handleStopLossChange = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail && detail.suspensaoAtiva && !stopLossState.suspensaoAtiva) {
-        localStorage.setItem('evengine_stop_loss_alert_dismissed', 'false');
+        localStorage.setItem(getStopLossAlertKey(), 'false');
         setAlertDismissed(false);
+        notificarStopLoss(detail.redStreakAtual ?? detail.streak ?? 3);
       }
       setStopLossState(carregarStopLossState());
     };
+    const handleBancaChanged = () => setBancaAtualState(getBancaAtual());
+    window.addEventListener('evengine_banca_changed', handleBancaChanged);
     window.addEventListener('evengine_stop_loss_changed', handleStopLossChange);
+    const handleLimiteChange = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.limite) setStopLossLimiteState(detail.limite);
+    };
+    window.addEventListener('evengine_stop_loss_limite_changed', handleLimiteChange);
     return () => {
+      window.removeEventListener('evengine_banca_changed', handleBancaChanged);
       window.removeEventListener('evengine_stop_loss_changed', handleStopLossChange);
+      window.removeEventListener('evengine_stop_loss_limite_changed', handleLimiteChange);
     };
   }, [stopLossState.suspensaoAtiva]);
 
@@ -466,7 +497,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     const POLL_INTERVAL_MS = 10 * 60 * 1000; // 10 minutos
 
     const runPoll = async (force = false) => {
-      const isWorldCup = localStorage.getItem('evengine_active_view') === 'worldcup';
+      const isWorldCup = localStorage.getItem(getScopedKey('evengine_active_view')) === 'worldcup';
       const shouldForce = force || isWorldCup;
       if (!shouldForce && !hasPendingLiveMatches()) return;
 
@@ -504,8 +535,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             } else {
               showToast.success(`Resultado final: ${u.homeTeam} ${u.placar} ${u.awayTeam}`);
             }
+            notificarResultadoFinal(u.homeTeam, u.awayTeam, u.placar, count);
           }).catch(() => {
             showToast.success(`Resultado final: ${u.homeTeam} ${u.placar} ${u.awayTeam}`);
+            notificarResultadoFinal(u.homeTeam, u.awayTeam, u.placar, 0);
           });
         } else {
           newScores[liveKey] = u as LiveScore;
@@ -675,6 +708,20 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       0.5;
 
     const stakeRecomendada = calculateKellyStake(probIA, odd, bancaAtual || 1000, 0.25);
+    // Sharp metadata: opening odd e Betfair para CLV/OLV precisos
+    const openingSnap = getOpeningOddsForMatch(match.id);
+    const betfairH2H = extractBetfairH2H(match);
+
+    // Resolve qual odd de abertura corresponde ao mercado apostado
+    const isHome = mercado.toLowerCase().includes('casa') || mercado.toLowerCase().includes('home') || mercado === match.home_team;
+    const isAway = mercado.toLowerCase().includes('fora') || mercado.toLowerCase().includes('away') || mercado === match.away_team;
+    const openingOdd = openingSnap
+      ? (isHome ? openingSnap.home : isAway ? openingSnap.away : openingSnap.draw)
+      : undefined;
+    const betfairOdd = betfairH2H
+      ? (isHome ? betfairH2H.home : isAway ? betfairH2H.away : betfairH2H.draw)
+      : undefined;
+
     return {
       analysis_id: null as null,
       market: mercado as string,
@@ -682,34 +729,36 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       stake_amount: parseFloat((stakeRecomendada || 0).toFixed(2)),
       bookmaker: 'bet365' as const,
       status: 'pending' as const,
-      notes: `${match.home_team} × ${match.away_team} | ${match.sport_title} | ${new Date(match.commence_time).toLocaleDateString('pt-BR')} | matchId:${match.id}`
+      notes: `${match.home_team} × ${match.away_team} | ${match.sport_title} | ${new Date(match.commence_time).toLocaleDateString('pt-BR')} | matchId:${match.id}`,
+      opening_odd: openingOdd,
+      betfair_closing_odd: betfairOdd,
     };
   };
 
   // Salva detalhes pendentes no localStorage para retry se Supabase falhar
   const savePendingBetToStorage = (matchId: string, payload: ReturnType<typeof buildBetPayloadFromMatch>) => {
     try {
-      const raw = localStorage.getItem('evengine_pending_bets');
+      const raw = localStorage.getItem(getScopedKey('evengine_pending_bets'));
       const pending: Record<string, any> = raw ? JSON.parse(raw) : {};
       pending[matchId] = payload;
-      localStorage.setItem('evengine_pending_bets', JSON.stringify(pending));
+      localStorage.setItem(getScopedKey('evengine_pending_bets'), JSON.stringify(pending));
     } catch { /* ignorar */ }
   };
 
   const removePendingBetFromStorage = (matchId: string) => {
     try {
-      const raw = localStorage.getItem('evengine_pending_bets');
+      const raw = localStorage.getItem(getScopedKey('evengine_pending_bets'));
       if (!raw) return;
       const pending = JSON.parse(raw);
       delete pending[matchId];
-      localStorage.setItem('evengine_pending_bets', JSON.stringify(pending));
+      localStorage.setItem(getScopedKey('evengine_pending_bets'), JSON.stringify(pending));
     } catch { /* ignorar */ }
   };
 
   // Ao carregar jogos, tenta sincronizar apostas que falharam anteriormente
   const syncPendingBets = async (currentMatches: Match[], currentAnalyzed: Record<string, AnalysisResponse>) => {
     try {
-      const raw = localStorage.getItem('evengine_pending_bets');
+      const raw = localStorage.getItem(getScopedKey('evengine_pending_bets'));
       if (!raw) return;
       const pending: Record<string, any> = JSON.parse(raw);
       const matchIds = Object.keys(pending);
@@ -773,7 +822,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     const newPlaced = new Set(placedBets);
     newPlaced.add(match.id);
     setPlacedBets(newPlaced);
-    localStorage.setItem('evengine_placed_bets', JSON.stringify([...newPlaced]));
+    localStorage.setItem(getScopedKey('evengine_placed_bets'), JSON.stringify([...newPlaced]));
 
     const payload = buildBetPayloadFromMatch(match, analysis);
     if (realOdd && realOdd > 1) {
@@ -788,6 +837,21 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     try {
       await createBet(payload);
       removePendingBetFromStorage(match.id);
+
+      // Registrar/promover entrada CLV como aposta confirmada
+      if (canTrackCLV()) {
+        registrarEntradaCLV({
+          matchId: match.id,
+          homeTeam: match.home_team,
+          awayTeam: match.away_team,
+          sportKey: match.sport_key,
+          commenceTime: match.commence_time,
+          mercado: payload.market,
+          oddUtilizada: payload.odd_taken,
+          apostaConfirmada: true,
+        });
+      }
+
       if (isAutoSharp) {
         showToast.success(`⚡ Sharp Auto-Registro: ${match.home_team} × ${match.away_team} adicionado em Apostas`);
       } else {
@@ -817,10 +881,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   };
 
   // Selection state
-  const [hasStarted, setHasStarted] = useState(() => localStorage.getItem('evengine_has_started') === 'true');
+  const [hasStarted, setHasStarted] = useState(() => localStorage.getItem(getScopedKey('evengine_has_started')) === 'true');
   const [selectedLeagues, setSelectedLeagues] = useState<string[]>(() => {
     try {
-      const saved = localStorage.getItem('evengine_selected_leagues');
+      const saved = localStorage.getItem(getScopedKey('evengine_selected_leagues'));
       return saved ? JSON.parse(saved) : [];
     } catch (e) {
       return [];
@@ -834,9 +898,9 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   // os reconstrua a partir do match/analysis quando os dados carregarem.
   useEffect(() => {
     try {
-      const placed = new Set<string>(JSON.parse(localStorage.getItem('evengine_placed_bets') || '[]'));
+      const placed = new Set<string>(JSON.parse(localStorage.getItem(getScopedKey('evengine_placed_bets')) || '[]'));
       if (placed.size === 0) return;
-      const raw = localStorage.getItem('evengine_pending_bets');
+      const raw = localStorage.getItem(getScopedKey('evengine_pending_bets'));
       const pending: Record<string, any> = raw ? JSON.parse(raw) : {};
       let changed = false;
       for (const matchId of placed) {
@@ -846,7 +910,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         }
       }
       if (changed) {
-        localStorage.setItem('evengine_pending_bets', JSON.stringify(pending));
+        localStorage.setItem(getScopedKey('evengine_pending_bets'), JSON.stringify(pending));
       }
     } catch { /* ignorar */ }
   }, []);
@@ -887,6 +951,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
     sanitizeEloRatings();
     cleanExpiredCache().catch(console.warn);
+    limparEntradasAntigas();
+    checkAndResetDaily();
     const init = async () => {
       try {
         await syncQuotaFromAPI();
@@ -988,6 +1054,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           if (lm.tem_steam) {
             addNotifiedLM(m.id);
             showToast.warning(`⚡ Steam Move detectado: ${m.home_team} vs ${m.away_team}`);
+            notificarSteamMove(m.home_team, m.away_team);
           } else if (Math.abs(lm.variation?.home ?? 0) >= 5) {
             addNotifiedLM(m.id);
             showToast.info(`📈 Movimento de odds: ${m.home_team} vs ${m.away_team} (${lm.variation?.home > 0 ? '+' : ''}${lm.variation?.home?.toFixed(1)}%)`);
@@ -1002,7 +1069,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         });
       }
 
-      setMatches(data);
+      setMatches(data.filter(m => !m.sport_key?.includes('qualification')));
 
       // Recupera apostas que falharam em sessões anteriores
       syncPendingBets(data, analyzedMatches).catch(console.warn);
@@ -1018,7 +1085,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
   // Sync view state to localStorage + dispara poll imediato ao entrar na Copa
   useEffect(() => {
-    localStorage.setItem('evengine_active_view', view);
+    localStorage.setItem(getScopedKey('evengine_active_view'), view);
     if (view === 'worldcup') {
       triggerPollRef.current?.(true);
     }
@@ -1026,17 +1093,17 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
   // Sync hasStarted state to localStorage
   useEffect(() => {
-    localStorage.setItem('evengine_has_started', String(hasStarted));
+    localStorage.setItem(getScopedKey('evengine_has_started'), String(hasStarted));
   }, [hasStarted]);
 
   // Sync selectedLeagues state to localStorage
   useEffect(() => {
-    localStorage.setItem('evengine_selected_leagues', JSON.stringify(selectedLeagues));
+    localStorage.setItem(getScopedKey('evengine_selected_leagues'), JSON.stringify(selectedLeagues));
   }, [selectedLeagues]);
 
   // Load matches automatically on mount if already started
   useEffect(() => {
-    const started = localStorage.getItem('evengine_has_started') === 'true';
+    const started = localStorage.getItem(getScopedKey('evengine_has_started')) === 'true';
     if (started) {
       loadMatches(true);
     }
@@ -1125,14 +1192,18 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       wasAnalyzedWithin24h(m.id, userId);
 
     if (filterAnalyzed === 'analyzed') {
-      filtered = filtered.filter(isAnalyzed);
+      // Modo "Analisadas": mostra apenas analisadas OU com aposta registrada
+      filtered = filtered.filter(m => isAnalyzed(m) || placedBets.has(m.id));
     } else if (filterAnalyzed === 'pending') {
-      filtered = filtered.filter(m => !isAnalyzed(m));
+      filtered = filtered.filter(m => !isAnalyzed(m) && !placedBets.has(m.id));
+    } else {
+      // Modo padrão "Todas": oculta partidas com aposta já confirmada
+      filtered = filtered.filter(m => !placedBets.has(m.id));
     }
 
     // Sort by date
     return filtered.sort((a, b) => new Date(a.commence_time).getTime() - new Date(b.commence_time).getTime());
-  }, [matches, filterLeagues, filterDate, modoOperacao, searchQuery, filterAnalyzed, analyzedMatches, remoteAnalyzedIds, profile, user]);
+  }, [matches, filterLeagues, filterDate, modoOperacao, searchQuery, filterAnalyzed, analyzedMatches, remoteAnalyzedIds, profile, user, placedBets]);
 
   const approvedCount = useMemo(() =>
     filteredMatches.filter(m => analyzedMatches[m.id]?.tipsterEngine?.status === 'APROVADO').length,
@@ -1146,9 +1217,22 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       return;
     }
 
-    // Verifica cota e acesso à liga ANTES de qualquer early return,
-    // para que todo clique em análise (nova ou cacheada) consuma a cota diária.
-    if (!canAnalyzeToday()) {
+    // Verifica cota server-side (fonte de verdade) com fallback para localStorage.
+    // checkAndIncrementQuota já faz check + increment atomicamente no banco.
+    const quotaResult = await checkAndIncrementQuota();
+    const serverHandledQuota = quotaResult !== null;
+    let hasIncrementedLocally = false;
+    const incrementLocalOnce = async () => {
+      if (!serverHandledQuota && !hasIncrementedLocally) {
+        hasIncrementedLocally = true;
+        await incrementAnalysesToday();
+      }
+    };
+    if (serverHandledQuota && !quotaResult!.allowed) {
+      window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
+      return;
+    }
+    if (!serverHandledQuota && !canAnalyzeToday()) {
       window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
       return;
     }
@@ -1161,7 +1245,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       setSelectedMatch(match);
       setAnalysis(analyzedMatches[match.id]);
       setAnalysisLoading(false);
-      await incrementAnalysesToday();
+      await incrementLocalOnce();
       return;
     }
     setSelectedMatch(match);
@@ -1169,6 +1253,20 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     setAnalysisLoading(true);
 
     const fixtureKey = buildFixtureKey(match.home_team, match.away_team, match.commence_time);
+
+    // Cache BLOQUEADO local (4h) — evita consumir cota para re-análise de jogo ainda bloqueado
+    try {
+      const bloqueadoKey = `ev_bloqueado_${fixtureKey}`;
+      const exp = localStorage.getItem(bloqueadoKey);
+      if (exp && Date.now() < parseInt(exp, 10) && !podeEntrarNovaAposta()) {
+        showToast.warning('Este jogo ainda está bloqueado pelo Stop Loss ou limite de entradas.');
+        setAnalysisLoading(false);
+        return;
+      } else if (exp) {
+        localStorage.removeItem(bloqueadoKey);
+      }
+    } catch {}
+
     const cached = await getCachedAnalysis(fixtureKey).catch(() => null);
     if (cached && cached.tipsterEngine) {
       // Não servir do cache se o engine estava bloqueado — bloqueios são estado
@@ -1189,7 +1287,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         setAnalysis(cached);
         setAnalyzedMatches(prev => ({ ...prev, [match.id]: cached }));
         markMatchAsAnalyzed(match.id, fixtureKey, profile?.id || user?.id);
-        await incrementAnalysesToday();
+        await incrementLocalOnce();
         setAnalysisLoading(false);
         return;
       }
@@ -1394,9 +1492,13 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       }
       result.tipsterEngine = engineVerdict;
 
-      // Persistir no cache compartilhado Supabase — só cacheia APROVADAS
+      // Persistir no cache — APROVADAS vão ao Supabase; BLOQUEADAS ficam só no localStorage (4h)
       if (engineVerdict.status === 'APROVADO') {
         setCachedAnalysis(fixtureKey, result, undefined, match.commence_time).catch(console.warn);
+      } else if (engineVerdict.status === 'BLOQUEADO') {
+        const bloqueadoKey = `ev_bloqueado_${fixtureKey}`;
+        const expiry = Date.now() + 4 * 60 * 60 * 1000;
+        try { localStorage.setItem(bloqueadoKey, String(expiry)); } catch {}
       }
 
       // Registrar para rastreamento automático + poll imediato se jogo já começou
@@ -1408,6 +1510,11 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       // 🚀 CALIBRATION: Registrar se aprovado
       if (engineVerdict.status === 'APROVADO') {
         registrarEntradaAprovada();
+        notificarAnaliseAprovada(
+          match.home_team,
+          match.away_team,
+          (engineVerdict.mercado_selecionado as any)?.nome ?? engineVerdict.mercado ?? 'Mercado Principal'
+        );
 
         // Usar o mercado que o Gate efetivamente aprovou (mercado_selecionado),
         // não o de maior EV bruto de todos_mercados (pode ser outro)
@@ -1439,7 +1546,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           sportKey: match.sport_key
         });
 
-        // CLV: registrar entrada para rastrear vs odd de fechamento
+        // CLV: pré-registra entrada (apostaConfirmada=false).
+        // Será promovida para true apenas quando o usuário confirmar a aposta em handleMarcarFeito.
         if (canTrackCLV()) {
           registrarEntradaCLV({
             matchId: match.id,
@@ -1448,7 +1556,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             sportKey: match.sport_key,
             commenceTime: match.commence_time,
             mercado: mercadoAnalise,
-            oddUtilizada: oddAnalise
+            oddUtilizada: oddAnalise,
+            apostaConfirmada: false,
           });
         }
 
@@ -1464,7 +1573,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       setAnalysis(result);
       setAnalyzedMatches(prev => ({ ...prev, [match.id]: result }));
       markMatchAsAnalyzed(match.id, buildFixtureKey(match.home_team, match.away_team, match.commence_time), profile?.id || user?.id);
-      await incrementAnalysesToday();
+      await incrementLocalOnce();
 
       // Auto-registro Sharp: delegado ao useEffect que lê placedBets atualizado
     } catch (err) {
@@ -1472,7 +1581,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       // AnalysisView will handle showing error if analysis is null
     } finally {
       const calls = getGeminiCallCount();
-      console.info(`[EngineApp] Análise da partida ${match.home_team} x ${match.away_team} consumiu ${calls} chamadas Gemini.`);
+      if (import.meta.env.DEV) console.info(`[EngineApp] Análise da partida ${match.home_team} x ${match.away_team} consumiu ${calls} chamadas Gemini.`);
       setAnalysisLoading(false);
     }
   };
@@ -1491,7 +1600,20 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
             window.dispatchEvent(new CustomEvent('evengine_open_auth_modal'));
             break;
           }
-          if (!canAnalyzeToday()) {
+          const bqResult = await checkAndIncrementQuota();
+          const bqServer = bqResult !== null;
+          let bqIncrementedLocally = false;
+          const bqIncrementLocalOnce = async () => {
+            if (!bqServer && !bqIncrementedLocally) {
+              bqIncrementedLocally = true;
+              await incrementAnalysesToday();
+            }
+          };
+          if (bqServer && !bqResult!.allowed) {
+            window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
+            break;
+          }
+          if (!bqServer && !canAnalyzeToday()) {
             window.dispatchEvent(new CustomEvent('evengine_open_upgrade_modal'));
             break;
           }
@@ -1664,7 +1786,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           registerMatchForTracking(match.id, match.home_team, match.away_team, match.commence_time);
 
           setAnalyzedMatches(prev => ({ ...prev, [match.id]: result }));
-          await incrementAnalysesToday();
+          await bqIncrementLocalOnce();
           const calls = getGeminiCallCount();
           console.info(`[EngineApp] Lote (bilhete) para a partida ${match.home_team} x ${match.away_team} consumiu ${calls} chamadas Gemini.`);
 
@@ -2004,6 +2126,38 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                         <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Apostas</span>
                       </button>
 
+                      {canTrackCLV() && (
+                        <button
+                          onClick={() => {
+                            setView('clv');
+                            setIsExtraMenuOpen(false);
+                          }}
+                          className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-all text-left cursor-pointer ${view === 'clv'
+                              ? 'bg-emerald-600 border-emerald-500 text-white'
+                              : 'bg-transparent border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                            }`}
+                        >
+                          <TrendingUp size={14} className={`shrink-0 ${view === 'clv' ? 'text-white' : 'text-emerald-400/70'}`} />
+                          <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">CLV</span>
+                        </button>
+                      )}
+
+                      {(plan === 'pro' || plan === 'sharp') && (
+                        <button
+                          onClick={() => {
+                            setView('montecarlo');
+                            setIsExtraMenuOpen(false);
+                          }}
+                          className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-all text-left cursor-pointer ${view === 'montecarlo'
+                              ? 'bg-purple-600 border-purple-500 text-white'
+                              : 'bg-transparent border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                            }`}
+                        >
+                          <Shield size={14} className={`shrink-0 ${view === 'montecarlo' ? 'text-white' : 'text-purple-400/70'}`} />
+                          <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Monte Carlo</span>
+                        </button>
+                      )}
+
                       {plan === 'sharp' ? (
                         <button
                           onClick={() => {
@@ -2111,7 +2265,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                       <button
                         onClick={() => {
                           setHasStarted(false);
-                          localStorage.setItem('evengine_has_started', 'false');
+                          localStorage.setItem(getScopedKey('evengine_has_started'), 'false');
                           setIsExtraMenuOpen(false);
                         }}
                         className="flex items-center gap-2 px-3 py-2 border border-transparent rounded-lg transition-all text-left cursor-pointer text-yellow-500 hover:bg-yellow-500/10 hover:text-yellow-400"
@@ -2121,6 +2275,27 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                       </button>
 
                       <div className="h-px bg-white/5 my-1" />
+
+                      {notifPermission !== 'denied' && (
+                        <button
+                          onClick={async () => {
+                            const perm = await requestNotificationPermission();
+                            setNotifPermission(perm);
+                            setIsExtraMenuOpen(false);
+                            if (perm === 'granted') showToast.success('Notificações ativadas!');
+                          }}
+                          className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-all text-left cursor-pointer ${
+                            notifPermission === 'granted'
+                              ? 'border-transparent text-emerald-400 hover:bg-emerald-500/10'
+                              : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          <Activity size={14} className="shrink-0" />
+                          <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                            {notifPermission === 'granted' ? 'Notificações Ativas' : 'Ativar Notificações'}
+                          </span>
+                        </button>
+                      )}
 
                       <button
                         onClick={async () => {
@@ -2237,6 +2412,38 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                       <Ticket size={16} />
                       <span className="text-[11px] font-black uppercase tracking-wider">Apostas</span>
                     </button>
+
+                    {canTrackCLV() && (
+                      <button
+                        onClick={() => {
+                          setView('clv');
+                          setMobileMenuOpen(false);
+                        }}
+                        className={`flex items-center gap-3 px-4 py-3.5 border rounded-xl transition-all text-left ${view === 'clv'
+                            ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                            : 'bg-white/[0.02] border-white/5 text-white/60 hover:text-white hover:bg-white/[0.05]'
+                          }`}
+                      >
+                        <TrendingUp size={16} />
+                        <span className="text-[11px] font-black uppercase tracking-wider">CLV</span>
+                      </button>
+                    )}
+
+                    {(plan === 'pro' || plan === 'sharp') && (
+                      <button
+                        onClick={() => {
+                          setView('montecarlo');
+                          setMobileMenuOpen(false);
+                        }}
+                        className={`flex items-center gap-3 px-4 py-3.5 border rounded-xl transition-all text-left ${view === 'montecarlo'
+                            ? 'bg-purple-600 border-purple-500 text-white shadow-lg shadow-purple-500/20'
+                            : 'bg-white/[0.02] border-white/5 text-white/60 hover:text-white hover:bg-white/[0.05]'
+                          }`}
+                      >
+                        <Shield size={16} />
+                        <span className="text-[11px] font-black uppercase tracking-wider">Monte Carlo</span>
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {
@@ -2410,7 +2617,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                     <button
                       onClick={() => {
                         setHasStarted(false);
-                        localStorage.setItem('evengine_has_started', 'false');
+                        localStorage.setItem(getScopedKey('evengine_has_started'), 'false');
                         setMobileMenuOpen(false);
                       }}
                       className="w-full flex items-center justify-between px-3 py-2.5 bg-yellow-500/5 hover:bg-yellow-500/10 border border-yellow-500/10 rounded-xl text-[10px] text-yellow-500 font-black uppercase tracking-wider transition-all"
@@ -2433,6 +2640,25 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                       <RefreshCw size={12} className={isRefreshing ? 'animate-spin text-blue-500' : ''} />
                       {isRefreshing ? 'Atualizando...' : 'Recarregar Painel'}
                     </button>
+
+                    {/* Notificações Push */}
+                    {notifPermission !== 'denied' && (
+                      <button
+                        onClick={async () => {
+                          const perm = await requestNotificationPermission();
+                          setNotifPermission(perm);
+                          if (perm === 'granted') showToast.success('Notificações ativadas!');
+                        }}
+                        className={`w-full flex items-center justify-center gap-2 py-3 border rounded-xl transition-all text-[10px] font-black uppercase tracking-widest active:scale-95 ${
+                          notifPermission === 'granted'
+                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        <Activity size={12} className="shrink-0" />
+                        {notifPermission === 'granted' ? 'Notificações Ativas' : 'Ativar Notificações'}
+                      </button>
+                    )}
 
                     {/* Sair da Conta */}
                     <button
@@ -2587,6 +2813,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               />
             ) : view === 'bets' ? (
               <BetsView onBack={() => setView('dashboard')} />
+            ) : view === 'clv' ? (
+              <CLVDashboardView onBack={() => setView('dashboard')} />
+            ) : view === 'montecarlo' ? (
+              <MonteCarloView bancaAtual={bancaAtual} plan={plan} />
             ) : view === 'pendencias' ? (
               <PendenciasView
                 matches={matches}
@@ -3495,27 +3725,31 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
                 plan={plan}
                 onRefresh={() => loadMatches(true)}
                 onGoToMatch={(matchId) => {
-                  // Limpa todos os filtros para garantir que a partida seja visível
+                  // Limpa TODOS os filtros, inclusive modoOperacao, para garantir visibilidade
                   setFilterDate(7);
                   setFilterLeagues(['all']);
                   setFilterAnalyzed('all');
                   setSearchQuery('');
                   setShowApprovedOnly(false);
+                  setModoOperacao(false);
                   setView('main');
-                  // Aguarda a view renderizar com os filtros limpos antes de scrollar
-                  setTimeout(() => {
+
+                  const tryScroll = (attempt: number) => {
                     const el = document.getElementById(`match-card-${matchId}`);
                     if (el) {
                       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                       el.classList.add('lm-highlight');
                       setTimeout(() => el.classList.remove('lm-highlight'), 2000);
+                    } else if (attempt < 4) {
+                      // Tenta até 4x com intervalo crescente (React pode estar re-renderizando)
+                      setTimeout(() => tryScroll(attempt + 1), 300 * (attempt + 1));
                     } else {
-                      // Partida não encontrada na lista atual — pode ter saído da janela da API
                       const rec = lineMovements.find(r => r.matchId === matchId);
                       const matchName = rec ? `${rec.homeTeam} vs ${rec.awayTeam}` : 'a partida';
-                      showToast.warning(`${matchName} não está mais disponível na janela de busca atual. Tente recarregar o painel.`);
+                      showToast.info(`${matchName} — jogo ao vivo ou fora da janela atual. Recarregue o painel.`);
                     }
-                  }, 500);
+                  };
+                  setTimeout(() => tryScroll(0), 400);
                 }}
               />
             </div>
@@ -3546,12 +3780,27 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider bg-white/5 p-2 rounded-xl">
                 ℹ️ O bloqueio será removido automaticamente ao registrar o primeiro GREEN.
               </p>
+              {/* Limite de streak configurável */}
+              <div className="flex items-center justify-between bg-white/5 rounded-xl px-3 py-2 mt-1">
+                <span className="text-[10px] text-white/50 uppercase font-bold tracking-wider">Limite de reds p/ bloqueio</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { const v = Math.max(1, stopLossLimite - 1); setStopLossLimite(v); setStopLossLimiteState(v); }}
+                    className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-white text-sm font-bold"
+                  >−</button>
+                  <span className="text-white font-black text-sm w-4 text-center">{stopLossLimite}</span>
+                  <button
+                    onClick={() => { const v = Math.min(10, stopLossLimite + 1); setStopLossLimite(v); setStopLossLimiteState(v); }}
+                    className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-white text-sm font-bold"
+                  >+</button>
+                </div>
+              </div>
             </div>
 
             <div className="pt-2">
               <button
                 onClick={() => {
-                  localStorage.setItem('evengine_stop_loss_alert_dismissed', 'true');
+                  localStorage.setItem(getStopLossAlertKey(), 'true');
                   setAlertDismissed(true);
                 }}
                 className="w-full py-3 bg-[#A32D2D] hover:bg-[#A32D2D]/90 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-[#A32D2D]/20"

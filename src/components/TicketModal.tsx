@@ -81,7 +81,7 @@ export default function TicketModal({ isOpen, onClose, matches, analyses, bancaA
     const text = ticketItems.map(item => {
       const isGoals = item.type.includes('Gols') || item.type.includes('Ambos') || item.type.includes('Over') || item.type.includes('btb');
       const emoji = isGoals ? '⚽' : '🎯';
-      return `${item.match.home_team} vs ${item.match.away_team}\n${emoji} Palpite: ${item.type} (${Math.round(item.probability)}%)\n`;
+      return `${item.match.home_team} vs ${item.match.away_team}\n${emoji} Mercado: ${item.type} (${Math.round(item.probability)}%)\n`;
     }).join('\n') + '\nGerado por EVEngine AI';
     
     navigator.clipboard.writeText(text).then(() => {

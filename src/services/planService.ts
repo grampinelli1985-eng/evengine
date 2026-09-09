@@ -20,7 +20,8 @@ const TIER_A_LEAGUES = [
   'soccer_italy_serie_a',
   'soccer_germany_bundesliga',
   'soccer_france_ligue_one',
-  'soccer_brazil_campeonato'
+  'soccer_brazil_campeonato',
+  'soccer_portugal_primeira_liga',
 ];
 
 export function getCachedProfile(): UserProfile | null {
@@ -46,7 +47,12 @@ export function subscribeToProfile(listener: (profile: UserProfile | null) => vo
 }
 
 function notifyListeners() {
-  localStorage.setItem('evengine_cached_profile', JSON.stringify(currentProfile));
+  if (currentProfile) {
+    const { api_key_own: _omit, ...safeProfile } = currentProfile;
+    localStorage.setItem('evengine_cached_profile', JSON.stringify(safeProfile));
+  } else {
+    localStorage.removeItem('evengine_cached_profile');
+  }
   LISTENERS.forEach(listener => listener(currentProfile));
 }
 
@@ -84,7 +90,9 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
       .maybeSingle();
 
     if (error) {
-      console.warn('[Supabase] Erro ao carregar perfil. Retornando perfil local temporário.', error);
+      console.warn('[Supabase] Erro ao carregar perfil. Usando cache existente se disponível.', error);
+      const cached = getCachedProfile();
+      if (cached && cached.id === userId) return cached;
       const fallbackProfile: UserProfile = {
         id: userId,
         email: email,
@@ -183,6 +191,8 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
     return data as UserProfile;
   } catch (err) {
     console.error('Erro ao buscar/criar perfil no Supabase:', err);
+    const cached = getCachedProfile();
+    if (cached && cached.id === userId) return cached;
     const fallbackProfile: UserProfile = {
       id: userId,
       email: email,
@@ -198,9 +208,54 @@ export async function fetchProfile(userId: string, email: string): Promise<UserP
   }
 }
 
+export interface QuotaResult {
+  allowed: boolean;
+  analyses_today: number;
+  limit: number;
+  remaining: number;
+}
+
 /**
- * Increments user analyses count.
- * Demo plan: persists total count (vitalício, não reseta diariamente).
+ * Verifica e incrementa a quota de análises via Edge Function (server-side).
+ * Retorna null se a Edge Function não estiver disponível (fallback para
+ * comportamento anterior baseado em localStorage).
+ */
+export async function checkAndIncrementQuota(): Promise<QuotaResult | null> {
+  if (!supabase) return null;
+
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return null;
+
+    const { data, error } = await supabase.functions.invoke('check-quota', {
+      body: {},
+    });
+
+    if (error) {
+      // 429 = limite atingido (error.context tem o body)
+      if (error.context?.status === 429) {
+        const body = await error.context.json().catch(() => ({}));
+        return { allowed: false, analyses_today: body.analyses_today ?? 0, limit: body.limit ?? 0, remaining: 0 };
+      }
+      console.warn('[Quota] Edge Function indisponível, usando fallback local:', error.message);
+      return null;
+    }
+
+    // Sincroniza o contador retornado com o cache local
+    const profile = getCachedProfile();
+    if (profile && data) {
+      setCachedProfile({ ...profile, analyses_today: data.analyses_today });
+    }
+
+    return data as QuotaResult;
+  } catch (err) {
+    console.warn('[Quota] Falha ao verificar quota server-side:', err);
+    return null;
+  }
+}
+
+/**
+ * Incrementa o contador localmente (fallback quando Edge Function está offline).
  */
 export async function incrementAnalysesToday(): Promise<UserProfile | null> {
   const profile = getCachedProfile();

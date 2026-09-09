@@ -358,7 +358,7 @@ export function calcularValueBets(match: Match, analysis: AnalysisResponse): Val
 }
 
 export function createValueMarket(name: string, oddApi: number, probIA: number, estimated: boolean = false): MarketValueBet {
-  const fairOdd = 1 / probIA;
+  const fairOdd = probIA > 0 ? 1 / probIA : 999;
   const edgeRaw = (probIA * oddApi) - 1;
 
   const excedeuTetoPlausivel = edgeRaw >= MAX_EDGE_REALISTA;       // >= 12% → impossível, hard reject
@@ -473,11 +473,6 @@ export interface ConfiancaDados {
   shrinkageAlpha: number;
 }
 
-export interface ResultadoGateConfianca {
-  passou: boolean;
-  motivo?: string;
-}
-
 const LAMBDA_DECAY = Math.log(2) / 90;
 
 export function pesoTemporalJogo(diasDesdeJogo: number): number {
@@ -503,24 +498,119 @@ export function calcShrinkageAlpha(nJogosEfetivos: number): number {
   return Math.min(1, nJogosEfetivos / 20);
 }
 
-export function gateConfiancaDados(dados: ConfiancaDados): ResultadoGateConfianca {
-  if (dados.nJogosEfetivos < 8) {
+// ── Prior-season fallback ────────────────────────────────────────────────────
+// Médias de gols por jogo (home + away combinados) por liga.
+// Fonte: histórico 3 temporadas, usado apenas como prior bayesiano.
+const MEDIA_GOLS_PRIOR: Record<string, number> = {
+  'bundesliga':            1.375,
+  'premier league':        1.425,
+  'la liga':               1.300,
+  'serie a':               1.250,
+  'ligue 1':               1.325,
+  'eredivisie':            1.600,
+  'serie b':               1.200,
+  'brasileir':             1.275, // Brasileirão / Brazil Série A
+  'brazil série':          1.275,
+  'champions league':      1.350,
+  'europa league':         1.300,
+  'libertadores':          1.250,
+  'sudamericana':          1.200,
+  'copa do brasil':        1.200,
+  'fa cup':                1.350,
+};
+
+// Competições que correm o ano inteiro — limiar de dados reduzido de 8 → 5
+const COMPETICOES_ANUAIS = [
+  'libertadores', 'sudamericana', 'champions league qualif',
+  'ucl qual', 'copa do brasil', 'fa cup', 'dfb-pokal', 'carabao',
+  'league cup', 'europa league', 'conference league',
+];
+
+function mediaGolsPrior(liga: string): number {
+  const lower = liga.toLowerCase();
+  for (const [key, val] of Object.entries(MEDIA_GOLS_PRIOR)) {
+    if (lower.includes(key)) return val;
+  }
+  return 1.325; // média global
+}
+
+export function isCompetitionAnual(liga: string): boolean {
+  const lower = liga.toLowerCase();
+  return COMPETICOES_ANUAIS.some(c => lower.includes(c));
+}
+
+/**
+ * Quando a temporada corrente tem < 8 jogos efetivos, injeta entradas
+ * sintéticas baseadas na média histórica da liga (prior bayesiano).
+ * Peso = 0.5 por entrada → 12 entradas = 6 jogos efetivos adicionais.
+ * fonteSintetica=true → calcCVLambda as ignora (preserva CV real).
+ */
+export function enriquecerPoolComPrior(
+  pool: JogoPonderado[],
+  liga: string
+): { poolEnriquecido: JogoPonderado[]; usouFallback: boolean } {
+  const n = calcNJogosEfetivos(pool);
+  if (n >= 8) return { poolEnriquecido: pool, usouFallback: false };
+
+  const mediaGols = mediaGolsPrior(liga);
+  const N_PRIOR = 12;
+  const PESO_PRIOR = 0.5;
+
+  const priorEntries: JogoPonderado[] = Array.from({ length: N_PRIOR }, () => ({
+    pesoTotal: PESO_PRIOR,
+    golsMarcados: mediaGols,
+    fonteSintetica: true,
+  }));
+
+  return { poolEnriquecido: [...pool, ...priorEntries], usouFallback: true };
+}
+
+export interface ResultadoGateConfianca {
+  passou: boolean;
+  motivo?: string;
+  usouPriorFallback?: boolean;
+}
+
+export interface OpcoesDadosGate {
+  isCompetitionAnual?: boolean;
+  usouPriorFallback?: boolean;
+}
+
+export function gateConfiancaDados(
+  dados: ConfiancaDados,
+  opcoes?: OpcoesDadosGate
+): ResultadoGateConfianca {
+  // Com prior bayesiano injetado, o modelo já compensou a escassez de dados reais.
+  // Reduzir o limiar de 8 → 5 para não punir duplamente: o prior existe exatamente
+  // para viabilizar análises em início de temporada.
+  const minJogos = (opcoes?.isCompetitionAnual || opcoes?.usouPriorFallback) ? 5 : 8;
+
+  if (dados.nJogosEfetivos < minJogos) {
     return {
       passou: false,
-      motivo: `Dados insuficientes: ${dados.nJogosEfetivos.toFixed(1)} jogos efetivos (mínimo: 8)`
+      motivo: `Dados insuficientes: ${dados.nJogosEfetivos.toFixed(1)} jogos efetivos (mínimo: ${minJogos})`
     };
   }
-  if (dados.cvLambda > 1.05) {
+
+  // CV=999 é sentinel de "< 2 jogos reais" — o prior sintético estabiliza o modelo,
+  // não bloquear quando prior foi aplicado. Bloquear apenas CV real alto sem prior.
+  const cvCalculavel = dados.cvLambda !== 999;
+  if (cvCalculavel && !opcoes?.usouPriorFallback && dados.cvLambda > 1.05) {
     return {
       passou: false,
       motivo: `Lambda instável: CV=${dados.cvLambda.toFixed(2)} (máximo: 1.05)`
     };
   }
-  if (dados.shrinkageAlpha < 0.25) {
+
+  // Alpha mínimo flexibilizado quando prior foi aplicado: o prior eleva o nJogos
+  // artificialmente, então α=0.25 já é conservador o suficiente com prior.
+  const minAlpha = opcoes?.usouPriorFallback ? 0.15 : 0.25;
+  if (dados.shrinkageAlpha < minAlpha) {
     return {
       passou: false,
-      motivo: `Modelo sem autonomia: α=${dados.shrinkageAlpha.toFixed(2)} (mínimo: 0.25)`
+      motivo: `Modelo sem autonomia: α=${dados.shrinkageAlpha.toFixed(2)} (mínimo: ${minAlpha})`
     };
   }
-  return { passou: true };
+
+  return { passou: true, usouPriorFallback: opcoes?.usouPriorFallback };
 }

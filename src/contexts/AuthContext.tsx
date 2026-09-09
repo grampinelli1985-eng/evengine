@@ -61,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setCachedProfile(null);
       localStorage.removeItem('evengine_cached_profile');
       localStorage.removeItem('evengine_demo_analyses_today');
+      localStorage.removeItem('evengine_analyses_local');
     }
   };
 

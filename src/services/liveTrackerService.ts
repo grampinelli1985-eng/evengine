@@ -6,17 +6,38 @@
 /**
  * Serviço de rastreamento automático de resultados ao vivo.
  *
+ * Fonte primária: The Odds API /scores (já integrada, gratuita, 500 req/mês)
+ * Fallback: API-Football /fixtures (quando disponível)
+ *
  * Lógica de economia de quota:
  *  - Só faz polling quando existe ao menos uma partida rastreada que já começou
- *  - Usa 1 request por ciclo (busca por data, não por partida individual)
- *  - Intervalo padrão: 10 minutos (máx ~144 req/dia, mas na prática ~20-40)
+ *  - 1 request por ciclo cobre todas as partidas de todos os sports_keys necessários
+ *  - Intervalo padrão: 10 minutos (máx ~144 req/dia, na prática ~20-40)
  *  - Para o polling automaticamente quando todas as partidas têm resultado
- *
- * Dependência: proxy /api/football (mesmo usado pelo scoutingService)
  */
 
 const STORAGE_KEY = 'evengine_live_tracker';
 const API_BASE_URL = '/api/football';
+
+// The Odds API sports keys para futebol (cobrem as principais ligas analisadas)
+const ODDS_API_SOCCER_KEYS = [
+  'soccer_brazil_campeonato',
+  'soccer_spain_la_liga',
+  'soccer_germany_bundesliga',
+  'soccer_italy_serie_a',
+  'soccer_france_ligue_one',
+  'soccer_epl',
+  'soccer_netherlands_eredivisie',
+  'soccer_portugal_primeira_liga',
+  'soccer_uefa_champs_league',
+  'soccer_uefa_europa_league',
+  'soccer_conmebol_copa_libertadores',
+  'soccer_conmebol_copa_sudamericana',
+  'soccer_argentina_primera_division',
+  'soccer_mexico_ligamx',
+  'soccer_turkey_super_league',
+  'soccer_sweden_allsvenskan',
+];
 
 // Status da API-Football que indicam jogo encerrado
 const FINISHED_STATUSES = new Set(['FT', 'AET', 'PEN', 'AWD', 'WO']);
@@ -291,11 +312,111 @@ export function hasPendingLiveMatches(): boolean {
 const WC_LEAGUE_IDS = new Set([1, 9]); // 1=World Cup, 9=Confederations Cup / variantes
 
 /**
+ * Busca placares via The Odds API /scores (fonte primária, gratuita).
+ * Retorna mapa de chave normalizada → { homeGoals, awayGoals, completed, live }.
+ * Consome 1 request por sport_key com daysFrom=2 (cobre jogos das últimas 48h).
+ */
+async function fetchOddsApiScores(
+  pending: TrackedMatch[]
+): Promise<Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>> {
+  const oddsKey = (import.meta as any).env?.VITE_ODDS_API_KEY ?? '';
+  if (!oddsKey) return new Map();
+
+  const results = new Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>();
+
+  for (const sportKey of ODDS_API_SOCCER_KEYS) {
+    try {
+      const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${oddsKey}&daysFrom=2`;
+      const res = await fetch(url, {
+        signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(8000) : undefined,
+      });
+
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 422) break; // chave inválida — parar
+        continue; // liga não disponível ou rate limit — continuar
+      }
+
+      const games: any[] = await res.json();
+
+      for (const game of games) {
+        if (!game.scores || game.scores.length < 2) continue;
+
+        const apiHome: string = game.home_team ?? '';
+        const apiAway: string = game.away_team ?? '';
+        const key = buildLiveKey(apiHome, apiAway);
+
+        // Verificar se alguma partida pendente corresponde a esse jogo
+        const hasPending = pending.some(m =>
+          isSameTeam(m.homeTeam, apiHome) && isSameTeam(m.awayTeam, apiAway)
+        );
+        if (!hasPending) continue;
+
+        // The Odds API: scores[0] = home, scores[1] = away
+        const homeScore = game.scores.find((s: any) => isSameTeam(s.name, apiHome));
+        const awayScore = game.scores.find((s: any) => isSameTeam(s.name, apiAway));
+        const homeGoals = parseInt(homeScore?.score ?? '0', 10);
+        const awayGoals = parseInt(awayScore?.score ?? '0', 10);
+
+        results.set(key, {
+          homeGoals: isNaN(homeGoals) ? 0 : homeGoals,
+          awayGoals: isNaN(awayGoals) ? 0 : awayGoals,
+          completed: game.completed === true,
+          live: !game.completed && game.scores.length > 0,
+        });
+      }
+    } catch {
+      // falha silenciosa por sport_key — continua os demais
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Fallback: busca fixtures via API-Football (quando disponível).
+ * silent=true suprime o banner de erro — usado quando The Odds API já é a fonte primária.
+ */
+async function fetchApiFootballFixtures(date: string, silent = false): Promise<any[]> {
+  try {
+    const url = `${API_BASE_URL}/fixtures?date=${date}`;
+    const res = await fetch(url, {
+      signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(8000) : undefined,
+    });
+
+    if (!res.ok) {
+      if (!silent) {
+        const detail = `HTTP ${res.status} ${res.statusText}`;
+        if (res.status === 429) scheduleError({ kind: 'quota', statusCode: res.status, detail });
+        else if (res.status === 401 || res.status === 403) scheduleError({ kind: 'suspended', statusCode: res.status, detail });
+        else scheduleError({ kind: 'network', statusCode: res.status, detail });
+      }
+      return [];
+    }
+
+    const data = await res.json();
+
+    if (data.errors && Object.keys(data.errors).length > 0) {
+      if (!silent) {
+        const detail = Object.values(data.errors as Record<string, string>).join(' · ');
+        const kind = parseApiError(data.errors as Record<string, string>);
+        scheduleError({ kind, detail });
+      }
+      return [];
+    }
+
+    cancelAndClearError();
+    return data.response ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Realiza um ciclo de polling.
  *
- * Modo normal: cruza fixtures do dia com partidas pré-registradas.
- * Modo Copa (forceToday=true): filtra apenas fixtures da Copa do Mundo FIFA 2026
- * para não exibir resultados de outras ligas.
+ * Fonte primária: The Odds API /scores (gratuita).
+ * Fallback: API-Football /fixtures (quando disponível).
+ * Modo Copa (forceToday=true): usa API-Football filtrado por league ID.
  */
 export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]> {
   const pending = getPendingTrackedMatches().filter(m => {
@@ -305,7 +426,6 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
 
   if (!forceToday && pending.length === 0) return [];
 
-  // Só faz poll no modo Copa se houver jogo ao vivo ou iniciando em ≤90 min
   if (forceToday) {
     const now = Date.now();
     const WINDOW_MS = 90 * 60 * 1000;
@@ -318,60 +438,70 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
     });
     if (!hasMatchNearby) return [];
   }
-  const today = new Date().toISOString().split('T')[0];
-  const dates = forceToday
-    ? [today]
-    : [...new Set(pending.map(m => new Date(m.commenceTime).toISOString().split('T')[0]))];
 
   const updates: LiveUpdate[] = [];
 
-  for (const date of dates) {
-    try {
-      // Busca por data (sem filtro de liga — plano free não suporta ?season=2026)
-      // Filtragem por league.id é feita client-side logo abaixo
-      const url = `${API_BASE_URL}/fixtures?date=${date}`;
-      console.info(`[LiveTracker] Polling → ${url}`);
-      const res = await fetch(url, {
-        signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(8000) : undefined,
-      });
+  // ── MODO NORMAL: The Odds API como fonte primária ──────────────────────────
+  if (!forceToday) {
+    console.info('[LiveTracker] Polling via The Odds API scores...');
+    const oddsScores = await fetchOddsApiScores(pending);
 
-      if (!res.ok) {
-        const detail = `HTTP ${res.status} ${res.statusText}`;
-        console.warn(`[LiveTracker] ${detail} para ${url}`);
-        if (res.status === 429) scheduleError({ kind: 'quota', statusCode: res.status, detail });
-        else if (res.status === 401 || res.status === 403) scheduleError({ kind: 'suspended', statusCode: res.status, detail });
-        else scheduleError({ kind: 'network', statusCode: res.status, detail });
-        continue;
+    for (const match of pending) {
+      const key = buildLiveKey(match.homeTeam, match.awayTeam);
+      const score = oddsScores.get(key);
+      if (!score) continue;
+
+      const placar = `${score.homeGoals}-${score.awayGoals}`;
+
+      if (score.completed) {
+        updates.push({
+          matchId: match.matchId,
+          homeTeam: match.homeTeam,
+          awayTeam: match.awayTeam,
+          placar,
+          statusShort: 'FT',
+          homeGoals: score.homeGoals,
+          awayGoals: score.awayGoals,
+          finished: true,
+        });
+        markMatchResolved(match.matchId, placar);
+        console.info(`[LiveTracker][OddsAPI] FT: ${match.homeTeam} ${placar} ${match.awayTeam}`);
+      } else if (score.live) {
+        updates.push({
+          matchId: match.matchId,
+          homeTeam: match.homeTeam,
+          awayTeam: match.awayTeam,
+          placar,
+          minuto: 0, // The Odds API não fornece minuto
+          statusShort: 'LIVE',
+          finished: false,
+        });
+        console.info(`[LiveTracker][OddsAPI] LIVE: ${match.homeTeam} ${placar} ${match.awayTeam}`);
       }
+    }
 
-      const data = await res.json();
-      const fixtures: any[] = data.response ?? [];
+    // Se The Odds API resolveu todas as partidas pendentes, retornar sem fallback
+    const resolvedIds = new Set(updates.filter(u => u.finished).map(u => u.matchId));
+    const stillPending = pending.filter(m => !resolvedIds.has(m.matchId));
 
-      if (data.errors && Object.keys(data.errors).length > 0) {
-        const detail = Object.values(data.errors as Record<string, string>).join(' · ');
-        const kind = parseApiError(data.errors as Record<string, string>);
-        // Em modo Copa (forceToday), erros de acesso/suspended são esperados no plano gratuito
-        // (Copa 2026 requer plano pago) — silenciar o banner vermelho neste contexto
-        if (forceToday && kind === 'suspended') {
-          console.warn(`[LiveTracker] Acesso negado no modo Copa (plano gratuito) — sem banner:`, data.errors);
-          continue;
-        }
-        console.error(`[LiveTracker] Erro da API Football:`, data.errors);
-        scheduleError({ kind, detail });
-        continue;
-      }
+    if (stillPending.length === 0 || updates.length > 0) {
+      // Limpa banner de erro (The Odds API funcionou)
+      if (oddsScores.size > 0) cancelAndClearError();
+      return updates;
+    }
 
-      // Cancela qualquer erro pendente e limpa o banner
+    // Fallback: API-Football para partidas não encontradas na The Odds API
+    console.info(`[LiveTracker] ${stillPending.length} partida(s) não encontrada(s) na OddsAPI — tentando fallback API-Football...`);
+    const dates = [...new Set(stillPending.map(m => new Date(m.commenceTime).toISOString().split('T')[0]))];
+
+    for (const date of dates) {
+      const fixtures = await fetchApiFootballFixtures(date, true);
+      if (fixtures.length === 0) continue;
+
       cancelAndClearError();
+      console.info(`[LiveTracker][Fallback] ${fixtures.length} fixture(s) para ${date}`);
 
-      // Em modo Copa: filtra client-side para só processar fixtures da Copa do Mundo
-      const fixturesParaProcessar = forceToday
-        ? fixtures.filter(f => WC_LEAGUE_IDS.has(f.league?.id))
-        : fixtures;
-
-      console.info(`[LiveTracker] ${fixtures.length} fixture(s) recebidos para ${date}${forceToday ? ` → ${fixturesParaProcessar.length} da Copa` : ''}`);
-
-      for (const fixture of fixturesParaProcessar) {
+      for (const fixture of fixtures) {
         const status: string = fixture.fixture?.status?.short ?? '';
         const minuto: number = fixture.fixture?.status?.elapsed ?? 0;
         const homeGoals: number = fixture.goals?.home ?? 0;
@@ -381,70 +511,66 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
 
         if (!LIVE_STATUSES.has(status) && !FINISHED_STATUSES.has(status)) continue;
 
+        const match = stillPending.find(m =>
+          !m.resolved &&
+          isSameTeam(m.homeTeam, apiHome) &&
+          isSameTeam(m.awayTeam, apiAway)
+        );
+        if (!match) continue;
+
         const placar = `${homeGoals}-${awayGoals}`;
 
-        if (forceToday) {
-          if (FINISHED_STATUSES.has(status)) {
-            updates.push({
-              matchId: buildLiveKey(apiHome, apiAway),
-              homeTeam: apiHome,
-              awayTeam: apiAway,
-              placar,
-              statusShort: status,
-              homeGoals,
-              awayGoals,
-              finished: true,
-            });
-          } else {
-            updates.push({
-              matchId: buildLiveKey(apiHome, apiAway),
-              homeTeam: apiHome,
-              awayTeam: apiAway,
-              placar,
-              minuto,
-              statusShort: status,
-              finished: false,
-            });
-          }
+        if (FINISHED_STATUSES.has(status)) {
+          updates.push({ matchId: match.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, placar, statusShort: status, homeGoals, awayGoals, finished: true });
+          markMatchResolved(match.matchId, placar);
+          console.info(`[LiveTracker][Fallback] FT: ${match.homeTeam} ${placar} ${match.awayTeam}`);
         } else {
-          const match = pending.find(m =>
-            !m.resolved &&
-            isSameTeam(m.homeTeam, apiHome) &&
-            isSameTeam(m.awayTeam, apiAway)
-          );
-          if (!match) continue;
-
-          if (FINISHED_STATUSES.has(status)) {
-            updates.push({
-              matchId: match.matchId,
-              homeTeam: match.homeTeam,
-              awayTeam: match.awayTeam,
-              placar,
-              statusShort: status,
-              homeGoals,
-              awayGoals,
-              finished: true,
-            });
-            markMatchResolved(match.matchId, placar);
-            console.info(`[LiveTracker] FT: ${match.homeTeam} ${placar} ${match.awayTeam}`);
-          } else {
-            updates.push({
-              matchId: match.matchId,
-              homeTeam: match.homeTeam,
-              awayTeam: match.awayTeam,
-              placar,
-              minuto,
-              statusShort: status,
-              finished: false,
-            });
-            console.info(`[LiveTracker] ${minuto}': ${match.homeTeam} ${placar} ${match.awayTeam}`);
-          }
+          updates.push({ matchId: match.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, placar, minuto, statusShort: status, finished: false });
         }
       }
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.warn(`[LiveTracker] Erro ao consultar fixtures de ${date}:`, err);
-      scheduleError({ kind: 'network', detail });
+    }
+
+    return updates;
+  }
+
+  // ── MODO COPA (forceToday=true): API-Football com filtro de league ─────────
+  const today = new Date().toISOString().split('T')[0];
+  const fixtures = await fetchApiFootballFixtures(today);
+
+  if (fixtures.length > 0) {
+    cancelAndClearError();
+    const wcFixtures = fixtures.filter((f: any) => WC_LEAGUE_IDS.has(f.league?.id));
+    console.info(`[LiveTracker][Copa] ${fixtures.length} fixture(s) → ${wcFixtures.length} da Copa`);
+
+    for (const fixture of wcFixtures) {
+      const status: string = fixture.fixture?.status?.short ?? '';
+      const minuto: number = fixture.fixture?.status?.elapsed ?? 0;
+      const homeGoals: number = fixture.goals?.home ?? 0;
+      const awayGoals: number = fixture.goals?.away ?? 0;
+      const apiHome: string = fixture.teams?.home?.name ?? '';
+      const apiAway: string = fixture.teams?.away?.name ?? '';
+      if (!LIVE_STATUSES.has(status) && !FINISHED_STATUSES.has(status)) continue;
+      const placar = `${homeGoals}-${awayGoals}`;
+
+      if (FINISHED_STATUSES.has(status)) {
+        updates.push({ matchId: buildLiveKey(apiHome, apiAway), homeTeam: apiHome, awayTeam: apiAway, placar, statusShort: status, homeGoals, awayGoals, finished: true });
+      } else {
+        updates.push({ matchId: buildLiveKey(apiHome, apiAway), homeTeam: apiHome, awayTeam: apiAway, placar, minuto, statusShort: status, finished: false });
+      }
+    }
+  } else {
+    // Fallback Copa: The Odds API (ligas de Copa/seleções podem estar cobertas)
+    console.info('[LiveTracker][Copa] API-Football indisponível — tentando OddsAPI...');
+    const oddsScores = await fetchOddsApiScores(pending);
+    for (const match of pending) {
+      const key = buildLiveKey(match.homeTeam, match.awayTeam);
+      const score = oddsScores.get(key);
+      if (!score) continue;
+      const placar = `${score.homeGoals}-${score.awayGoals}`;
+      if (score.completed) {
+        updates.push({ matchId: match.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, placar, statusShort: 'FT', homeGoals: score.homeGoals, awayGoals: score.awayGoals, finished: true });
+        markMatchResolved(match.matchId, placar);
+      }
     }
   }
 

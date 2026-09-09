@@ -50,6 +50,9 @@ import TipsterAnalysisServiceBase from '../services/tipsterAnalysisService';
 import { calcularEstadoJogo } from '../services/eloService';
 import { getTeamPositionInLeague } from '../services/scoutingService';
 import { getLineMovement, LineMovementResult } from '../services/lineMovementService';
+import { getMustWinCached, MustWinResult } from '../services/mustWinService';
+import { getWeatherCached, WeatherResult } from '../services/weatherService';
+import { getSquadImpactBadge, MatchSquadImpact } from '../services/squadImpactService';
 import SteamBadge from './SteamBadge';
 
 const tipsterService = new TipsterAnalysisServiceBase();
@@ -103,6 +106,11 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
   const [homeRank, setHomeRank] = useState<number | null>(null);
   const [awayRank, setAwayRank] = useState<number | null>(null);
   const [lineMovement, setLineMovement] = useState<LineMovementResult | null>(() => getLineMovement(match.id));
+  const mustWin: MustWinResult | null = deepAnalysis?.mustWin ?? getMustWinCached(match.id);
+  const weatherData: WeatherResult | null = deepAnalysis?.weather ?? getWeatherCached(match.id);
+  const squadImpact: MatchSquadImpact | null = deepAnalysis?.squadImpact ?? null;
+  const homeBadge = squadImpact ? getSquadImpactBadge(squadImpact.home) : null;
+  const awayBadge = squadImpact ? getSquadImpactBadge(squadImpact.away) : null;
 
   const estado = calcularEstadoJogo(match);
   const kickoff = new Date(match.date);
@@ -263,6 +271,77 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
             </div>
           )}
 
+          {mustWin && mustWin.source === 'api' && Math.abs(mustWin.delta) >= 20 && (
+            <div className="mb-2 flex items-center gap-2 flex-wrap">
+              <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                mustWin.home.score >= 70
+                  ? 'bg-red-500/15 border-red-500/30 text-red-400'
+                  : mustWin.home.score >= 50
+                  ? 'bg-orange-500/15 border-orange-500/30 text-orange-400'
+                  : 'bg-white/5 border-white/10 text-white/40'
+              }`}>
+                <span>{mustWin.home.emoji}</span>
+                <span>Casa {mustWin.home.score}</span>
+              </div>
+              <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                mustWin.away.score >= 70
+                  ? 'bg-red-500/15 border-red-500/30 text-red-400'
+                  : mustWin.away.score >= 50
+                  ? 'bg-orange-500/15 border-orange-500/30 text-orange-400'
+                  : 'bg-white/5 border-white/10 text-white/40'
+              }`}>
+                <span>{mustWin.away.emoji}</span>
+                <span>Vis {mustWin.away.score}</span>
+              </div>
+            </div>
+          )}
+
+          {weatherData && weatherData.tags.length > 0 && (
+            <div className="mb-2 flex items-center gap-1.5 flex-wrap">
+              {weatherData.tags.map((tag, i) => (
+                <span key={i} className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                  weatherData.impact === 'SEVERO'
+                    ? 'bg-blue-500/15 border-blue-500/30 text-blue-300'
+                    : weatherData.impact === 'MODERADO'
+                    ? 'bg-sky-500/15 border-sky-500/30 text-sky-300'
+                    : 'bg-white/5 border-white/10 text-white/50'
+                }`}>
+                  {tag}
+                </span>
+              ))}
+              {weatherData.weather && (
+                <span className="text-[9px] text-white/30 font-mono">
+                  {weatherData.weather.temperature}°C
+                </span>
+              )}
+            </div>
+          )}
+
+          {(homeBadge || awayBadge) && (
+            <div className="mb-2 flex items-center gap-1.5 flex-wrap">
+              {homeBadge && (
+                <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                  homeBadge.color === 'red'    ? 'bg-red-500/15 border-red-500/30 text-red-400' :
+                  homeBadge.color === 'orange' ? 'bg-orange-500/15 border-orange-500/30 text-orange-400' :
+                  homeBadge.color === 'yellow' ? 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400' :
+                                                 'bg-white/5 border-white/10 text-white/40'
+                }`}>
+                  🏥 Casa {homeBadge.label}
+                </span>
+              )}
+              {awayBadge && (
+                <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                  awayBadge.color === 'red'    ? 'bg-red-500/15 border-red-500/30 text-red-400' :
+                  awayBadge.color === 'orange' ? 'bg-orange-500/15 border-orange-500/30 text-orange-400' :
+                  awayBadge.color === 'yellow' ? 'bg-yellow-500/15 border-yellow-500/30 text-yellow-400' :
+                                                 'bg-white/5 border-white/10 text-white/40'
+                }`}>
+                  🏥 Vis {awayBadge.label}
+                </span>
+              )}
+            </div>
+          )}
+
           {deepAnalysis?.dados_ia_indisponivel && (
             <div className="mb-2 flex items-center gap-1.5 px-2 py-1 bg-amber-500/10 border border-amber-500/30 rounded-md w-fit">
               <span className="text-[10px] text-amber-500">⚠️</span>
@@ -353,6 +432,58 @@ const MatchCardTipster: React.FC<MatchCardTipsterProps> = ({
         ))}
 
       </div>
+
+      {/* GATE Status — aparece após análise */}
+      {deepAnalysis?.tipsterEngine && (() => {
+        const te = deepAnalysis.tipsterEngine;
+        const status = te?.decisao?.status ?? te?.status;
+        const motivoRaw = te?.decisao?.bloqueio?.motivo ?? te?.bloqueio?.motivo;
+        const motivo: string | null = typeof motivoRaw === 'string'
+          ? motivoRaw
+          : typeof motivoRaw?.valor === 'string'
+            ? motivoRaw.valor
+            : Array.isArray(motivoRaw?.motivos_bloqueio) && typeof motivoRaw.motivos_bloqueio[0] === 'string'
+              ? motivoRaw.motivos_bloqueio[0]
+              : null;
+
+        if (!status) return null;
+        const isAprovado = status === 'APROVADO';
+
+        // score pode ser objeto {valor, motivos_bloqueio} ou número direto
+        const scoreRaw = te?.decisao?.score ?? te?.score;
+        const scoreNum: number | null = typeof scoreRaw === 'number'
+          ? scoreRaw
+          : typeof scoreRaw?.valor === 'number'
+            ? scoreRaw.valor
+            : null;
+
+        // motivos_bloqueio do score quando bloqueado e sem motivo explícito
+        const motivoScore: string | null = !motivo && !isAprovado && Array.isArray(scoreRaw?.motivos_bloqueio) && scoreRaw.motivos_bloqueio.length > 0
+          ? scoreRaw.motivos_bloqueio[0]
+          : null;
+        return (
+          <div className={`relative flex items-center gap-2.5 px-3 py-2.5 rounded-2xl mb-3 border ${
+            isAprovado
+              ? 'bg-emerald-500/5 border-emerald-500/20'
+              : 'bg-rose-500/5 border-rose-500/20'
+          }`}>
+            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isAprovado ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+            <div className="flex-1 min-w-0">
+              <span className={`text-[9px] font-black uppercase tracking-widest ${isAprovado ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {isAprovado ? '✓ Gate Liberado' : '✗ Gate Bloqueado'}
+              </span>
+              {!isAprovado && (motivo || motivoScore) && (
+                <p className="text-[8px] text-rose-400/60 mt-0.5 truncate">{motivo ?? motivoScore}</p>
+              )}
+            </div>
+            {scoreNum !== null && (
+              <span className={`text-[10px] font-mono font-black flex-shrink-0 ${isAprovado ? 'text-emerald-400' : 'text-rose-400/60'}`}>
+                {scoreNum}pts
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Mercado Recomendado — só renderiza quando deepAnalysis com tipsterEngine estiver disponível */}
       {(() => {

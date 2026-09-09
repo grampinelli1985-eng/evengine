@@ -399,7 +399,7 @@ export function AnalysisDecisionCard({ decisao, children }: { decisao: DecisaoEn
               <span className={`text-[10px] uppercase font-black tracking-[0.3em] block mb-2 text-center lg:text-left ${
                 isAvisoEV ? 'text-amber-400/60' : 'text-emerald-400/50'
               }`}>
-                ENTRADA RECOMENDADA
+                MERCADO RECOMENDADO
               </span>
               <div className="text-2xl font-black text-white mb-2 flex items-center gap-2">
                 <Target className="text-emerald-400 shrink-0" size={24} />
