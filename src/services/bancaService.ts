@@ -235,3 +235,30 @@ export function clearBancaOnSignOut(userId: string): void {
   localStorage.removeItem(getBancaKey());
   localStorage.removeItem(getActiveBancaIdKey());
 }
+
+// ─── Funções de gate / proteção (usadas por tipsterEngine) ───────────────────
+
+export interface EstadoProtecao {
+  bloqueado: boolean;
+  motivo: string | null;
+  consecutiveRedCount: number;
+  dailyRedCount: number;
+}
+
+export function getEstadoProtecao(): EstadoProtecao {
+  const state = carregarStopLossState();
+  return {
+    bloqueado: state.isBlocked,
+    motivo: state.blockReason,
+    consecutiveRedCount: state.consecutiveRedCount,
+    dailyRedCount: state.dailyRedCount,
+  };
+}
+
+export function podeEntrarNovaAposta(): boolean {
+  return !carregarStopLossState().isBlocked;
+}
+
+export function limiteEntradasAtingido(): boolean {
+  return carregarStopLossState().isBlocked;
+}
