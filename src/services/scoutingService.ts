@@ -51,8 +51,8 @@ function normalizarNomeTime(nome: string): string {
 }
 
 const API_BASE_URL = '/api/football';
-const ODDS_API_KEY = import.meta.env.VITE_ODDS_API_KEY || 'afbdc3e7bd2899ec814616bb8f84fc80';
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || 'AQ.Ab8RN6J4vglsXObPq13uIDVtYOf_r7raQ4jAhTlzaHc6L8ZNkQ';
+const ODDS_API_KEY = import.meta.env.VITE_ODDS_API_KEY;
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const genAI = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 export const TEAM_NAME_MAP: Record<string, number> = {
@@ -72,9 +72,9 @@ export const TEAM_NAME_MAP: Record<string, number> = {
   'Fortuna Sittard': 209, 'Fortuna': 209,
   'RKC Waalwijk': 210, 'RKC': 210, 'Waalwijk': 210,
   'Heracles Almelo': 202, 'Heracles': 202,
-  'NAC Breda': 211, 'NAC': 211,
+  'NAC Breda': 175, 'NAC': 175,
   'FC Volendam': 213, 'Volendam': 213,
-  'Almere City FC': 212, 'Almere City': 212, 'Almere': 212,
+  'Almere City FC': 214, 'Almere City': 214, 'Almere': 214, // 212 = Porto (Portugal)
   'Willem II': 196,
 
   // Brasileirão (20 times)
@@ -125,7 +125,7 @@ export const TEAM_NAME_MAP: Record<string, number> = {
   // EFL Championship
   'Leeds United': 63, 'Leeds': 63,
   'Burnley': 44, 'Norwich City': 71, 'Norwich': 71,
-  'Middlesbrough': 69, 'Sunderland': 80,
+  'Middlesbrough': 69, // Sunderland removido: 80 = Lyon (Ligue 1)
   'Sheffield United': 62, 'Sheffield Utd': 62,
   'West Bromwich Albion': 74, 'West Brom': 74,
   'Stoke City': 72, 'Stoke': 72,
@@ -133,15 +133,14 @@ export const TEAM_NAME_MAP: Record<string, number> = {
   'Hull City': 60, 'Hull': 60,
   'Bristol City': 76, 'Preston': 1267,
   'Millwall': 68, 'Cardiff City': 715, 'Cardiff': 715,
-  'Swansea City': 81, 'Swansea': 81,
-  'Blackburn Rovers': 45, 'Blackburn': 45,
+  // Swansea removido: 81 = Marseille; Blackburn removido: 45 = Everton
   'Derby County': 56, 'Watford': 38,
-  'Queens Park Rangers': 69, 'QPR': 69,
+  // QPR removido: 69 = Middlesbrough; Oxford removido: 1294 = Plymouth
   'Plymouth Argyle': 1294, 'Plymouth': 1294,
-  'Oxford United': 1294, 'Luton Town': 1305, 'Luton': 1305,
+  'Luton Town': 1305, 'Luton': 1305,
 
   // Brasileirão Série B
-  'Sport Recife': 2294, 'Sport': 2294,
+  'Sport Recife': 2294, 'Sport': 2294, // Operário PR removido mais abaixo (conflito)
   'Mirassol FC': 2541,
   'Santos FC': 128,
   'Goiás EC': 1375, 'Goiás': 1375,
@@ -153,7 +152,8 @@ export const TEAM_NAME_MAP: Record<string, number> = {
   'Ponte Preta': 2293, 'Guarani': 2292,
   'Novorizontino': 2549, 'Coritiba': 1372,
   'América Mineiro': 1071, 'América-MG': 1071,
-  'Operário PR': 2294, 'Botafogo-SP': 2546,
+  // 'Operário PR': 2294 removido — conflito com Sport Recife
+  'Botafogo-SP': 2546,
 
   // Europa League — principais
   'Sevilla': 536, 'Villarreal': 533, 'Atalanta': 499,
@@ -164,8 +164,8 @@ export const TEAM_NAME_MAP: Record<string, number> = {
   'Olympiacos': 583, 'PAOK': 586,
   'Real Sociedad': 548,
 
-  // Copa Libertadores
-  'River Plate': 541, 'Boca Juniors': 405,
+  // Copa Libertadores (541 = Real Madrid — conflito resolvido)
+  'River Plate': 547, 'Boca Juniors': 405,
   'Racing Club': 406, 'Independiente': 408,
   'Olimpia': 437, 'Cerro Porteño': 438,
   'Peñarol': 433, 'Nacional': 434,

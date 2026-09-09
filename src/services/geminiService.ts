@@ -3,7 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GoogleGenAI, Type } from "@google/genai";
+/**
+ * [S-1 FIX] Gemini SDK calls now go through the server-side Edge Function proxy.
+ * VITE_GEMINI_API_KEY is no longer read in the browser bundle — the key stays
+ * server-only inside the `gemini-proxy` Edge Function environment.
+ *
+ * The GoogleGenAI import and local `getAI()` are kept only for the Type schema
+ * helper used in ANALYSIS_SCHEMA. No actual API calls are made client-side.
+ */
+import { Type } from "@google/genai";
 import { Match, AnalysisResponse } from "../types";
 import { calculateElo, sanitizeEloRatings } from "./eloService";
 import { calculatePoisson, debugPoisson } from "./poissonService";
@@ -16,23 +24,20 @@ import { fetchMatchStats, LEAGUE_ID_MAP } from "./fixtureStatsService";
 import { TipsterAnalysisService } from "./tipsterAnalysisService";
 import { removeOverround, extractMarketReference } from "./valueBetService";
 import { detectLineMovement } from "./lineMovementService";
-import { GEMINI_MODEL } from "../config/ai";
-import { getCachedAnalysis, setCachedAnalysis, buildFixtureKey } from "./analysisCacheService";
+import { GEMINI_MODEL, GEMINI_MODEL_FALLBACK } from "../config/ai";
+import { getCachedAnalysis, setCachedAnalysis, buildFixtureKey, PlanTier } from "./analysisCacheService";
 import { trackGeminiCall } from './telemetryService';
+import { supabase } from './supabaseClient';
 
 
 const tipsterService = new TipsterAnalysisService();
 
+// ── Edge Function URL ─────────────────────────────────────────────────────────
+// Set VITE_SUPABASE_URL in your .env (already needed for supabaseClient).
+const GEMINI_PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gemini-proxy`;
 
-let aiInstance: GoogleGenAI | null = null;
-
-function getAI() {
-  if (aiInstance) return aiInstance;
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || 'AQ.Ab8RN6J4vglsXObPq13uIDVtYOf_r7raQ4jAhTlzaHc6L8ZNkQ';
-  if (!apiKey || apiKey.length < 10) return null;
-  aiInstance = new GoogleGenAI({ apiKey });
-  return aiInstance;
-}
+// Kept for schema-only usage — no client-side API calls.
+function getAI() { return null; }
 
 // ============================================================
 // OTIMIZAÇÃO 1: System prompt fixo com TODAS as regras rígidas.
@@ -182,64 +187,51 @@ function extrairJSON(text: string): string {
   return match ? match[0] : text;
 }
 
+/**
+ * [S-1 FIX] callGeminiAPI now calls the server-side Edge Function proxy.
+ * The actual GEMINI_API_KEY never leaves the Supabase function environment.
+ */
 export async function callGeminiAPI(
   systemPrompt: string,
   userMessage: string,
   responseFormat: "json" | "text" = "json",
   schema?: object
 ): Promise<{ text: string; usouFallbackEstatistico: boolean }> {
-  const ai = getAI();
-  if (!ai) {
-    throw new Error("Gemini AI instance not initialized. Check your API key.");
+  trackGeminiCall('callGeminiAPI - Proxy');
+
+  // Retrieve the current session token to authenticate with the Edge Function.
+  const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+  if (!session) {
+    throw new Error("[Gemini Proxy] Usuário não autenticado — impossível chamar Edge Function.");
   }
 
-  try {
-    let response;
-    try {
-      trackGeminiCall('callGeminiAPI - Principal');
-      response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: [{ role: "user", parts: [{ text: userMessage }] }],
-        config: {
-          systemInstruction: systemPrompt,
-          responseMimeType: responseFormat === "json" ? "application/json" : "text/plain",
-          maxOutputTokens: 1200,
-          temperature: 0.2,
-          thinkingConfig: { thinkingBudget: 0 },
-          ...(schema ? { responseSchema: schema } : {}),
-        },
-      });
-    } catch (e: any) {
-      if (e?.message?.includes("not found") || e?.status === 404 || e?.code === 404) {
-        const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
-        console.warn(`[Gemini] Modelo "${GEMINI_MODEL}" indisponível, tentando fallback "${GEMINI_MODEL_FALLBACK}"`);
-        trackGeminiCall('callGeminiAPI - Fallback');
-        response = await ai.models.generateContent({
-          model: GEMINI_MODEL_FALLBACK,
-          contents: [{ role: "user", parts: [{ text: userMessage }] }],
-          config: {
-            systemInstruction: systemPrompt,
-            responseMimeType: responseFormat === "json" ? "application/json" : "text/plain",
-            maxOutputTokens: 1200,
-            temperature: 0.2,
-            thinkingConfig: { thinkingBudget: 0 },
-            ...(schema ? { responseSchema: schema } : {}),
-          },
-        });
-      } else {
-        throw e;
-      }
-    }
+  const resp = await fetch(GEMINI_PROXY_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({
+      systemInstruction: systemPrompt,
+      userMessage,
+      responseFormat,
+      schema,
+      model: GEMINI_MODEL,
+      fallbackModel: GEMINI_MODEL_FALLBACK,
+    }),
+  });
 
-    const text = response.text || "";
-    return { text, usouFallbackEstatistico: false };
-  } catch (error) {
-    console.error("Gemini API call failed:", error);
-    throw error;
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`[Gemini Proxy] HTTP ${resp.status}: ${errText}`);
   }
+
+  const data = await resp.json();
+  const text: string = data.text ?? "";
+  return { text, usouFallbackEstatistico: false };
 }
 
-export async function analyzeMatch(match: Match): Promise<AnalysisResponse> {
+export async function analyzeMatch(match: Match, planTier: PlanTier = 'free'): Promise<AnalysisResponse> {
   const fixtureKey = buildFixtureKey(match.home_team, match.away_team, match.commence_time);
   
   const h2hMarket = match.bookmakers?.[0]?.markets.find(m => m.key === 'h2h');
@@ -252,7 +244,7 @@ export async function analyzeMatch(match: Match): Promise<AnalysisResponse> {
 
   // CACHE COMPARTILHADO (Supabase): a mesma partida não é mais reanalisada
   // por cada navegador/usuário — todos consultam e gravam na mesma tabela.
-  const cached = await getCachedAnalysis(fixtureKey, oddsRecord);
+  const cached = await getCachedAnalysis(fixtureKey, planTier, oddsRecord);
   if (cached) {
     return cached;
   }
@@ -327,31 +319,23 @@ ${mustWinText ? mustWinText + '\n' : ''}${weatherText ? weatherText + '\n' : ''}
 - Desfalques Visitante: ${awayInjuries.join(", ") || "nenhum reportado"}
 - Stats recentes: ${statsText}`;
 
-  const ai = getAI();
   let analysis: any;
 
-  if (ai) {
-    try {
-        const { text } = await callGeminiAPI(
-          SYSTEM_INSTRUCTION,
-          prompt,
-          "json",
-          ANALYSIS_SCHEMA
-        );
-        // Usando o parser defensivo para garantir a extração do JSON
-        const cleanedText = extrairJSON(text);
-        analysis = JSON.parse(cleanedText);
+  try {
+    const { text } = await callGeminiAPI(
+      SYSTEM_INSTRUCTION,
+      prompt,
+      "json",
+      ANALYSIS_SCHEMA
+    );
+    const cleanedText = extrairJSON(text);
+    analysis = JSON.parse(cleanedText);
 
-        // Validação de segurança para garantir que campos vitais existam
-      if (!analysis.probabilidades_ml) {
-        analysis.probabilidades_ml = { casa: 33, empate: 34, fora: 33 };
-      }
-    } catch (e: any) {
-      console.error("Analysis failed, using fallback:", e);
-      analysis = generateFallbackAnalysis(match, scouting);
-      analysis.dados_ia_indisponivel = true;
+    if (!analysis.probabilidades_ml) {
+      analysis.probabilidades_ml = { casa: 33, empate: 34, fora: 33 };
     }
-  } else {
+  } catch (e: any) {
+    console.error("Analysis failed, using fallback:", e);
     analysis = generateFallbackAnalysis(match, scouting);
     analysis.dados_ia_indisponivel = true;
   }
@@ -429,7 +413,7 @@ ${mustWinText ? mustWinText + '\n' : ''}${weatherText ? weatherText + '\n' : ''}
 
   // Não cachear no Supabase se a análise veio do modo de segurança/fallback
   if (analysis.resumo && !analysis.resumo.startsWith('[MODO DE SEGURANÇA]')) {
-    void setCachedAnalysis(fixtureKey, analysis, oddsRecord, match.commence_time);
+    void setCachedAnalysis(fixtureKey, analysis, planTier, oddsRecord, match.commence_time);
   }
 
   return analysis;
@@ -525,12 +509,15 @@ function sanitizeGolsProbabilities(data: any): any {
   const o25 = g.over25?.probabilidade || 0;
   const o35 = g.over35?.probabilidade || 0;
 
-  if (o25 > o15 || o35 > o25 || o35 > o15 || o15 === o25) {
+  // Enforce strict O1.5 > O2.5 > O3.5 — equal values also violate the invariant
+  if (o25 >= o15 || o35 >= o25) {
     const sorted = [o15, o25, o35].sort((a, b) => b - a);
+    // Guarantee strict inequality with 1-point gaps after sort
+    if (sorted[1] >= sorted[0]) sorted[1] = sorted[0] - 1;
+    if (sorted[2] >= sorted[1]) sorted[2] = sorted[1] - 1;
     g.over15.probabilidade = Math.min(sorted[0], 95);
-    g.over25.probabilidade = Math.min(sorted[1], 95);
-    g.over35.probabilidade = Math.min(sorted[2], 95);
-
+    g.over25.probabilidade = Math.min(Math.max(sorted[1], 0), 95);
+    g.over35.probabilidade = Math.min(Math.max(sorted[2], 0), 95);
     if (g.over15.probabilidade < 70) g.over15.recomenda = false;
     if (g.over25.probabilidade < 70) g.over25.recomenda = false;
     if (g.over35.probabilidade < 70) g.over35.recomenda = false;

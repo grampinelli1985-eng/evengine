@@ -12,7 +12,8 @@ async function adjustBancaBy(delta: number): Promise<void> {
     const userId = session?.user?.id;
     if (!userId) return;
     const bancas = await getBancasFromSupabase(userId);
-    const active = bancas[0];
+    const storedActiveId = localStorage.getItem('evengine_active_banca_id');
+    const active = (storedActiveId ? bancas.find(b => b.id === storedActiveId) : null) ?? bancas[0];
     if (active) await updateBancaBalance(active.id, next);
   } catch { /* non-critical */ }
 }
@@ -69,6 +70,11 @@ export interface BetInput {
 export async function createBet(input: BetInput): Promise<Bet | null> {
   if (!supabase) {
     console.warn('[BetService] Supabase não inicializado. Não foi possível registrar aposta.');
+    return null;
+  }
+
+  if (!input.odd_taken || input.odd_taken <= 1) {
+    console.warn('[BetService] odd_taken inválida:', input.odd_taken);
     return null;
   }
 
@@ -254,11 +260,15 @@ export async function resolveBet(
   if (!supabase) return null;
 
   try {
-    // 1. Obter a aposta atual para saber o valor da stake
+    const userId = await getCurrentUserId();
+    if (!userId) return null;
+
+    // 1. Obter a aposta atual para saber o valor da stake (com ownership check)
     const { data: currentBet, error: fetchErr } = await supabase
       .from('bets')
       .select('*')
       .eq('id', betId)
+      .eq('user_id', userId)
       .single();
 
     if (fetchErr || !currentBet) {
@@ -304,19 +314,28 @@ export async function resolveBet(
       notes: newNotes
     };
 
-    const { data, error } = await supabase
+    // 2. UPDATE atômico: só atualiza se ainda estiver 'pending' (guard contra race condition)
+    const { data: updatedRows, error } = await supabase
       .from('bets')
       .update(updatePayload)
       .eq('id', betId)
-      .select('*, analyses(home_team, away_team, league, created_at)')
-      .single();
+      .eq('status', 'pending')
+      .eq('user_id', userId)
+      .select('*, analyses(home_team, away_team, league, created_at)');
 
     if (error) {
       console.warn('[BetService] Falha ao atualizar status da aposta:', error.message);
       return null;
     }
 
-    // 2. Creditar resultado na banca (stake já foi deduzida no createBet)
+    // Se nenhuma linha foi atualizada, outra chamada concorrente venceu — não ajustar banca
+    if (!updatedRows || updatedRows.length === 0) {
+      return currentBet as Bet;
+    }
+
+    const data = updatedRows[0];
+
+    // 3. Creditar resultado na banca (stake já foi deduzida no createBet)
     // green: devolve stake + lucro; void/cashout: devolve result_amount; red: nada (já descontado)
     if (params.status === 'green' || params.status === 'void' || params.status === 'cashout') {
       await adjustBancaBy(resultAmount);

@@ -24,9 +24,6 @@ export interface CLVEntry {
   resultado: 'GREEN' | 'RED' | 'VOID' | 'PENDENTE';
   analyzedAt: string;
   closedAt: string | null;
-  // Distingue análises sem aposta (false) de apostas efetivamente confirmadas (true).
-  // Entradas antigas sem este campo são tratadas como false para compatibilidade.
-  apostaConfirmada: boolean;
 }
 
 export interface CLVSummary {
@@ -161,12 +158,6 @@ function getPinnacleOdd(match: Match, mercado: string): number | null {
 
 // ─── API pública ───────────────────────────────────────────────────────────
 
-/**
- * Registra uma entrada CLV.
- * `apostaConfirmada: true` → usuário clicou em "Marcar como Feito" (aposta real).
- * `apostaConfirmada: false` (padrão) → só análise, sem aposta confirmada.
- * O CLV Dashboard filtra por `apostaConfirmada: true` para métricas limpas.
- */
 export function registrarEntradaCLV(params: {
   matchId: string;
   homeTeam: string;
@@ -175,41 +166,24 @@ export function registrarEntradaCLV(params: {
   commenceTime: string;
   mercado: string;
   oddUtilizada: number;
-  apostaConfirmada?: boolean;
 }): void {
   const entries = loadEntries();
-  const existing = entries.find(e => e.matchId === params.matchId && e.mercado === params.mercado);
-
-  if (existing) {
-    // Se o usuário confirmar uma aposta em partida já analisada, promove para confirmada
-    if (params.apostaConfirmada && !existing.apostaConfirmada) {
-      existing.apostaConfirmada = true;
-      saveEntries(entries);
-    }
-    return;
-  }
+  if (entries.find(e => e.matchId === params.matchId && e.mercado === params.mercado)) return;
 
   const now = new Date().toISOString();
   entries.push({
-    matchId: params.matchId,
-    homeTeam: params.homeTeam,
-    awayTeam: params.awayTeam,
-    sportKey: params.sportKey,
-    commenceTime: params.commenceTime,
-    mercado: params.mercado,
-    oddUtilizada: params.oddUtilizada,
+    ...params,
     oddFechamento: null,
     clvPct: null,
     resultado: 'PENDENTE',
     analyzedAt: now,
-    closedAt: null,
-    apostaConfirmada: params.apostaConfirmada ?? false,
+    closedAt: null
   });
 
   saveEntries(entries);
 
-  // Sincronizar com Supabase apenas apostas confirmadas
-  if (supabase && params.apostaConfirmada) {
+  // Sincronizar com Supabase para captura server-side de odds de fechamento
+  if (supabase) {
     const profile = getCachedProfile();
     supabase.from('clv_entries').upsert({
       match_id: params.matchId,
@@ -239,7 +213,6 @@ export function capturarOddsFechamento(matchesAtivos: Match[]): void {
   entries.forEach(entry => {
     if (entry.oddFechamento !== null) return;
     if (entry.resultado !== 'PENDENTE') return;
-    if (!entry.apostaConfirmada) return; // só captura fechamento para apostas reais
 
     const kickoff = new Date(entry.commenceTime).getTime();
     const afterKickoff = now >= kickoff;
@@ -287,19 +260,12 @@ export function atualizarResultadoCLV(matchId: string, resultado: 'GREEN' | 'RED
   }
 }
 
-/**
- * Retorna entradas CLV.
- * @param apenasConfirmadas true → só apostas com "Marcar como Feito" (padrão para o dashboard)
- */
-export function getEntradasCLV(apenasConfirmadas = true): CLVEntry[] {
-  const entries = loadEntries();
-  if (!apenasConfirmadas) return entries;
-  return entries.filter(e => e.apostaConfirmada);
+export function getEntradasCLV(): CLVEntry[] {
+  return loadEntries();
 }
 
 export function getCLVSummary(): CLVSummary {
-  // Métricas calculadas apenas sobre apostas confirmadas
-  const entries = loadEntries().filter(e => e.apostaConfirmada);
+  const entries = loadEntries();
   const comCLV = entries.filter(e => e.clvPct !== null);
 
   const clvMedioGeral = comCLV.length > 0
@@ -327,12 +293,14 @@ export function getCLVSummary(): CLVSummary {
 
 export function limparEntradasAntigas(): void {
   const CUTOFF_90D = Date.now() - 90 * 24 * 60 * 60 * 1000;
+  // Jogo encerrado: kickoff + 3h já passou
   const CUTOFF_GAME_OVER = Date.now() - 3 * 60 * 60 * 1000;
 
   const entries = loadEntries();
   let changed = false;
 
   const kept = entries.filter(e => {
+    // Remove entradas com mais de 90 dias
     if (new Date(e.analyzedAt).getTime() <= CUTOFF_90D) {
       changed = true;
       return false;
@@ -340,20 +308,17 @@ export function limparEntradasAntigas(): void {
     return true;
   });
 
+  // Marca como VOID entradas PENDENTE cujo kickoff + 3h já passou (partida definitivamente encerrada)
   kept.forEach(e => {
-    // Apenas apostas confirmadas ficam como VOID — análises sem aposta são removidas silenciosamente
     if (
       e.resultado === 'PENDENTE' &&
       e.oddFechamento === null &&
       new Date(e.commenceTime).getTime() < CUTOFF_GAME_OVER
     ) {
-      if (e.apostaConfirmada) {
-        e.resultado = 'VOID';
-        e.closedAt = new Date().toISOString();
-        console.info(`[CLV] Aposta expirada → VOID: ${e.homeTeam} × ${e.awayTeam}`);
-      }
-      // análises sem aposta confirmada: mantém sem alterar resultado (serão limpas pelo CUTOFF_90D)
+      e.resultado = 'VOID';
+      e.closedAt = new Date().toISOString();
       changed = true;
+      console.info(`[CLV] Entrada expirada → VOID: ${e.homeTeam} × ${e.awayTeam} (${e.commenceTime})`);
     }
   });
 
@@ -361,7 +326,7 @@ export function limparEntradasAntigas(): void {
 }
 
 export function exportarCLVcsv(): string {
-  const entries = getEntradasCLV(true);
+  const entries = loadEntries();
   const header = 'Data,Casa,Visitante,Mercado,Odd Utilizada,Odd Fechamento,CLV%,Resultado';
   const rows = entries.map(e => [
     e.analyzedAt.split('T')[0],
@@ -396,6 +361,7 @@ export function corrigirEntradaCLV(matchId: string, novoMercado: string, novaOdd
 
 /**
  * Sincroniza o resultado (GREEN/RED/VOID) de uma entrada CLV com o Supabase.
+ * Chamado automaticamente após auto-resolve de apostas.
  */
 export async function sincronizarResultadoCLV(
   matchId: string,
@@ -403,11 +369,13 @@ export async function sincronizarResultadoCLV(
 ): Promise<void> {
   if (!supabase) return;
   try {
+    const profile = getCachedProfile();
     await supabase
       .from('clv_entries')
       .update({ resultado })
       .eq('match_id', matchId)
-      .eq('resultado', 'PENDENTE');
+      .eq('resultado', 'PENDENTE')
+      .eq('user_id', profile?.id ?? '');
   } catch (e) {
     console.warn('[CLV] Falha ao sincronizar resultado:', e);
   }
@@ -422,6 +390,7 @@ export async function sincronizarResultadoCLV(
 
 /**
  * [M-01 FIX] Limpa todas as chaves CLV do usuário no logout.
+ * Chamar no handler SIGNED_OUT do supabaseClient.
  */
 export function clearCLVOnSignOut(userId: string): void {
   localStorage.removeItem(`evengine_clv_entries_${userId}`);

@@ -1296,7 +1296,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
     try {
       resetGeminiCallCounter();
-      const result = cached ? { ...cached } : await analyzeMatch(match);
+      const result = cached ? { ...cached } : await analyzeMatch(match, (plan as any) || 'free');
       let statsMedias = null;
       if (!result.escanteios?.probabilidade || !result.finalizacoes?.probabilidade) {
         statsMedias = await buscarEstatisticasMedias(
@@ -1630,7 +1630,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           }
 
           resetGeminiCallCounter();
-          const result = cachedBilhete ? { ...cachedBilhete } : await analyzeMatch(match);
+          const result = cachedBilhete ? { ...cachedBilhete } : await analyzeMatch(match, (plan as any) || 'free');
           if (!cachedBilhete) {
             // EV-RATE-LIMIT: 3-second delay to avoid hitting Gemini API rate limits (15 RPM)
             await new Promise(r => setTimeout(r, 3000));
