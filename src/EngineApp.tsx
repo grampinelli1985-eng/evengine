@@ -14,7 +14,7 @@ import AnalysisView from './components/AnalysisView';
 import TicketModal from './components/TicketModal';
 import LiveNotification from './components/LiveNotification';
 import LeagueSidebar from './components/LeagueSidebar';
-import { getBanca, calculateKellyStake, carregarStopLossState, salvarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada, getBancaAtual, setBancaAtual, getBancasFromSupabase, addBancaToSupabase, switchActiveBanca, updateBancaBalance, BancaDB, getStopLossLimite, setStopLossLimite, podeEntrarNovaAposta, checkAndResetDaily, getStopLossAlertKey } from './services/bancaService';
+import { getBanca, calculateKellyStake, carregarStopLossState, carregarStopLossStateFromDB, salvarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada, getBancaAtual, setBancaAtual, getBancasFromSupabase, addBancaToSupabase, switchActiveBanca, updateBancaBalance, BancaDB, getStopLossLimite, setStopLossLimite, podeEntrarNovaAposta, checkAndResetDaily, getStopLossAlertKey } from './services/bancaService';
 import { fetchBets, fetchAnalysisByMatchId, saveAnalysis, createBet, autoResolveBetFromLiveResult } from './services/betService';
 import { Trophy, Filter, RefreshCw, Search, AlertCircle, TrendingUp, Ticket, Menu, X, Zap, Flame, Shield, Activity, Crown, Star, Sun, Compass, Award, Home, BookOpen, ShieldOff, AlertTriangle, LogOut, FileText, CheckCircle, Eye, EyeOff, Users, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -367,6 +367,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         const activeBanca = list.find(b => b.id === storedActiveId) || list[0];
         setActiveBancaId(activeBanca.id);
         switchActiveBanca(activeBanca);
+        // [D-1 FIX] Load authoritative stop-loss state from DB
+        carregarStopLossStateFromDB().then(state => {
+          window.dispatchEvent(new CustomEvent('evengine_stop_loss_changed', { detail: state }));
+        });
       }
     }
   };
