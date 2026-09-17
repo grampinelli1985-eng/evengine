@@ -244,8 +244,9 @@ export async function analyzeGoalsMarket(
     fonte: 'estimado'
   };
 
-  const hasSportmonksToken = !!import.meta.env.VITE_SPORTMONKS_TOKEN;
-  if (hasSportmonksToken && fixtureId) {
+  // Sportmonks stats vão através do proxy server-side (api/sportmonks.ts);
+  // se o token não estiver configurado lá, a chamada abaixo retorna null.
+  if (fixtureId) {
     try {
       const stats = await getFixtureStatsById(fixtureId);
       if (stats && (stats.home_xg !== null || stats.away_xg !== null)) {

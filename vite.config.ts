@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), '')
     const apiFootballKey = env.API_FOOTBALL_KEY || env.VITE_APIFOOTBALL_KEY || ''
+    const sportmonksToken = env.SPORTMONKS_TOKEN || env.VITE_SPORTMONKS_TOKEN || ''
 
     return {
         plugins: [react(), tailwindcss()],
@@ -27,6 +28,14 @@ export default defineConfig(({ mode }) => {
                     rewrite: (path) => path.replace(/^\/api\/football/, ''),
                     headers: {
                         'x-apisports-key': apiFootballKey,
+                    },
+                },
+                '/api/sportmonks': {
+                    target: 'https://api.sportmonks.com/v3/football',
+                    changeOrigin: true,
+                    rewrite: (path) => path.replace(/^\/api\/sportmonks/, ''),
+                    headers: {
+                        'Authorization': `Bearer ${sportmonksToken}`,
                     },
                 },
             }

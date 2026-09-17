@@ -6,6 +6,10 @@
       "destination": "/api/football"
     },
     {
+      "source": "/api/sportmonks/(.*)",
+      "destination": "/api/sportmonks"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

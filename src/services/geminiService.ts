@@ -27,14 +27,10 @@ import { detectLineMovement } from "./lineMovementService";
 import { GEMINI_MODEL, GEMINI_MODEL_FALLBACK } from "../config/ai";
 import { getCachedAnalysis, setCachedAnalysis, buildFixtureKey, PlanTier } from "./analysisCacheService";
 import { trackGeminiCall } from './telemetryService';
-import { supabase } from './supabaseClient';
+import { callGeminiProxy } from './geminiProxyClient';
 
 
 const tipsterService = new TipsterAnalysisService();
-
-// ── Edge Function URL ─────────────────────────────────────────────────────────
-// Set VITE_SUPABASE_URL in your .env (already needed for supabaseClient).
-const GEMINI_PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/gemini-proxy`;
 
 // Kept for schema-only usage — no client-side API calls.
 function getAI() { return null; }
@@ -199,35 +195,12 @@ export async function callGeminiAPI(
 ): Promise<{ text: string; usouFallbackEstatistico: boolean }> {
   trackGeminiCall('callGeminiAPI - Proxy');
 
-  // Retrieve the current session token to authenticate with the Edge Function.
-  const session = supabase ? (await supabase.auth.getSession()).data.session : null;
-  if (!session) {
-    throw new Error("[Gemini Proxy] Usuário não autenticado — impossível chamar Edge Function.");
-  }
-
-  const resp = await fetch(GEMINI_PROXY_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify({
-      systemInstruction: systemPrompt,
-      userMessage,
-      responseFormat,
-      schema,
-      model: GEMINI_MODEL,
-      fallbackModel: GEMINI_MODEL_FALLBACK,
-    }),
+  const text = await callGeminiProxy(systemPrompt, userMessage, {
+    responseFormat,
+    schema,
+    model: GEMINI_MODEL,
+    fallbackModel: GEMINI_MODEL_FALLBACK,
   });
-
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`[Gemini Proxy] HTTP ${resp.status}: ${errText}`);
-  }
-
-  const data = await resp.json();
-  const text: string = data.text ?? "";
   return { text, usouFallbackEstatistico: false };
 }
 

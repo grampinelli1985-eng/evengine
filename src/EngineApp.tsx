@@ -56,7 +56,8 @@ import {
   updateUserPlan,
   updateApiKeyOwn,
   setCachedProfile,
-  getCachedProfile
+  getCachedProfile,
+  fetchProfile
 } from './services/planService';
 import { buildFixtureKey, getCachedAnalysis, setCachedAnalysis, cleanExpiredCache, markMatchAsAnalyzed, getAnalyzedLog, wasAnalyzedWithin24h, fetchAnalyzedMatchIdsLast24h } from './services/analysisCacheService';
 import { registerMatchForTracking, pollLiveResults, hasPendingLiveMatches, buildLiveKey, LiveScore, onApiError } from './services/liveTrackerService';
@@ -299,25 +300,33 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   const [activeBancaId, setActiveBancaId] = useState<string | null>(() => localStorage.getItem('evengine_active_banca_id'));
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
 
-  // Stripe Checkout Init & Url query parser
+  // Checkout return handler & Url query parser.
+  // SECURITY: the real plan upgrade is always written server-side by the Asaas
+  // webhook (service role key). The client must never write its own `plan` —
+  // it only re-fetches the authoritative profile from the DB after a payment
+  // redirect. The mock_plan/mock_user branch only exists to simulate that same
+  // webhook locally when ASAAS_API_KEY isn't configured (see api/checkout.ts),
+  // so it's restricted to dev builds to prevent plan self-escalation via URL
+  // params (e.g. ?payment=success&mock_plan=sharp&mock_user=<own-id>) in prod.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const isPaymentSuccess = params.get('payment') === 'success';
-    const mockPlan = params.get('mock_plan') as 'pro' | 'sharp';
+    const mockPlan = params.get('mock_plan') as 'pro' | 'sharp' | null;
     const mockUser = params.get('mock_user');
 
     if (isPaymentSuccess) {
-      if (mockPlan && mockUser) {
+      if (import.meta.env.DEV && mockPlan && mockUser) {
         updateUserPlan(mockUser, mockPlan).then(() => {
-          showToast.success(`Assinatura ativada! Plano ${mockPlan.toUpperCase()} ativo.`);
+          showToast.success(`[DEV] Assinatura simulada! Plano ${mockPlan.toUpperCase()} ativo.`);
           window.history.replaceState({}, document.title, window.location.pathname);
         });
       } else {
         showToast.success('Pagamento confirmado! O seu plano será atualizado em instantes.');
+        if (user?.id) fetchProfile(user.id, user.email || '');
         window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     const handleCheckoutInit = async (e: Event) => {

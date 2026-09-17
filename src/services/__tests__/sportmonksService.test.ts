@@ -10,8 +10,6 @@ import {
 describe('Sportmonks Service Tests', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    // Setup env variable mock
-    vi.stubEnv('VITE_SPORTMONKS_TOKEN', 'test-token');
   });
 
   describe('getSeasonId', () => {
@@ -30,8 +28,10 @@ describe('Sportmonks Service Tests', () => {
 
       const seasonId = await getSeasonId(8, 2024);
       expect(seasonId).toBe(200);
+      // Calls go through the server-side proxy (api/sportmonks.ts) — the
+      // Sportmonks token is never read or sent from the browser.
       expect(fetchSpy).toHaveBeenCalledWith(
-        'https://api.sportmonks.com/v3/football/seasons?filters=leagueId:8',
+        '/api/sportmonks/seasons?filters=leagueId:8',
         expect.any(Object)
       );
     });

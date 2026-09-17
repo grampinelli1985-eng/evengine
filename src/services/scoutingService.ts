@@ -9,8 +9,7 @@ import { trackGeminiCall, trackPrecheckSkip } from "./telemetryService";
 import { hasQuota, trackRequest } from './apiQuotaService';
 import { getSportmonksTeamId, getSeasonId, getTeamXgLast5, getTeamPpdaLast5, SPORTMONKS_LEAGUE_BY_NAME } from './sportmonksService';
 import { supabase } from './supabaseClient';
-
-import { GoogleGenAI } from "@google/genai";
+import { callGeminiProxy } from './geminiProxyClient';
 
 const TEAM_ID_CACHE = new Map<string, number>();
 
@@ -52,8 +51,6 @@ function normalizarNomeTime(nome: string): string {
 
 const API_BASE_URL = '/api/football';
 const ODDS_API_KEY = import.meta.env.VITE_ODDS_API_KEY;
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const genAI = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 export const TEAM_NAME_MAP: Record<string, number> = {
   // Eredivisie
@@ -720,11 +717,6 @@ const formCache = new Map<string, string[]>();
 export async function fetchFormaRecenteViaGeminiSearch(teamName: string): Promise<string[]> {
   if (formCache.has(teamName)) return formCache.get(teamName)!;
 
-  if (!genAI) {
-    console.warn("Gemini genAI instance not initialized, cannot run search.");
-    return ['?', '?', '?', '?', '?'];
-  }
-
   const currentYear = new Date().getFullYear();
   const query = `"${teamName}" futebol ultimos 5 jogos resultados placar ${currentYear}`;
 
@@ -747,38 +739,16 @@ Responda APENAS com o JSON, sem markdown ou explicações.`;
 
     const userMessage = `Por favor, encontre a forma recente dos últimos 5 jogos do time "${teamName}" em 2026 usando a busca: ${query}`;
 
-    let response;
-    try {
-      trackGeminiCall('fetchFormaRecenteViaGeminiSearch - Principal');
-      response = await genAI.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-        config: {
-          systemInstruction,
-          thinkingConfig: { thinkingBudget: 0 },
-          tools: [{ googleSearch: {} }]
-        }
-      });
-    } catch (e: any) {
-      if (e?.message?.includes("not found") || e?.status === 404 || e?.code === 404) {
-        const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
-        console.warn(`[Scout] Modelo "${GEMINI_MODEL}" indisponível, tentando fallback "${GEMINI_MODEL_FALLBACK}"`);
-        trackGeminiCall('fetchFormaRecenteViaGeminiSearch - Fallback');
-        response = await genAI.models.generateContent({
-          model: GEMINI_MODEL_FALLBACK,
-          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-          config: {
-            systemInstruction,
-            thinkingConfig: { thinkingBudget: 0 },
-            tools: [{ googleSearch: {} }]
-          }
-        });
-      } else {
-        throw e;
-      }
-    }
+    trackGeminiCall('fetchFormaRecenteViaGeminiSearch - Proxy');
+    const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
+    const text = await callGeminiProxy(systemInstruction, userMessage, {
+      responseFormat: 'text',
+      model: GEMINI_MODEL,
+      fallbackModel: GEMINI_MODEL_FALLBACK,
+      useGoogleSearch: true,
+      disableThinking: true,
+    });
 
-    const text = response.text || '';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Nenhum JSON encontrado na resposta do Gemini Scout');
     const cleaned = jsonMatch[0];
@@ -872,7 +842,6 @@ export async function buscarEstatisticasMedias(
 ): Promise<any> {
   let baseResult: any;
   try {
-    if (!genAI) throw new Error('API key not initialized');
     const prompt = `Você é um banco de dados estatístico de futebol.
 
 Para a partida ${homeTeam} vs ${awayTeam} na ${liga},
@@ -907,16 +876,14 @@ Use dados reais conhecidos. Se incerto, use médias conservadoras
 baseadas no estilo de jogo típico dos times na liga.
 Retorne APENAS o JSON.`;
 
-    const response = await genAI.models.generateContent({
+    trackGeminiCall('buscarEstatisticasMedias - Proxy');
+    const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
+    const text = await callGeminiProxy('Responda APENAS com JSON válido. Sem markdown, sem texto adicional.', prompt, {
+      responseFormat: 'json',
       model: GEMINI_MODEL,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        systemInstruction: 'Responda APENAS com JSON válido. Sem markdown, sem texto adicional.',
-        responseMimeType: 'application/json'
-      }
+      fallbackModel: GEMINI_MODEL_FALLBACK,
     });
 
-    const text = response.text || '';
     const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleaned);
     baseResult = { ...parsed, fonte: 'gemini_inferido', confiavel: false };
@@ -936,10 +903,10 @@ Retorne APENAS o JSON.`;
   let pressao_alta_home = false;
   let pressao_alta_away = false;
 
-  const hasSportmonksToken = !!import.meta.env.VITE_SPORTMONKS_TOKEN;
-  if (hasSportmonksToken) {
-    try {
-      const leagueKey = Object.keys(SPORTMONKS_LEAGUE_BY_NAME).find(
+  // Sportmonks stats vão através do proxy server-side (api/sportmonks.ts);
+  // se o token não estiver configurado lá, as chamadas abaixo retornam null.
+  try {
+    const leagueKey = Object.keys(SPORTMONKS_LEAGUE_BY_NAME).find(
         k => liga.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(liga.toLowerCase())
       );
       const leagueId = leagueKey ? SPORTMONKS_LEAGUE_BY_NAME[leagueKey] : null;
@@ -973,9 +940,8 @@ Retorne APENAS o JSON.`;
           if (fetches.length > 0) await Promise.all(fetches);
         }
       }
-    } catch (e) {
-      console.warn('[Sportmonks] Error enriching statistics:', e);
-    }
+  } catch (e) {
+    console.warn('[Sportmonks] Error enriching statistics:', e);
   }
 
   return {
@@ -1147,7 +1113,6 @@ async function buscarH2HviaAPIFootball(homeTeam: string, awayTeam: string): Prom
 
 async function buscarH2HviaGemini(homeTeam: string, awayTeam: string, liga: string): Promise<any> {
   try {
-    if (!genAI) throw new Error('API key not initialized');
     const now = new Date();
     const mesAno = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
     const prompt = `Você é um banco de dados de futebol. Considere a data atual de hoje como ${mesAno}.
@@ -1178,38 +1143,15 @@ ${homeTeam} e ${awayTeam} e retorne APENAS este JSON:
 Use dados reais conhecidos. Vencedor: "home", "away" ou "draw".
 Retorne APENAS o JSON, sem markdown.`;
 
-    let response;
-    try {
-      trackGeminiCall('buscarH2HviaGemini - Principal');
-      response = await genAI.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          systemInstruction: 'Responda APENAS com JSON válido. Sem markdown.',
-          responseMimeType: 'application/json',
-          thinkingConfig: { thinkingBudget: 0 }
-        }
-      });
-    } catch (e: any) {
-      if (e?.message?.includes("not found") || e?.status === 404 || e?.code === 404) {
-        const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
-        console.warn(`[H2H] Modelo "${GEMINI_MODEL}" indisponível, tentando fallback "${GEMINI_MODEL_FALLBACK}"`);
-        trackGeminiCall('buscarH2HviaGemini - Fallback');
-        response = await genAI.models.generateContent({
-          model: GEMINI_MODEL_FALLBACK,
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          config: {
-            systemInstruction: 'Responda APENAS com JSON válido. Sem markdown.',
-            responseMimeType: 'application/json',
-            thinkingConfig: { thinkingBudget: 0 }
-          }
-        });
-      } else {
-        throw e;
-      }
-    }
+    trackGeminiCall('buscarH2HviaGemini - Proxy');
+    const { GEMINI_MODEL_FALLBACK } = await import("../config/ai");
+    const text = await callGeminiProxy('Responda APENAS com JSON válido. Sem markdown.', prompt, {
+      responseFormat: 'json',
+      model: GEMINI_MODEL,
+      fallbackModel: GEMINI_MODEL_FALLBACK,
+      disableThinking: true,
+    });
 
-    const text = response.text || '';
     const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleaned);
   } catch {

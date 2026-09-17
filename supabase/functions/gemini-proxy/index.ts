@@ -21,6 +21,8 @@ interface GeminiRequestBody {
   schema?: object;
   model?: string;
   fallbackModel?: string;
+  useGoogleSearch?: boolean;
+  disableThinking?: boolean;
 }
 
 serve(async (req: Request) => {
@@ -62,7 +64,7 @@ serve(async (req: Request) => {
     });
   }
 
-  const { systemInstruction, userMessage, responseFormat = "json", schema, model, fallbackModel } = body;
+  const { systemInstruction, userMessage, responseFormat = "json", schema, model, fallbackModel, useGoogleSearch, disableThinking } = body;
   if (!systemInstruction || !userMessage) {
     return new Response(JSON.stringify({ error: "Missing systemInstruction or userMessage" }), {
       status: 400,
@@ -80,7 +82,7 @@ serve(async (req: Request) => {
 
   // ── Call Gemini REST API ───────────────────────────────────────────────────
   const targetModel = model ?? "gemini-2.0-flash";
-  const text = await callGemini(GEMINI_API_KEY, targetModel, systemInstruction, userMessage, responseFormat, schema, fallbackModel);
+  const text = await callGemini(GEMINI_API_KEY, targetModel, systemInstruction, userMessage, responseFormat, schema, fallbackModel, useGoogleSearch, disableThinking);
 
   return new Response(JSON.stringify({ text }), {
     headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
@@ -94,17 +96,26 @@ async function callGemini(
   userMessage: string,
   responseFormat: "json" | "text",
   schema?: object,
-  fallbackModel?: string
+  fallbackModel?: string,
+  useGoogleSearch?: boolean,
+  disableThinking?: boolean
 ): Promise<string> {
+  // Google Search grounding is not compatible with forced JSON responseMimeType/
+  // responseSchema on the Gemini API — callers that need search must return
+  // plain text and extract JSON themselves (matches prior client-side behavior).
+  const jsonMode = responseFormat === "json" && !useGoogleSearch;
+
   const payload: Record<string, unknown> = {
     contents: [{ role: "user", parts: [{ text: userMessage }] }],
     systemInstruction: { parts: [{ text: systemInstruction }] },
     generationConfig: {
-      responseMimeType: responseFormat === "json" ? "application/json" : "text/plain",
+      responseMimeType: jsonMode ? "application/json" : "text/plain",
       maxOutputTokens: 1200,
       temperature: 0.2,
-      ...(schema ? { responseSchema: schema } : {}),
+      ...(schema && jsonMode ? { responseSchema: schema } : {}),
+      ...(disableThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
     },
+    ...(useGoogleSearch ? { tools: [{ googleSearch: {} }] } : {}),
   };
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;

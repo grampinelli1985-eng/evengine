@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-const BASE_URL = 'https://api.sportmonks.com/v3/football';
+// Server-side proxy (Vercel function / vite dev proxy) — the Sportmonks token
+// stays out of the browser bundle. See api/sportmonks.ts and vite.config.ts.
+const BASE_URL = '/api/sportmonks';
 
 export interface SportmonksFixtureStats {
   fixture_id: number;
@@ -48,9 +50,6 @@ export const SPORTMONKS_LEAGUE_BY_NAME: Record<string, number> = {
 };
 
 async function fetchSportmonks(endpoint: string): Promise<any> {
-  const TOKEN = import.meta.env.VITE_SPORTMONKS_TOKEN;
-  if (!TOKEN) return null;
-
   const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint}`;
   const delays = [1000, 2000, 4000];
 
@@ -58,7 +57,6 @@ async function fetchSportmonks(endpoint: string): Promise<any> {
     try {
       const response = await fetch(url, {
         headers: {
-          'Authorization': `Bearer ${TOKEN}`,
           'Accept': 'application/json'
         }
       });
