@@ -7,14 +7,19 @@
 -- client-side UPDATE on `profiles` fails with
 -- "more than one row returned by a subquery used as an expression".
 --
--- Root fix: enforce plan/quota immutability from client sessions with a
+-- Root fix: enforce plan-escalation immutability from client sessions with a
 -- BEFORE UPDATE trigger (which has correct OLD/NEW row access) instead of a
 -- self-referential RLS subquery, and simplify the RLS policy back to just
--- ownership. This also closes a second gap: the original WITH CHECK never
--- protected analyses_today/analyses_reset_at, so an authenticated user could
--- previously reset/inflate their own daily quota by calling
--- `supabase.from('profiles').update({ analyses_today: 0 })` directly,
--- bypassing the check-quota edge function entirely.
+-- ownership.
+--
+-- The trigger only blocks a client session from (a) setting plan to 'pro'/
+-- 'sharp' when it wasn't already that value, and (b) pushing plan_expires_at
+-- further into the future — i.e. self-granting or self-extending a paid
+-- plan. It deliberately does NOT block writes that only move a profile
+-- toward 'free' or leave plan_expires_at unchanged/earlier: PlanControl.tsx
+-- calls updateUserPlan(user.id, 'free') directly from the client for the
+-- self-service "cancel to free" action, which is a legitimate privilege
+-- decrease, not an escalation.
 
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 
@@ -23,27 +28,29 @@ CREATE POLICY "Users can update own profile"
   USING (auth.uid() = id)
   WITH CHECK (auth.uid() = id);
 
-CREATE OR REPLACE FUNCTION public.protect_profile_billing_fields()
+CREATE OR REPLACE FUNCTION public.protect_profile_plan_escalation()
 RETURNS trigger AS $$
 BEGIN
   IF auth.role() = 'service_role' THEN
     RETURN NEW;
   END IF;
 
-  IF NEW.plan IS DISTINCT FROM OLD.plan
-     OR NEW.plan_expires_at IS DISTINCT FROM OLD.plan_expires_at
-     OR NEW.analyses_today IS DISTINCT FROM OLD.analyses_today
-     OR NEW.analyses_reset_at IS DISTINCT FROM OLD.analyses_reset_at
+  IF NEW.plan IN ('pro', 'sharp') AND NEW.plan IS DISTINCT FROM OLD.plan THEN
+    RAISE EXCEPTION 'Only the service role (payment webhook) can grant a paid plan';
+  END IF;
+
+  IF NEW.plan_expires_at IS NOT NULL
+     AND (OLD.plan_expires_at IS NULL OR NEW.plan_expires_at > OLD.plan_expires_at)
   THEN
-    RAISE EXCEPTION 'plan, plan_expires_at, analyses_today and analyses_reset_at can only be changed by the service role (payment webhook / check-quota function)';
+    RAISE EXCEPTION 'Only the service role (payment webhook) can extend plan_expires_at';
   END IF;
 
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS trg_protect_profile_billing_fields ON public.profiles;
+DROP TRIGGER IF EXISTS trg_protect_profile_plan_escalation ON public.profiles;
 
-CREATE TRIGGER trg_protect_profile_billing_fields
+CREATE TRIGGER trg_protect_profile_plan_escalation
   BEFORE UPDATE ON public.profiles
-  FOR EACH ROW EXECUTE FUNCTION public.protect_profile_billing_fields();
+  FOR EACH ROW EXECUTE FUNCTION public.protect_profile_plan_escalation();

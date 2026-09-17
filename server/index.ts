@@ -116,8 +116,10 @@ app.get('/api/football/*', requireAuth, (req, res) => {
 /**
  * Asaas Checkout creation route
  */
-app.post('/api/checkout', async (req, res) => {
-  const { plan, userId, email } = req.body;
+app.post('/api/checkout', requireAuth, async (req: any, res) => {
+  const { plan } = req.body;
+  const userId = req.user.id;
+  const email = req.user.email;
   const asaasApiKey = process.env.ASAAS_API_KEY;
   const asaasApiUrl = process.env.ASAAS_API_URL || 'https://sandbox.asaas.com/v3';
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';

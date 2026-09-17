@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS configuration
@@ -15,7 +16,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Método não permitido' });
   }
 
-  const { plan, userId, email } = req.body;
+  // Require a valid Supabase session and only ever create a checkout for the
+  // caller's own account — a userId taken straight from the request body
+  // would let anyone generate (and, if paid, apply) a plan change for any
+  // other user's id.
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !supabaseServiceKey) {
+    console.error('[Checkout] Variáveis de ambiente Supabase faltando.');
+    return res.status(500).json({ error: 'Servidor não configurado' });
+  }
+
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Token de autenticação ausente' });
+  }
+
+  const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.replace('Bearer ', ''));
+  if (authError || !user) {
+    return res.status(401).json({ error: 'Token JWT inválido ou expirado' });
+  }
+
+  const { plan } = req.body;
+  const userId = user.id;
+  const email = user.email;
   const asaasApiKey = process.env.ASAAS_API_KEY;
   const asaasApiUrl = process.env.ASAAS_API_URL || 'https://sandbox.asaas.com/v3';
   

@@ -16,15 +16,30 @@ const EVENTS_FAIL = [
   'PAYMENT_CHARGEBACK_REQUESTED', 'PAYMENT_CHARGEBACK_DISPUTE',
 ];
 
+function timingSafeTokenMatch(a: string, b: string): boolean {
+  const bufA = new TextEncoder().encode(a);
+  const bufB = new TextEncoder().encode(b);
+  if (bufA.length !== bufB.length || bufA.length === 0) return false;
+  let diff = 0;
+  for (let i = 0; i < bufA.length; i++) diff |= bufA[i] ^ bufB[i];
+  return diff === 0;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
 
-  if (ASAAS_WEBHOOK_TOKEN) {
-    const token = req.headers.get('asaas-access-token') ?? req.headers.get('authorization') ?? '';
-    if (!token.includes(ASAAS_WEBHOOK_TOKEN)) {
-      console.warn('[ASAAS] Token invalido');
-      return new Response('Unauthorized', { status: 401 });
-    }
+  // Fail closed: without ASAAS_WEBHOOK_TOKEN configured there is no way to
+  // verify the caller, so refuse every request instead of accepting anyone
+  // who can reach this URL and set a user's plan for free.
+  if (!ASAAS_WEBHOOK_TOKEN) {
+    console.error('[ASAAS] ASAAS_WEBHOOK_TOKEN não configurado — recusando webhook.');
+    return new Response('Server not configured', { status: 500 });
+  }
+
+  const token = req.headers.get('asaas-access-token') ?? '';
+  if (!timingSafeTokenMatch(token, ASAAS_WEBHOOK_TOKEN)) {
+    console.warn('[ASAAS] Token invalido');
+    return new Response('Unauthorized', { status: 401 });
   }
 
   let body: any;

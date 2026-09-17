@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Match, LEAGUES, AnalysisResponse } from './types';
 import { fetchAllMatches, getOddsApiQuotaInfo, fetchActiveMatches, syncApiEplFixtureToMatch, syncApiFootballFixtureToMatch, carregarLigasUsuario } from './services/oddsService';
 import { analyzeMatch } from './services/geminiService';
+import { supabase } from './services/supabaseClient';
 import { updateMatchResultInSupabase, resetGeminiCallCounter, getGeminiCallCount } from './services/telemetryService';
 import MatchCardTipster from './components/MatchCardTipster';
 import SkeletonMatch from './components/SkeletonMatch';
@@ -331,22 +332,23 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
   useEffect(() => {
     const handleCheckoutInit = async (e: Event) => {
       const { plan: targetPlan } = (e as CustomEvent).detail;
-      const userId = profile?.id || user?.id;
-
-      if (!userId) {
-        showToast.warning('Faça login para prosseguir.');
-        return;
-      }
 
       try {
+        const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+        if (!session) {
+          showToast.warning('Faça login para prosseguir.');
+          return;
+        }
+
         const apiHost = window.location.hostname;
         const apiBaseUrl = import.meta.env.VITE_API_URL || (apiHost === 'localhost' || apiHost === '127.0.0.1' ? 'http://localhost:3001' : `https://${apiHost}`);
         const response = await fetch(`${apiBaseUrl}/api/checkout`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
           },
-          body: JSON.stringify({ plan: targetPlan, userId, email: user?.email })
+          body: JSON.stringify({ plan: targetPlan })
         });
 
         const data = await response.json();
