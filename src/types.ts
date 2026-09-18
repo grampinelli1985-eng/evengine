@@ -15,6 +15,9 @@ export interface MarketReference {
 export interface Outcome {
   name: string;
   price: number;
+  // Present on line-based markets (spreads/totals) — the handicap or
+  // over/under line this price applies to (e.g. -0.5, 2.5).
+  point?: number;
 }
 
 export interface Market {

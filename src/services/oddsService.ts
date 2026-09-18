@@ -338,7 +338,17 @@ export async function fetchAllMatches(leagueKeys?: string[]): Promise<Match[]> {
     // 3️⃣ Cache miss total: buscar da Odds API
     try {
       const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu';
-      const MARKETS = 'h2h,totals';
+      // spreads = handicap asiático/europeu real de mercado (substitui a
+      // aproximação sintética usada antes em asianHandicapService.ts);
+      // btts / draw_no_bet / alternate_totals = mercados que valueBetService.ts
+      // já sabia processar (createValueMarket, blend Poisson+mercado) mas
+      // que nunca chegavam até aqui — o Gate caía sempre no fallback
+      // estimado (odd_is_estimated: true) por falta desses dados reais.
+      // NOTA DE CUSTO: cada mercado adicional aumenta o custo em créditos
+      // da chamada à Odds API (cache compartilhado via Supabase amortiza
+      // isso entre usuários, mas vale monitorar getOddsApiQuotaInfo() e o
+      // plano contratado — alternate_totals pode exigir um tier pago).
+      const MARKETS = 'h2h,totals,spreads,btts,draw_no_bet,alternate_totals';
       // [QUOTA-OPT] daysFrom: 3 → 2 (elimina jogos 3 dias adiante que raramente têm linhas sharp)
       const path = `/sports/${league.key}/odds/?bookmakers=${SHARP_BOOKMAKERS}&markets=${MARKETS}&oddsFormat=decimal&daysFrom=2`;
       const response = await fetchViaOddsProxy(path, { signal: AbortSignal.timeout(6000) });

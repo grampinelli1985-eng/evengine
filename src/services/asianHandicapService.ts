@@ -150,13 +150,41 @@ function overroundDoisLados(odd1: number, odd2: number): number {
 
 // ─── API pública ───────────────────────────────────────────────────────────
 
+export interface RealSpread {
+  homeOdd: number;
+  homePoint: number;
+  awayOdd: number;
+  awayPoint: number;
+}
+
+/**
+ * Extrai a linha de handicap real (mercado `spreads`) de um bookmaker, se
+ * disponível. Diferente dos equivalentes AH -0.5/+0.5 calculados abaixo
+ * (que são uma APROXIMAÇÃO a partir do H2H, assumindo uma margem de exchange
+ * genérica), esta é a odd de handicap realmente cotada no mercado.
+ */
+export function extrairSpreadReal(homeTeam: string, awayTeam: string, bookmakers: any[]): RealSpread | null {
+  const bk = bookmakers?.find((b: any) => b.key === 'pinnacle') ?? bookmakers?.[0];
+  const market = bk?.markets?.find((m: any) => m.key === 'spreads');
+  if (!market) return null;
+
+  const home = market.outcomes?.find((o: any) => o.name === homeTeam);
+  const away = market.outcomes?.find((o: any) => o.name === awayTeam);
+  if (!home?.price || !away?.price || home.point === undefined || away.point === undefined) return null;
+
+  return { homeOdd: home.price, homePoint: home.point, awayOdd: away.price, awayPoint: away.point };
+}
+
 /**
  * Analisa equivalentes de mercado para um confronto com odds H2H da Pinnacle.
+ * `spreadReal`, quando disponível (via extrairSpreadReal), substitui a
+ * aproximação "AH -0.5/+0.5 (Exchange)" pela odd de handicap real cotada.
  */
 export function analisarEquivalentesAH(
   homeTeam: string,
   awayTeam: string,
-  h2h: OddsH2H
+  h2h: OddsH2H,
+  spreadReal?: RealSpread | null
 ): AsianHandicapAnalysis {
   const overroundH2H = calcOverroundH2H(h2h);
 
@@ -193,14 +221,23 @@ export function analisarEquivalentesAH(
       economiaVsH2H: parseFloat((overroundH2H - overroundDC1X).toFixed(2)),
       recomendado: false
     },
-    {
-      mercado: 'AH -0.5 Casa (Exchange)',
-      descricao: 'Asian Handicap -0.5 para Casa — menor margem em exchanges',
-      oddEquivalente: ah05CasaOdd,
-      overround: parseFloat((overroundH2H * 0.4).toFixed(2)), // exchanges têm ~60% menos margem
-      economiaVsH2H: parseFloat((overroundH2H * 0.6).toFixed(2)),
-      recomendado: false
-    }
+    spreadReal
+      ? {
+          mercado: `AH ${spreadReal.homePoint > 0 ? '+' : ''}${spreadReal.homePoint} Casa (Mercado)`,
+          descricao: 'Handicap asiático real cotado pela casa de apostas — não é aproximação',
+          oddEquivalente: spreadReal.homeOdd,
+          overround: overroundDoisLados(spreadReal.homeOdd, spreadReal.awayOdd),
+          economiaVsH2H: parseFloat((overroundH2H - overroundDoisLados(spreadReal.homeOdd, spreadReal.awayOdd)).toFixed(2)),
+          recomendado: false
+        }
+      : {
+          mercado: 'AH -0.5 Casa (estimado)',
+          descricao: 'Sem linha real de handicap disponível — aproximação a partir do H2H (margem de exchange assumida)',
+          oddEquivalente: ah05CasaOdd,
+          overround: parseFloat((overroundH2H * 0.4).toFixed(2)), // exchanges têm ~60% menos margem
+          economiaVsH2H: parseFloat((overroundH2H * 0.6).toFixed(2)),
+          recomendado: false
+        }
   ];
 
   // ── Mercados equivalentes para VISITANTE ────────────────────────────────
@@ -233,14 +270,23 @@ export function analisarEquivalentesAH(
       economiaVsH2H: parseFloat((overroundH2H - overroundDoisLados(dc1XOdd, dcX2Odd)).toFixed(2)),
       recomendado: false
     },
-    {
-      mercado: 'AH +0.5 Visitante (Exchange)',
-      descricao: 'Visitante vence ou empata — exchange com menor margem',
-      oddEquivalente: ahMais05VisiOdd,
-      overround: parseFloat((overroundH2H * 0.4).toFixed(2)),
-      economiaVsH2H: parseFloat((overroundH2H * 0.6).toFixed(2)),
-      recomendado: false
-    }
+    spreadReal
+      ? {
+          mercado: `AH ${spreadReal.awayPoint > 0 ? '+' : ''}${spreadReal.awayPoint} Visitante (Mercado)`,
+          descricao: 'Handicap asiático real cotado pela casa de apostas — não é aproximação',
+          oddEquivalente: spreadReal.awayOdd,
+          overround: overroundDoisLados(spreadReal.homeOdd, spreadReal.awayOdd),
+          economiaVsH2H: parseFloat((overroundH2H - overroundDoisLados(spreadReal.homeOdd, spreadReal.awayOdd)).toFixed(2)),
+          recomendado: false
+        }
+      : {
+          mercado: 'AH +0.5 Visitante (estimado)',
+          descricao: 'Sem linha real de handicap disponível — aproximação a partir do H2H (margem de exchange assumida)',
+          oddEquivalente: ahMais05VisiOdd,
+          overround: parseFloat((overroundH2H * 0.4).toFixed(2)),
+          economiaVsH2H: parseFloat((overroundH2H * 0.6).toFixed(2)),
+          recomendado: false
+        }
   ];
 
   // Marcar o melhor (menor overround entre os disponíveis)
@@ -290,7 +336,8 @@ export function analisarMatchAH(homeTeam: string, awayTeam: string, bookmakers: 
 
   if (!home || !away) return null;
 
-  return analisarEquivalentesAH(homeTeam, awayTeam, { home, draw, away });
+  const spreadReal = extrairSpreadReal(homeTeam, awayTeam, bookmakers);
+  return analisarEquivalentesAH(homeTeam, awayTeam, { home, draw, away }, spreadReal);
 }
 
 /**
