@@ -17,6 +17,8 @@ import {
   getPendingTrackedMatches,
   pollLiveResults,
   sportKeysToPoll,
+  getDueTrackedMatches,
+  hasPendingLiveMatches,
 } from '../liveTrackerService';
 
 const started = () => new Date(Date.now() - 60 * 60 * 1000).toISOString(); // começou há 1h
@@ -90,5 +92,54 @@ describe('liveTracker — custo de créditos do /scores', () => {
     proxy.mockClear();
     await pollLiveResults();
     expect(proxy).not.toHaveBeenCalled();
+  });
+});
+
+describe('liveTracker — janela de consulta (jogos antigos / não resolvíveis)', () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+
+  it('jogo na janela ativa (<=3h) é consultado a cada ciclo', async () => {
+    registerMatchForTracking('m1', 'Sport', 'Avai', hoursAgo(2), 'soccer_brazil_serie_b');
+    proxy.mockResolvedValue(ok([])); // nunca casa
+
+    await pollLiveResults();
+    await pollLiveResults();
+
+    expect(proxy).toHaveBeenCalledTimes(2);
+  });
+
+  it('jogo passado de 3h sem resultado: 1 consulta e depois silêncio por 3h', async () => {
+    registerMatchForTracking('m1', 'Sport', 'Avai', hoursAgo(5), 'soccer_brazil_serie_b');
+    proxy.mockResolvedValue(ok([]));
+
+    await pollLiveResults(); // primeira: nunca foi checado
+    expect(proxy).toHaveBeenCalledTimes(1);
+
+    await pollLiveResults(); // ciclos seguintes (10min depois): throttled
+    await pollLiveResults();
+    expect(proxy).toHaveBeenCalledTimes(1);
+  });
+
+  it('jogo passado de 3h volta a ser consultado após 3h', async () => {
+    registerMatchForTracking('m1', 'Sport', 'Avai', hoursAgo(5), 'soccer_brazil_serie_b');
+    proxy.mockResolvedValue(ok([]));
+    await pollLiveResults();
+
+    const now = Date.now() + 3 * 60 * 60 * 1000 + 1000;
+    expect(getDueTrackedMatches(now).map(m => m.matchId)).toEqual(['m1']);
+    expect(getDueTrackedMatches(now - 60 * 60 * 1000)).toEqual([]);
+  });
+
+  it('jogo com mais de 48h nunca é consultado (a API não devolve)', () => {
+    registerMatchForTracking('m1', 'Sport', 'Avai', hoursAgo(30), 'soccer_brazil_serie_b');
+    expect(getDueTrackedMatches().length).toBe(1); // 30h: ainda dentro das 48h
+    expect(getDueTrackedMatches(Date.now() + 20 * 60 * 60 * 1000)).toEqual([]); // 50h
+  });
+
+  it('jogo que ainda não começou (>5min) não é consultado', async () => {
+    registerMatchForTracking('m1', 'Sport', 'Avai', new Date(Date.now() + 60 * 60 * 1000).toISOString(), 'soccer_epl');
+    await pollLiveResults();
+    expect(proxy).not.toHaveBeenCalled();
+    expect(hasPendingLiveMatches()).toBe(false);
   });
 });

@@ -58,6 +58,8 @@ export interface TrackedMatch {
   resolved: boolean;
   resolvedAt?: string;
   placar?: string;
+  /** Última vez que o poll consultou a API por este jogo (ISO). Ver getDueTrackedMatches. */
+  lastCheckedAt?: string;
 }
 
 export interface LiveResult {
@@ -311,12 +313,42 @@ export function markMatchResolved(matchId: string, placar: string): void {
   saveTracked(list);
 }
 
-export function hasPendingLiveMatches(): boolean {
-  const now = Date.now();
-  return getPendingTrackedMatches().some(m => {
+// Janela em que um jogo é consultado a cada ciclo (10 min): kickoff-5min até
+// kickoff+3h (partida + prorrogação/atrasos). Depois disso o resultado quase
+// sempre já saiu ou o jogo nunca vai casar com a API (liga/nome divergente):
+// consultar a cada 10 min só queima créditos, então passa a 1 tentativa a cada 3h.
+const ACTIVE_WINDOW_MS = 3 * 60 * 60 * 1000;
+const STALE_RECHECK_MS = 3 * 60 * 60 * 1000;
+// /scores?daysFrom=2 só devolve as últimas 48h — depois disso não há o que achar.
+const SCORES_LOOKBACK_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Jogos pendentes que valem uma consulta agora:
+ *  - já começaram (ou começam em <5min) e estão na janela ativa → todo ciclo;
+ *  - passaram da janela ativa, mas ainda dentro das 48h → no máx. 1x a cada 3h;
+ *  - mais antigos que 48h → nunca (a API não devolve).
+ */
+export function getDueTrackedMatches(now: number = Date.now()): TrackedMatch[] {
+  return getPendingTrackedMatches().filter(m => {
     const start = new Date(m.commenceTime).getTime();
-    return start <= now + 5 * 60 * 1000;
+    if (start > now + 5 * 60 * 1000) return false;
+    const elapsed = now - start;
+    if (elapsed <= ACTIVE_WINDOW_MS) return true;
+    if (elapsed > SCORES_LOOKBACK_MS) return false;
+    const last = m.lastCheckedAt ? new Date(m.lastCheckedAt).getTime() : 0;
+    return now - last >= STALE_RECHECK_MS;
   });
+}
+
+function markChecked(matches: TrackedMatch[]): void {
+  if (matches.length === 0) return;
+  const ids = new Set(matches.map(m => m.matchId));
+  const stamp = new Date().toISOString();
+  saveTracked(loadTracked().map(m => (ids.has(m.matchId) ? { ...m, lastCheckedAt: stamp } : m)));
+}
+
+export function hasPendingLiveMatches(): boolean {
+  return getDueTrackedMatches().length > 0;
 }
 
 // IDs das ligas Copa do Mundo FIFA na API-Football
@@ -324,11 +356,8 @@ export function hasPendingLiveMatches(): boolean {
 const WC_LEAGUE_IDS = new Set([1, 9]); // 1=World Cup, 9=Confederations Cup / variantes
 
 /**
- * Busca placares via The Odds API /scores (fonte primária, gratuita).
- * Retorna mapa de chave normalizada → { homeGoals, awayGoals, completed, live }.
- * CUSTO: /scores com daysFrom custa 2 créditos por sport_key (1 sem daysFrom, mas aí
- * não traz jogos encerrados). Por isso consulta só a liga de cada jogo pendente; só
- * jogos legados, sem sportKey registrado, caem na varredura de todas as ligas.
+ * Ligas a consultar: só as dos jogos pendentes. Jogos legados, sem sportKey
+ * registrado, caem na varredura de todas as ligas conhecidas.
  */
 export function sportKeysToPoll(pending: TrackedMatch[]): string[] {
   const keys = new Set<string>();
@@ -339,6 +368,12 @@ export function sportKeysToPoll(pending: TrackedMatch[]): string[] {
   return [...keys];
 }
 
+/**
+ * Busca placares via The Odds API /scores (fonte primária).
+ * Retorna mapa de chave normalizada → { homeGoals, awayGoals, completed, live }.
+ * CUSTO: /scores com daysFrom custa 2 créditos por sport_key (1 sem daysFrom, mas aí
+ * não traz jogos encerrados) — por isso só consulta as ligas de sportKeysToPoll().
+ */
 async function fetchOddsApiScores(
   pending: TrackedMatch[]
 ): Promise<Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>> {
@@ -440,10 +475,7 @@ async function fetchApiFootballFixtures(date: string, silent = false): Promise<a
  * Modo Copa (forceToday=true): usa API-Football filtrado por league ID.
  */
 export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]> {
-  const pending = getPendingTrackedMatches().filter(m => {
-    const start = new Date(m.commenceTime).getTime();
-    return start <= Date.now() + 5 * 60 * 1000;
-  });
+  const pending = getDueTrackedMatches();
 
   if (!forceToday && pending.length === 0) return [];
 
@@ -466,6 +498,7 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
   if (!forceToday) {
     console.info('[LiveTracker] Polling via The Odds API scores...');
     const oddsScores = await fetchOddsApiScores(pending);
+    markChecked(pending);
 
     for (const match of pending) {
       const key = buildLiveKey(match.homeTeam, match.awayTeam);
@@ -583,6 +616,7 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
     // Fallback Copa: The Odds API (ligas de Copa/seleções podem estar cobertas)
     console.info('[LiveTracker][Copa] API-Football indisponível — tentando OddsAPI...');
     const oddsScores = await fetchOddsApiScores(pending);
+    markChecked(pending);
     for (const match of pending) {
       const key = buildLiveKey(match.homeTeam, match.awayTeam);
       const score = oddsScores.get(key);
