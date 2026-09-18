@@ -96,7 +96,8 @@ export default function WorldCupView({
         matchId: match.id,
         homeTeam: match.home_team,
         awayTeam: match.away_team,
-        commenceTime: match.commence_time
+        commenceTime: match.commence_time,
+        sportKey: match.sport_key
       }
     }));
 

@@ -575,8 +575,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
     // Listener para WorldCupView (e outros componentes) registrarem e ativarem poll
     const handleTrackMatch = (e: Event) => {
-      const { matchId, homeTeam, awayTeam, commenceTime } = (e as CustomEvent).detail;
-      registerMatchForTracking(matchId, homeTeam, awayTeam, commenceTime);
+      const { matchId, homeTeam, awayTeam, commenceTime, sportKey } = (e as CustomEvent).detail;
+      registerMatchForTracking(matchId, homeTeam, awayTeam, commenceTime, sportKey);
       runPoll(true);
     };
     window.addEventListener('evengine_track_match', handleTrackMatch);
@@ -1533,7 +1533,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       }
 
       // Registrar para rastreamento automático + poll imediato se jogo já começou
-      registerMatchForTracking(match.id, match.home_team, match.away_team, match.commence_time);
+      registerMatchForTracking(match.id, match.home_team, match.away_team, match.commence_time, match.sport_key);
       if (new Date(match.commence_time).getTime() <= Date.now()) {
         triggerPollRef.current?.(true);
       }
@@ -1820,7 +1820,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           if (engineVerdict.status === 'APROVADO') {
             setCachedAnalysis(fKey, result, undefined, match.commence_time).catch(console.warn);
           }
-          registerMatchForTracking(match.id, match.home_team, match.away_team, match.commence_time);
+          registerMatchForTracking(match.id, match.home_team, match.away_team, match.commence_time, match.sport_key);
 
           setAnalyzedMatches(prev => ({ ...prev, [match.id]: result }));
           await bqIncrementLocalOnce();

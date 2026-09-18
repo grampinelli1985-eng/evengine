@@ -53,6 +53,8 @@ export interface TrackedMatch {
   homeTeam: string;
   awayTeam: string;
   commenceTime: string;
+  /** Liga (sport_key da Odds API). Permite consultar só a liga do jogo em vez de todas. */
+  sportKey?: string;
   resolved: boolean;
   resolvedAt?: string;
   placar?: string;
@@ -274,13 +276,21 @@ export function registerMatchForTracking(
   matchId: string,
   homeTeam: string,
   awayTeam: string,
-  commenceTime: string
+  commenceTime: string,
+  sportKey?: string
 ): void {
   const list = loadTracked();
-  const exists = list.some(m => m.matchId === matchId);
-  if (exists) return;
+  const existing = list.find(m => m.matchId === matchId);
+  if (existing) {
+    // Jogo rastreado antes de existir o sportKey: completa para o poll parar de varrer todas as ligas.
+    if (sportKey && !existing.sportKey) {
+      existing.sportKey = sportKey;
+      saveTracked(list);
+    }
+    return;
+  }
 
-  list.push({ matchId, homeTeam, awayTeam, commenceTime, resolved: false });
+  list.push({ matchId, homeTeam, awayTeam, commenceTime, sportKey, resolved: false });
 
   const cutoff = Date.now() - 36 * 60 * 60 * 1000;
   const clean = list.filter(m => new Date(m.commenceTime).getTime() > cutoff);
@@ -316,14 +326,27 @@ const WC_LEAGUE_IDS = new Set([1, 9]); // 1=World Cup, 9=Confederations Cup / va
 /**
  * Busca placares via The Odds API /scores (fonte primária, gratuita).
  * Retorna mapa de chave normalizada → { homeGoals, awayGoals, completed, live }.
- * Consome 1 request por sport_key com daysFrom=2 (cobre jogos das últimas 48h).
+ * CUSTO: /scores com daysFrom custa 2 créditos por sport_key (1 sem daysFrom, mas aí
+ * não traz jogos encerrados). Por isso consulta só a liga de cada jogo pendente; só
+ * jogos legados, sem sportKey registrado, caem na varredura de todas as ligas.
  */
+export function sportKeysToPoll(pending: TrackedMatch[]): string[] {
+  const keys = new Set<string>();
+  for (const m of pending) {
+    if (m.sportKey) keys.add(m.sportKey);
+    else ODDS_API_SOCCER_KEYS.forEach(k => keys.add(k));
+  }
+  return [...keys];
+}
+
 async function fetchOddsApiScores(
   pending: TrackedMatch[]
 ): Promise<Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>> {
   const results = new Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>();
 
-  for (const sportKey of ODDS_API_SOCCER_KEYS) {
+  for (const sportKey of sportKeysToPoll(pending)) {
+    // Todos os jogos pendentes já encerrados: não gasta créditos nas ligas restantes.
+    if (pending.every(m => results.get(buildLiveKey(m.homeTeam, m.awayTeam))?.completed)) break;
     try {
       const res = await fetchViaOddsProxy(`/sports/${sportKey}/scores/?daysFrom=2`, {
         signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(8000) : undefined,
