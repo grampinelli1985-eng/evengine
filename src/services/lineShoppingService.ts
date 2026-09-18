@@ -1,15 +1,13 @@
 /**
  * lineShoppingService.ts — Comparação de preço entre bookmakers (H2H)
  *
- * O sistema sempre usou Pinnacle/Betfair Exchange como REFERÊNCIA de valor
- * justo, nunca como sugestão de "onde apostar" — o usuário tinha que
- * descobrir e digitar manualmente a odd de outra casa (campo "odd manual",
- * comparado contra a Pinnacle). Este serviço automatiza a parte de "qual das
- * casas retornadas pela API oferece o melhor preço agora", escalando
- * automaticamente conforme mais bookmakers forem incluídos na busca
- * (oddsService.ts SHARP_BOOKMAKERS) — hoje isso já compara Pinnacle vs
- * Betfair Exchange vs Bet365 (quando disponível na sua região/plano da Odds
- * API).
+ * O sistema usa Pinnacle/Betfair Exchange como REFERÊNCIA de valor justo, nunca como
+ * sugestão de "onde apostar" — o usuário digita manualmente a odd da casa onde vai
+ * apostar (campo "odd manual", ex.: bet365, que a Odds API não fornece).
+ * Este serviço só compara o melhor preço entre as casas que a API devolve
+ * (oddsService.ts SHARP_BOOKMAKERS), hoje Pinnacle e Betfair Exchange: é a melhor
+ * referência sharp, não uma comparação entre casas de aposta de varejo. Escala
+ * automaticamente se mais bookmakers forem incluídos na busca.
  */
 
 export interface MelhorPreco {

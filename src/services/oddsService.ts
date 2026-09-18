@@ -394,10 +394,9 @@ export async function fetchAllMatches(leagueKeys?: string[]): Promise<Match[]> {
         continue;
       }
 
-      // 'bet365' NÃO é devolvida por esta API (medido: 0 de 19 jogos da EPL); a chave é
-      // ignorada sem erro e não custa nada. Por isso o line shopping (lineShoppingService.ts)
-      // hoje só compara Pinnacle x Betfair Exchange.
-      const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu,bet365';
+      // Só as referências sharp. A Odds API não devolve a bet365 (medido: 0 de 19 jogos da EPL,
+      // com a chave pedida); a odd da bet365 no sistema é digitada pelo usuário (odd manual).
+      const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu';
       // Custo do /odds em lote = 1 crédito POR MERCADO por chamada. h2h e totals alimentam a
       // análise; `spreads` (+1 crédito, +50%) só alimenta a linha de handicap real em
       // asianHandicapService.ts, que sem ele cai na aproximação "(estimado)". Fica desligado
@@ -407,18 +406,19 @@ export async function fetchAllMatches(leagueKeys?: string[]): Promise<Match[]> {
       // são mercados adicionais só do endpoint por evento (eventOddsService.ts) — pedi-los
       // aqui retorna HTTP 422 e derruba o carregamento de todas as partidas.
       const INCLUDE_SPREADS = false;
-      const MARKETS = INCLUDE_SPREADS ? 'h2h,totals,spreads' : 'h2h,totals';
+      const MINIMAL_MARKETS = 'h2h,totals';
+      const MARKETS = INCLUDE_SPREADS ? 'h2h,totals,spreads' : MINIMAL_MARKETS;
       // (O antigo `daysFrom=2` aqui não existe em /odds — só em /scores — e era ignorado
       // pela API: a resposta trazia todos os jogos futuros da liga, não só 48h.)
       const path = `/sports/${league.key}/odds/?bookmakers=${SHARP_BOOKMAKERS}&markets=${MARKETS}&oddsFormat=decimal`;
       let response = await fetchViaOddsProxy(path, { signal: AbortSignal.timeout(6000) });
 
-      // Rede de segurança: se a API rejeitar o pedido (mercado ou bookmaker indisponível no
-      // plano/região), refaz com o conjunto mínimo que sempre funcionou, em vez de deixar a
-      // liga sem partidas.
-      if (response.status === 422) {
-        console.warn(`[OddsAPI] HTTP 422 para ${league.key} — repetindo com pedido mínimo (h2h,totals; pinnacle,betfair_ex_eu)`);
-        const fallbackPath = `/sports/${league.key}/odds/?bookmakers=pinnacle,betfair_ex_eu&markets=h2h,totals&oddsFormat=decimal`;
+      // Rede de segurança (só faz sentido se o pedido tiver mais que o mínimo, ex.: spreads
+      // ligado e indisponível no plano): refaz com h2h,totals em vez de deixar a liga sem
+      // partidas. Com o pedido já mínimo, repetir seria uma chamada idêntica.
+      if (response.status === 422 && MARKETS !== MINIMAL_MARKETS) {
+        console.warn(`[OddsAPI] HTTP 422 para ${league.key} — repetindo com pedido mínimo (${MINIMAL_MARKETS})`);
+        const fallbackPath = `/sports/${league.key}/odds/?bookmakers=${SHARP_BOOKMAKERS}&markets=${MINIMAL_MARKETS}&oddsFormat=decimal`;
         response = await fetchViaOddsProxy(fallbackPath, { signal: AbortSignal.timeout(6000) });
       }
 

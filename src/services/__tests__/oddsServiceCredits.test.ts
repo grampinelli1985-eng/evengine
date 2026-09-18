@@ -60,6 +60,8 @@ describe('oddsService — economia de créditos', () => {
     expect(path).toContain('markets=h2h,totals&');
     expect(path).not.toContain('spreads');
     expect(path).not.toContain('daysFrom');
+    expect(path).toContain('bookmakers=pinnacle,betfair_ex_eu&'); // sem bet365: a API não a fornece
+    expect(path).not.toContain('bet365');
     expect(path).not.toMatch(/markets=[^&]*(btts|draw_no_bet|alternate)/); // só existem por evento
   });
 
@@ -86,16 +88,14 @@ describe('oddsService — economia de créditos', () => {
     expect(r).toHaveLength(1);
   });
 
-  it('422 no pedido pago: repete uma vez com o pedido mínimo (liga não fica vazia)', async () => {
-    let n = 0;
+  it('422 no pedido pago: como o pedido já é o mínimo, NÃO repete chamada idêntica', async () => {
     proxy.mockImplementation(async (path: string) => {
       if (path.includes('/events')) return json([event('1', 10)]);
-      n++;
-      return n === 1 ? new Response('{}', { status: 422 }) : json([event('1', 10)]);
+      return new Response('{}', { status: 422 });
     });
     const r = await fetchAllMatches(['soccer_epl']);
-    expect(r).toHaveLength(1);
-    expect(paidCalls()).toHaveLength(2);
+    expect(r).toEqual([]);
+    expect(paidCalls()).toHaveLength(1);
   });
 
   it('só as ligas com jogo geram chamada paga (3 de 5 sem jogo => 2 pagas)', async () => {
