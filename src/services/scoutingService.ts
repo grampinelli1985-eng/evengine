@@ -10,7 +10,7 @@ import { hasQuota, trackRequest } from './apiQuotaService';
 import { getSportmonksTeamId, getSeasonId, getTeamXgLast5, getTeamPpdaLast5, SPORTMONKS_LEAGUE_BY_NAME } from './sportmonksService';
 import { supabase } from './supabaseClient';
 import { callGeminiProxy } from './geminiProxyClient';
-import { fetchViaOddsProxy } from './oddsProxyClient';
+import { fetchScoresCached } from './scoresCache';
 
 const TEAM_ID_CACHE = new Map<string, number>();
 
@@ -653,38 +653,14 @@ async function buscarResultadosRecentes(
   sportKey: string
 ): Promise<Array<{ resultado: 'W'|'D'|'L'; placar: string; adversario: string }>> {
   try {
-    let jogos: any = [];
-    const cacheKey = `scores_cache_${sportKey}`;
-    const SCORES_CACHE_TTL = 30 * 60 * 1000;
-    const cached = localStorage.getItem(cacheKey);
-
-    if (cached) {
-      try {
-        const { data, timestamp } = JSON.parse(cached);
-        if (Date.now() - timestamp < SCORES_CACHE_TTL) {
-          jogos = data;
-        }
-      } catch {}
+    // Cache compartilhado (30 min, inclusive vazio) — antes, liga sem jogos nos últimos
+    // dias nunca era cacheada e cada análise refazia a chamada (2 créditos).
+    const { games: jogos, status } = await fetchScoresCached(sportKey);
+    if (status === 'unprocessable') {
+      console.warn(`[The Odds API] Erro 422: Janela de dias inválida para ${sportKey}.`);
+      return [];
     }
-
-    if (!jogos || jogos.length === 0) {
-      const res = await fetchViaOddsProxy(`/sports/${sportKey}/scores/?daysFrom=3`);
-
-      if (res.status === 422) {
-        console.warn(`[The Odds API] Erro 422: Janela de dias inválida para ${sportKey}.`);
-        return [];
-      }
-
-      if (!res.ok) return [];
-
-      jogos = await res.json();
-      if (Array.isArray(jogos) && jogos.length > 0) {
-        localStorage.setItem(cacheKey, JSON.stringify({
-          data: jogos,
-          timestamp: Date.now()
-        }));
-      }
-    }
+    if (status !== 'ok' && status !== 'cache') return [];
     const jogosDoTime = jogos
       .filter((j: any) =>
         j.completed === true &&

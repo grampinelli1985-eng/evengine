@@ -34,7 +34,7 @@ interface CalibracaoState {
 }
 
 import { getCachedProfile } from './planService';
-import { fetchViaOddsProxy } from './oddsProxyClient';
+import { fetchScoresCached, SCORES_LOOKBACK_MS } from './scoresCache';
 
 function getScopedStorageKey(base: string): string {
   const profile = getCachedProfile();
@@ -125,6 +125,10 @@ export async function resolverPrevisoesPendentes(): Promise<void> {
 
   for (const [liga, prevs] of Object.entries(porLiga)) {
     if (liga === 'unknown') continue;
+    // /scores?daysFrom=3 só devolve as últimas 72h: previsão mais antiga que isso nunca
+    // será encontrada e consultar a liga por ela só queima créditos a cada ciclo de 30 min.
+    const alcancaveis = prevs.filter(p => agora.getTime() - new Date(p.commenceTime).getTime() <= SCORES_LOOKBACK_MS);
+    if (alcancaveis.length === 0) continue;
     const jogos = await fetchScoresForLeague(liga);
     if (!jogos || jogos.length === 0) continue;
 
@@ -190,49 +194,15 @@ async function fetchScoresForLeague(liga: string): Promise<any[]> {
     return []; // Skip total (zero req)
   }
 
-  const SCORES_CACHE_TTL = 30 * 60 * 1000; // 30 minutos
-  const cacheKey = getScopedStorageKey(`scores_cache_${liga}`);
-  const cached = localStorage.getItem(cacheKey);
-  
-  // Gate 2: Usar cache válido se disponível (zero req)
-  if (cached) {
-    try {
-      const { data, timestamp } = JSON.parse(cached);
-      if (Date.now() - timestamp < SCORES_CACHE_TTL) {
-        return data;
-      }
-    } catch {}
+  // Cache (30 min, inclusive resposta vazia) e chamada compartilhados com o scouting.
+  const { games, status } = await fetchScoresCached(liga);
+  if (status === 'unauthorized') {
+    console.warn('Chave do Odds API não autorizada (401). Interrompendo chamadas subsequentes.');
+    isOddsApiUnauthorized = true;
+  } else if (status === 'rate_limited') {
+    console.warn('Limite de requisições atingido na Odds API (429). Interrompendo consulta.');
   }
-
-  // Gate 3: Consumir cota da API apenas se não houver cache
-  try {
-    const res = await fetchViaOddsProxy(`/sports/${liga}/scores/?daysFrom=3`);
-
-    if (res.status === 401) {
-      console.warn(`Chave do Odds API não autorizada (${res.status}). Interrompendo chamadas subsequentes.`);
-      isOddsApiUnauthorized = true;
-      return [];
-    }
-    if (res.status === 429) {
-      console.warn(`Limite de requisições atingido na Odds API (429). Interrompendo consulta.`);
-      return [];
-    }
-
-    if (!res.ok) return [];
-    
-    const jogos = await res.json();
-    
-    if (Array.isArray(jogos) && jogos.length > 0) {
-      localStorage.setItem(cacheKey, JSON.stringify({
-        data: jogos,
-        timestamp: Date.now()
-      }));
-    }
-    return jogos;
-  } catch (e) {
-    console.error('Erro ao buscar scores para liga:', liga, e);
-    return [];
-  }
+  return games;
 }
 
 // Avaliar se previsão acertou baseado no mercado
