@@ -4,6 +4,7 @@
  */
 
 import { Match, AnalysisResponse, ValueBetReport, MarketValueBet, LEAGUES, MarketReference } from '../types';
+import { mergeEventMarkets } from './eventOddsService';
 
 const MAX_EDGE_REALISTA = 0.12; // EV-04: edges above 12% vs Pinnacle are virtually impossible and indicate model error
 
@@ -92,7 +93,10 @@ export function removeOverroundShin(odds: number[]): number[] {
   return fairProbs.map(p => p / total);
 }
 
-export function calcularValueBets(match: Match, analysis: AnalysisResponse): ValueBetReport {
+export function calcularValueBets(rawMatch: Match, analysis: AnalysisResponse): ValueBetReport {
+  // btts/draw_no_bet reais vêm do endpoint por evento (cache em eventOddsService);
+  // sem cache, `match` é o próprio rawMatch e o fluxo usa o fallback estimado.
+  const match = mergeEventMarkets(rawMatch);
   // EV-01: Always use Pinnacle (or betfair_ex_eu as fallback) for reference bookmaker.
   // EV-05: Track whether we fell through to a soft bookmaker — affects model confidence.
   const pinnacleBook = match.bookmakers?.find(b => b.key === 'pinnacle');

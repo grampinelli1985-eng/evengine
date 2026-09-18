@@ -92,6 +92,7 @@ import {
   JogoPonderado,
   pesoTemporalJogo
 } from './valueBetService';
+import { mergeEventMarkets } from './eventOddsService';
 
 const gateCache = new Map<string, string>();
 
@@ -814,7 +815,7 @@ export async function runTipsterEngine(
     const awayPower = calculateTeamPower(awayGoals ?? NEUTRAL_GOALS);
 
     // Extract bookmaker odds
-    const bookmaker = analysis.matchData?.bookmakers?.[0] || analysis.valueBet?.report?.bookmakers?.[0];
+    const bookmaker = mergeEventMarkets(analysis.matchData)?.bookmakers?.[0] || analysis.valueBet?.report?.bookmakers?.[0];
     const totalsMarket = bookmaker?.markets?.find((m: any) => m.key === 'totals');
     const bttsMarket = bookmaker?.markets?.find((m: any) => m.key === 'btts' || m.key === 'btb');
 

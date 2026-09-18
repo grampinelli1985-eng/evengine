@@ -27,6 +27,7 @@ import { registrarEntradaCLV, capturarOddsFechamento, corrigirEntradaCLV, sincro
 import { analisarMatchAH } from './services/asianHandicapService';
 import { encontrarMelhoresPrecosH2H } from './services/lineShoppingService';
 import { calcularValueBets, validateReport } from './services/valueBetService';
+import { fetchEventMarkets } from './services/eventOddsService';
 import { runTipsterEngine } from './services/tipsterEngine';
 import { buscarEstatisticasMedias, buscarH2H } from './services/scoutingService';
 import BancaModal from './components/BancaModal';
@@ -1331,7 +1332,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       ).catch(() => null);
       result.h2h = h2hData;
 
-      // Calculate Value Bets
+      // Calculate Value Bets (btts/draw_no_bet reais: 1 busca por evento, cacheada)
+      await fetchEventMarkets(match);
       const valueReport = calcularValueBets(match, result);
       const finalReport = validateReport(valueReport);
 
@@ -1689,6 +1691,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           ).catch(() => null);
           result.h2h = h2hData;
 
+          await fetchEventMarkets(match);
           const valueReport = calcularValueBets(match, result);
           const finalReport = validateReport(valueReport);
 
