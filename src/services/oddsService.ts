@@ -239,6 +239,8 @@ const MOCK_MATCHES: Match[] = [
 // [QUOTA-OPT] Normal: 3h (era 1h). Pré-jogo: 30min (era 20min), só para a liga afetada.
 const TTL_NORMAL_MS   = 3 * 60 * 60 * 1000;  // 3h — ligas sem jogo iminente
 const TTL_PREMATCH_MS = 30 * 60 * 1000;       // 30min — liga com jogo <90min
+const TTL_FAR_MS      = 6 * 60 * 60 * 1000;   // 6h — próximo jogo da liga a mais de 12h
+const TTL_FAR_THRESHOLD_MS = 12 * 60 * 60 * 1000;
 
 // [QUOTA-OPT] TTL calculado por liga individualmente — não mais global.
 // Era: qualquer liga iminente → TODAS as ligas caíam para 20min.
@@ -246,12 +248,57 @@ const TTL_PREMATCH_MS = 30 * 60 * 1000;       // 30min — liga com jogo <90min
 function calcTTLForLeague(data: any[]): number {
   if (!Array.isArray(data) || data.length === 0) return TTL_NORMAL_MS;
   const now = Date.now();
-  const hasImminent = data.some((m: any) => {
-    if (!m.commence_time) return false;
+  let nearest = Infinity;
+  for (const m of data) {
+    if (!m.commence_time) continue;
     const delta = new Date(m.commence_time).getTime() - now;
-    return delta > 0 && delta < 90 * 60 * 1000;
-  });
-  return hasImminent ? TTL_PREMATCH_MS : TTL_NORMAL_MS;
+    if (delta > 0 && delta < nearest) nearest = delta;
+  }
+  if (nearest < 90 * 60 * 1000) return TTL_PREMATCH_MS;
+  // Próximo jogo da liga a mais de 12h: a linha ainda vai andar bastante antes do kickoff,
+  // então atualizar a cada 3h só gasta créditos (cada atualização = 2 a 3 por liga).
+  if (nearest > TTL_FAR_THRESHOLD_MS) return TTL_FAR_MS;
+  return TTL_NORMAL_MS;
+}
+
+// ── Agenda grátis (não gasta créditos) ───────────────────────────────────────
+// /sports/{sport}/events NÃO conta na cota (medido: x-requests-last: 0). Serve para
+// não pagar /odds de liga sem nenhum jogo no horizonte que a interface mostra (7 dias) —
+// ex.: Champions/Libertadores/Sul-Americana em pausa custavam 9 créditos por atualização.
+const SCHEDULE_HORIZON_MS = 7 * 24 * 60 * 60 * 1000; // maior período do filtro da UI
+const SCHEDULE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * true se a liga tem jogo dentro do horizonte, false se não tem. Em qualquer falha
+ * (rede, cota, resposta inesperada) devolve true: sem certeza, mantém o comportamento
+ * antigo de buscar as odds em vez de esconder jogos.
+ */
+async function leagueHasUpcomingGames(leagueKey: string): Promise<boolean> {
+  const key = `odds_sched_${leagueKey}`;
+  const raw = lsGet(key);
+  if (raw) {
+    try {
+      const { hasGames, timestamp } = JSON.parse(raw);
+      if (typeof hasGames === 'boolean' && Date.now() - timestamp < SCHEDULE_TTL_MS) return hasGames;
+    } catch { /* cache corrompido: refaz */ }
+  }
+
+  try {
+    const res = await fetchViaOddsProxy(`/sports/${leagueKey}/events?dateFormat=iso`, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return true;
+    const events = await res.json();
+    if (!Array.isArray(events)) return true;
+
+    const now = Date.now();
+    const hasGames = events.some((e: any) => {
+      const t = new Date(e?.commence_time).getTime();
+      return t > now - 3 * 60 * 60 * 1000 && t - now <= SCHEDULE_HORIZON_MS; // inclui jogo em andamento
+    });
+    lsSet(key, JSON.stringify({ hasGames, timestamp: Date.now() }));
+    return hasGames;
+  } catch {
+    return true;
+  }
 }
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
@@ -337,32 +384,41 @@ export async function fetchAllMatches(leagueKeys?: string[]): Promise<Match[]> {
 
     // 3️⃣ Cache miss total: buscar da Odds API
     try {
-      // 'bet365' adicionado para permitir comparação de preço real (line
-      // shopping — ver lineShoppingService.ts) além da referência sharp
-      // Pinnacle/Betfair. NÃO CONFIRMADO ao vivo: se essa chave não existir
-      // na sua região/plano da Odds API, ela é simplesmente ignorada pela
-      // API (sem erro) e o line shopping continua funcionando só com
-      // Pinnacle/Betfair — verifique bookmakers retornados e ajuste esta
-      // lista conforme o que sua conta realmente tem acesso.
+      // Antes de pagar: liga sem jogo no horizonte de 7 dias não precisa de /odds. Checagem
+      // grátis (não consome créditos). Guarda o "vazio" no cache local para não repetir.
+      if (!(await leagueHasUpcomingGames(league.key))) {
+        console.info(`[OddsAPI] ${league.key}: sem jogos nos próximos 7 dias — /odds não consultado (0 créditos)`);
+        lsSet(localKey, JSON.stringify({ data: [], timestamp: Date.now() }));
+        results.push({ status: 'fulfilled', value: [] });
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
+      }
+
+      // 'bet365' NÃO é devolvida por esta API (medido: 0 de 19 jogos da EPL); a chave é
+      // ignorada sem erro e não custa nada. Por isso o line shopping (lineShoppingService.ts)
+      // hoje só compara Pinnacle x Betfair Exchange.
       const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu,bet365';
-      // spreads = handicap asiático/europeu real de mercado (substitui a
-      // aproximação sintética usada em asianHandicapService.ts).
-      // ATENÇÃO: o endpoint em lote (/sports/{sport}/odds) só aceita os
-      // mercados "featured" (h2h, totals, spreads). btts / draw_no_bet /
-      // alternate_totals são mercados adicionais, disponíveis APENAS no
-      // endpoint por evento (/events/{id}/odds) — pedi-los aqui retorna
-      // HTTP 422 e derruba o carregamento de todas as partidas.
-      const MARKETS = 'h2h,totals,spreads';
-      // [QUOTA-OPT] daysFrom: 3 → 2 (elimina jogos 3 dias adiante que raramente têm linhas sharp)
-      const path = `/sports/${league.key}/odds/?bookmakers=${SHARP_BOOKMAKERS}&markets=${MARKETS}&oddsFormat=decimal&daysFrom=2`;
+      // Custo do /odds em lote = 1 crédito POR MERCADO por chamada. h2h e totals alimentam a
+      // análise; `spreads` (+1 crédito, +50%) só alimenta a linha de handicap real em
+      // asianHandicapService.ts, que sem ele cai na aproximação "(estimado)". Fica desligado
+      // por padrão enquanto a cota da Odds API for pequena (500 créditos); ligue trocando
+      // INCLUDE_SPREADS para true.
+      // ATENÇÃO: o lote só aceita h2h, totals e spreads. btts/draw_no_bet/alternate_totals
+      // são mercados adicionais só do endpoint por evento (eventOddsService.ts) — pedi-los
+      // aqui retorna HTTP 422 e derruba o carregamento de todas as partidas.
+      const INCLUDE_SPREADS = false;
+      const MARKETS = INCLUDE_SPREADS ? 'h2h,totals,spreads' : 'h2h,totals';
+      // (O antigo `daysFrom=2` aqui não existe em /odds — só em /scores — e era ignorado
+      // pela API: a resposta trazia todos os jogos futuros da liga, não só 48h.)
+      const path = `/sports/${league.key}/odds/?bookmakers=${SHARP_BOOKMAKERS}&markets=${MARKETS}&oddsFormat=decimal`;
       let response = await fetchViaOddsProxy(path, { signal: AbortSignal.timeout(6000) });
 
-      // Rede de segurança: se a API rejeitar o pedido ampliado (mercado ou
-      // bookmaker indisponível no plano/região), refaz com o conjunto mínimo
-      // que sempre funcionou, em vez de deixar a liga sem partidas.
+      // Rede de segurança: se a API rejeitar o pedido (mercado ou bookmaker indisponível no
+      // plano/região), refaz com o conjunto mínimo que sempre funcionou, em vez de deixar a
+      // liga sem partidas.
       if (response.status === 422) {
         console.warn(`[OddsAPI] HTTP 422 para ${league.key} — repetindo com pedido mínimo (h2h,totals; pinnacle,betfair_ex_eu)`);
-        const fallbackPath = `/sports/${league.key}/odds/?bookmakers=pinnacle,betfair_ex_eu&markets=h2h,totals&oddsFormat=decimal&daysFrom=2`;
+        const fallbackPath = `/sports/${league.key}/odds/?bookmakers=pinnacle,betfair_ex_eu&markets=h2h,totals&oddsFormat=decimal`;
         response = await fetchViaOddsProxy(fallbackPath, { signal: AbortSignal.timeout(6000) });
       }
 
