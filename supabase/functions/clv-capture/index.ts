@@ -1,4 +1,13 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  normalizeMercado,
+  h2hSide,
+  isTotalsMercado,
+  isSpreadMercado,
+  isDuplaChanceMercado,
+  classifyMercado,
+  requiredMarkets,
+} from './mercado.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,10 +66,6 @@ interface CaptureResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function normalizeMercado(mercado: string): string {
-  return mercado.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
-
 /**
  * Extract the closing odd for a given mercado from the Pinnacle bookmaker data.
  */
@@ -75,23 +80,11 @@ function extractClosingOdd(
 
   const m = normalizeMercado(mercado);
 
+  // Mercados sem odd de fechamento extraível (BTTS, DNB, escanteios...) — ver mercado.ts.
+  if (classifyMercado(mercado) === 'unsupported') return null;
+
   // ---- H2H ----------------------------------------------------------------
-  const isHomeWin =
-    m.includes('vitoria casa') ||
-    m.includes('home') ||
-    m.includes('casa') ||
-    (m.includes('1x2') && m.includes('1'));
-
-  const isAwayWin =
-    m.includes('vitoria visitante') ||
-    m.includes('away') ||
-    m.includes('visitante') ||
-    (m.includes('1x2') && m.includes('2') && !m.includes('x2'));
-
-  const isDraw =
-    m.includes('empate') ||
-    m.includes('draw') ||
-    (m.includes('1x2') && m.includes('x') && !m.includes('x2') && !m.includes('1x'));
+  const { isHomeWin, isAwayWin, isDraw } = h2hSide(m);
 
   if (isHomeWin || isAwayWin || isDraw) {
     const h2h = pinnacle.markets.find((mk) => mk.key === 'h2h');
@@ -119,7 +112,7 @@ function extractClosingOdd(
   const isOver = m.includes('over') || m.includes('mais de') || m.includes('acima');
   const isUnder = m.includes('under') || m.includes('menos de') || m.includes('abaixo');
 
-  if (isOver || isUnder) {
+  if (isTotalsMercado(m)) {
     const totals = pinnacle.markets.find((mk) => mk.key === 'totals');
     if (!totals) return null;
 
@@ -152,8 +145,7 @@ function extractClosingOdd(
   }
 
   // ---- Spreads -------------------------------------------------------------
-  const isSpread = m.includes('handicap') || m.includes('spread') || m.includes('asian');
-  if (isSpread) {
+  if (isSpreadMercado(m)) {
     const spreads = pinnacle.markets.find((mk) => mk.key === 'spreads');
     if (!spreads) return null;
 
@@ -167,8 +159,7 @@ function extractClosingOdd(
   }
 
   // ---- Dupla Chance --------------------------------------------------------
-  const isDuplaChance = m.includes('dupla') || m.includes('chance');
-  if (isDuplaChance) {
+  if (isDuplaChanceMercado(m)) {
     const h2h = pinnacle.markets.find((mk) => mk.key === 'h2h');
     if (!h2h) return null;
 
@@ -215,6 +206,14 @@ function extractClosingOdd(
 // Core logic
 // ---------------------------------------------------------------------------
 
+// Estado best-effort por instância da Edge Function (o cron reaproveita o isolate; se ele
+// for reciclado a entrada só é tentada de novo, sem prejuízo de correção). Conta falhas de
+// mapeamento por entrada: a Pinnacle pode ainda não ter publicado o mercado nos primeiros
+// minutos da janela, então só desiste após MAX_UNMAPPED_ATTEMPTS tentativas seguidas.
+const MAX_UNMAPPED_ATTEMPTS = 3;
+const unmappedAttempts = new Map<string, number>();
+const gaveUp = (id: string) => (unmappedAttempts.get(id) ?? 0) >= MAX_UNMAPPED_ATTEMPTS;
+
 async function captureCLV(): Promise<{
   processed: number;
   captured: number;
@@ -248,10 +247,17 @@ async function captureCLV(): Promise<{
     throw new Error(`Failed to query clv_entries: ${queryError.message}`);
   }
 
-  const entries = (pendingEntries ?? []) as ClvEntry[];
+  const allEntries = (pendingEntries ?? []) as ClvEntry[];
+
+  // Entradas que nunca terão fechamento extraível (BTTS, DNB, escanteios...) ou que já falharam MAX_UNMAPPED_ATTEMPTS vezes no mapeamento nesta instância
+  // não justificam chamar a Odds API:
+  // continuariam aparecendo na query acima a cada 5 min pela janela inteira de 35 min.
+  const entries = allEntries.filter(
+    (e) => classifyMercado(e.mercado) !== 'unsupported' && !gaveUp(e.id),
+  );
 
   if (entries.length === 0) {
-    return { processed: 0, captured: 0, skipped: 0, errors: [] };
+    return { processed: allEntries.length, captured: 0, skipped: allEntries.length, errors: [] };
   }
 
   // 2. Group by sport_key
@@ -270,11 +276,15 @@ async function captureCLV(): Promise<{
     let oddsData: OddsApiEvent[] = [];
 
     try {
+      // Custo = 1 crédito por mercado pedido: só os que as entradas deste esporte usam
+      // (antes: sempre h2h,totals,spreads = 3 créditos por esporte por execução).
+      const markets = requiredMarkets(sportEntries.map((e) => e.mercado)).join(',');
+      if (!markets) continue;
       const url =
         `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/` +
         `?apiKey=${oddsApiKey}` +
         `&bookmakers=pinnacle` +
-        `&markets=h2h,totals,spreads` +
+        `&markets=${markets}` +
         `&oddsFormat=decimal`;
 
       const response = await fetch(url);
@@ -344,6 +354,11 @@ async function captureCLV(): Promise<{
         );
 
         if (closingOdd === null) {
+          // Pinnacle cotou o evento mas não esse mercado/desfecho. (Evento ausente e erro
+          // de rede não contam: continuam sendo tentados normalmente.)
+          if (event.bookmakers.some((b) => b.key === 'pinnacle')) {
+            unmappedAttempts.set(entry.id, (unmappedAttempts.get(entry.id) ?? 0) + 1);
+          }
           results.push({
             id: entry.id,
             match_id: entry.match_id,
@@ -355,6 +370,7 @@ async function captureCLV(): Promise<{
           continue;
         }
 
+        unmappedAttempts.delete(entry.id);
         const clvPct =
           parseFloat(
             (((entry.odd_utilizada / closingOdd) - 1) * 100).toFixed(2),
