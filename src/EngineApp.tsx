@@ -295,7 +295,7 @@ interface EngineAppProps {
 
 export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAppProps) {
   const { user, signOut } = useAuth();
-  const { profile, plan, apiKeyOwn } = useUserPlan();
+  const { profile, plan } = useUserPlan();
 
   const [bancas, setBancas] = useState<BancaDB[]>([]);
   const [activeBancaId, setActiveBancaId] = useState<string | null>(() => localStorage.getItem('evengine_active_banca_id'));
@@ -906,8 +906,6 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
     }
   });
 
-  const ODDS_API_KEY = import.meta.env.VITE_ODDS_API_KEY || '';
-
   // Migração única: apostas marcadas antes da correção não tinham payload salvo.
   // Registra os matchIds no pending_bets com payload vazio para que syncPendingBets
   // os reconstrua a partir do match/analysis quando os dados carregarem.
@@ -1039,8 +1037,9 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
     setError(null);
     try {
-      const activeApiKey = (plan === 'sharp' && apiKeyOwn) ? apiKeyOwn : ODDS_API_KEY;
-      const data = await fetchAllMatches(activeApiKey, selectedLeagues);
+      // Which key to use (platform vs the Sharp user's own) is resolved
+      // server-side by odds-proxy based on the caller's profile.
+      const data = await fetchAllMatches(selectedLeagues);
       
       const isMock = data.some(m => m._isMockData);
       setHasMockData(isMock);
@@ -2743,14 +2742,15 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
       )}
       {!isDemoMode && (() => {
         const quotaInfo = getOddsApiQuotaInfo();
-        if (!quotaInfo.errorStatus && import.meta.env.VITE_ODDS_API_KEY && import.meta.env.VITE_ODDS_API_KEY !== 'YOUR_ODDS_API_KEY') return null;
+        // A chave da Odds API agora é resolvida no servidor (odds-proxy) —
+        // o único sinal confiável no cliente é o status devolvido pelo proxy
+        // na última chamada, não mais um env var lido no browser.
+        if (!quotaInfo.errorStatus) return null;
         let motivo = "Chave de Odds ou IA (Gemini) expirada/ausente.";
         if (quotaInfo.errorStatus === '401') {
-          motivo = "A chave da Odds API retornou erro 401 (Não Autorizada/Inválida). Verifique sua chave no arquivo .env.";
+          motivo = "A chave da Odds API está ausente ou inválida no servidor. Contate o suporte.";
         } else if (quotaInfo.errorStatus === '429') {
           motivo = "A chave da Odds API retornou erro 429 (Limite de requisições excedido). Aguarde a renovação da cota.";
-        } else if (!import.meta.env.VITE_ODDS_API_KEY || import.meta.env.VITE_ODDS_API_KEY === 'YOUR_ODDS_API_KEY') {
-          motivo = "A chave VITE_ODDS_API_KEY não está configurada no seu arquivo .env.";
         }
         return (
           <div className="bg-amber-500/10 border-b border-amber-500/20 py-2.5 transition-all">

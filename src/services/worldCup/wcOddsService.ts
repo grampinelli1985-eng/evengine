@@ -4,8 +4,7 @@
  */
 
 import { WCMatch, WCTournament, WC_TOURNAMENTS } from './wcTypes';
-
-const ODDS_API_BASE = 'https://api.the-odds-api.com/v4/sports';
+import { fetchViaOddsProxy } from '../oddsProxyClient';
 
 // Mock matches para validação quando não há jogos ativos
 const WC_MOCK_MATCHES: WCMatch[] = [
@@ -151,14 +150,8 @@ const WC_MOCK_MATCHES: WCMatch[] = [
 ];
 
 export async function fetchWCMatches(
-  apiKey: string,
   tournaments?: WCTournament[]
 ): Promise<WCMatch[]> {
-  if (!apiKey || apiKey.length < 10) {
-    if (import.meta.env.DEV) console.log('[WC] API key inválida — usando mock matches para calibração');
-    return WC_MOCK_MATCHES;
-  }
-
   const keys = tournaments ?? WC_TOURNAMENTS.map(t => t.key);
   const results: WCMatch[] = [];
 
@@ -180,10 +173,15 @@ export async function fetchWCMatches(
     }
 
     try {
-      const url = `${ODDS_API_BASE}/${key}/odds/?apiKey=${apiKey}&bookmakers=pinnacle,betfair_ex_eu&markets=h2h,totals&oddsFormat=decimal&daysFrom=7`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      const path = `/sports/${key}/odds/?bookmakers=pinnacle,betfair_ex_eu&markets=h2h,totals&oddsFormat=decimal&daysFrom=7`;
+      const response = await fetchViaOddsProxy(path, { signal: AbortSignal.timeout(6000) });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          // Sem chave configurada (plataforma ou própria do usuário) — usa mock.
+          if (import.meta.env.DEV) console.log('[WC] Sem chave da Odds API — usando mock matches para calibração');
+          return WC_MOCK_MATCHES;
+        }
         if (response.status === 404) {
           // Torneio inativo: cachear como inativo para poupar créditos da API
           localStorage.setItem(cacheKey, JSON.stringify({ data: [], ts: Date.now(), inactive: true }));

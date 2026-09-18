@@ -20,8 +20,7 @@
 
 import { Match, LEAGUES } from '../types';
 import { supabase } from './supabaseClient';
-
-const ODDS_API_BASE_URL = 'https://api.the-odds-api.com/v4/sports';
+import { fetchViaOddsProxy } from './oddsProxyClient';
 
 const MOCK_MATCHES: Match[] = [
   {
@@ -302,11 +301,7 @@ async function setSharedOdds(sportKey: string, matches: Match[], ttlMs: number):
 
 // ────────────────────────────────────────────────────────────────────────────
 
-export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Promise<Match[]> {
-  if (!apiKey || apiKey === 'MY_ODDS_API_KEY') {
-    return MOCK_MATCHES;
-  }
-
+export async function fetchAllMatches(leagueKeys?: string[]): Promise<Match[]> {
   if (!leagueKeys || leagueKeys.length === 0) return [];
 
   const leaguesToFetch = LEAGUES.filter(l => leagueKeys.includes(l.key));
@@ -345,8 +340,8 @@ export async function fetchAllMatches(apiKey: string, leagueKeys?: string[]): Pr
       const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu';
       const MARKETS = 'h2h,totals';
       // [QUOTA-OPT] daysFrom: 3 → 2 (elimina jogos 3 dias adiante que raramente têm linhas sharp)
-      const url = `${ODDS_API_BASE_URL}/${league.key}/odds/?apiKey=${apiKey}&bookmakers=${SHARP_BOOKMAKERS}&markets=${MARKETS}&oddsFormat=decimal&daysFrom=2`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      const path = `/sports/${league.key}/odds/?bookmakers=${SHARP_BOOKMAKERS}&markets=${MARKETS}&oddsFormat=decimal&daysFrom=2`;
+      const response = await fetchViaOddsProxy(path, { signal: AbortSignal.timeout(6000) });
 
       if (!response.ok) {
         if (response.status === 401) {

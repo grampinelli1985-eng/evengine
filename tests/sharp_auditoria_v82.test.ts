@@ -57,6 +57,17 @@ Object.defineProperty(global, 'fetch', {
 // Setup environment variables before imports
 vi.stubEnv('VITE_ODDS_API_KEY', 'mocked_odds_api_key');
 
+// calibrationService now fetches through the authenticated odds-proxy Edge
+// Function — mock a logged-in session so fetchViaOddsProxy actually reaches
+// the (mocked) fetch instead of short-circuiting to a synthetic 401.
+vi.mock('../src/services/supabaseClient', () => ({
+  supabase: {
+    auth: {
+      getSession: async () => ({ data: { session: { access_token: 'fake-token' } } }),
+    },
+  },
+}));
+
 // Import the calibrationService. Note: Import after defining mocks so it reads them.
 import {
   registrarPrevisao,

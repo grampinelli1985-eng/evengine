@@ -1,14 +1,12 @@
 import { fetchAllMatches } from '../src/services/oddsService';
 
+// NOTE: fetchAllMatches now goes through the authenticated odds-proxy Edge
+// Function (the API key is resolved server-side), so this script only works
+// when run in a browser context with a logged-in Supabase session — it can
+// no longer run standalone under plain Node.
 async function testApi() {
-  const apiKey = process.env.VITE_ODDS_API_KEY || import.meta.env?.VITE_ODDS_API_KEY;
-  if (!apiKey || apiKey === 'MY_ODDS_API_KEY') {
-    console.log("Sem API_KEY real, abortando script de cobertura");
-    return;
-  }
-
   // Pegar algumas ligas ativas
-  const matches = await fetchAllMatches(apiKey, ['soccer_brazil_campeonato', 'soccer_epl', 'soccer_spain_la_liga']);
+  const matches = await fetchAllMatches(['soccer_brazil_campeonato', 'soccer_epl', 'soccer_spain_la_liga']);
   
   let hasPinnacle = 0;
   let onlyBetfair = 0;

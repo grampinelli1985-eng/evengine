@@ -10,6 +10,7 @@ import { hasQuota, trackRequest } from './apiQuotaService';
 import { getSportmonksTeamId, getSeasonId, getTeamXgLast5, getTeamPpdaLast5, SPORTMONKS_LEAGUE_BY_NAME } from './sportmonksService';
 import { supabase } from './supabaseClient';
 import { callGeminiProxy } from './geminiProxyClient';
+import { fetchViaOddsProxy } from './oddsProxyClient';
 
 const TEAM_ID_CACHE = new Map<string, number>();
 
@@ -50,7 +51,6 @@ function normalizarNomeTime(nome: string): string {
 }
 
 const API_BASE_URL = '/api/football';
-const ODDS_API_KEY = import.meta.env.VITE_ODDS_API_KEY;
 
 export const TEAM_NAME_MAP: Record<string, number> = {
   // Eredivisie
@@ -653,7 +653,6 @@ async function buscarResultadosRecentes(
   sportKey: string
 ): Promise<Array<{ resultado: 'W'|'D'|'L'; placar: string; adversario: string }>> {
   try {
-    if (!ODDS_API_KEY) return [];
     let jogos: any = [];
     const cacheKey = `scores_cache_${sportKey}`;
     const SCORES_CACHE_TTL = 30 * 60 * 1000;
@@ -669,8 +668,7 @@ async function buscarResultadosRecentes(
     }
 
     if (!jogos || jogos.length === 0) {
-      const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${ODDS_API_KEY}&daysFrom=3`;
-      const res = await fetch(url);
+      const res = await fetchViaOddsProxy(`/sports/${sportKey}/scores/?daysFrom=3`);
 
       if (res.status === 422) {
         console.warn(`[The Odds API] Erro 422: Janela de dias inválida para ${sportKey}.`);

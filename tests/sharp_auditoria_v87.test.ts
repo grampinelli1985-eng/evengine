@@ -1,4 +1,17 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+
+// scoutingService's Odds API fallback now goes through the authenticated
+// odds-proxy Edge Function — mock a logged-in session so fetchViaOddsProxy
+// actually reaches the (mocked) fetch instead of short-circuiting to a
+// synthetic 401.
+vi.mock('../src/services/supabaseClient', () => ({
+  supabase: {
+    auth: {
+      getSession: async () => ({ data: { session: { access_token: 'fake-token' } } }),
+    },
+  },
+}));
+
 import { fetchRealScouting } from '../src/services/scoutingService';
 import { runTipsterEngine } from '../src/services/tipsterEngine';
 

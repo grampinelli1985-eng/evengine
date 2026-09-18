@@ -59,8 +59,7 @@ export default function WorldCupView({
 
   async function loadMatches() {
     setLoading(true);
-    const apiKey = import.meta.env.VITE_ODDS_API_KEY ?? '';
-    const data = await fetchWCMatches(apiKey);
+    const data = await fetchWCMatches();
     setMatches(data);
     setLoading(false);
   }

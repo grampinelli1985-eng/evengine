@@ -44,6 +44,14 @@ import {
   analisarEquivalentesAH
 } from '../src/services/asianHandicapService';
 
+// fetchWCMatches/fetchAllMatches now go through the authenticated odds-proxy
+// Edge Function. Mock the proxy client itself (not supabaseClient — other
+// services in this file, like clvService, use the real supabase client
+// directly) so calls fall through to the mocked global fetch as before.
+vi.mock('../src/services/oddsProxyClient', () => ({
+  fetchViaOddsProxy: (path: string, init?: RequestInit) => fetch(path, init),
+}));
+
 import { fetchWCMatches } from '../src/services/worldCup/wcOddsService';
 import { fetchAllMatches } from '../src/services/oddsService';
 
@@ -295,11 +303,11 @@ describe('Auditoria Sharp Money — Economia de Créditos (Quota saving)', () =>
     );
 
     // Primeira chamada: deve chamar o fetch
-    const matches1 = await fetchWCMatches('test_api_key_valid_123', ['soccer_fifa_world_cup']);
+    const matches1 = await fetchWCMatches(['soccer_fifa_world_cup']);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     // Segunda chamada: deve usar o cache inativo e não disparar novo fetch
-    const matches2 = await fetchWCMatches('test_api_key_valid_123', ['soccer_fifa_world_cup']);
+    const matches2 = await fetchWCMatches(['soccer_fifa_world_cup']);
     expect(fetchSpy).toHaveBeenCalledTimes(1); // Continua sendo 1
     expect(matches1[0].id).toContain('wc_mock');
     expect(matches2[0].id).toContain('wc_mock');
@@ -314,7 +322,7 @@ describe('Auditoria Sharp Money — Economia de Créditos (Quota saving)', () =>
       } as any)
     );
 
-    const matches = await fetchAllMatches('test_api_key_valid_123');
+    const matches = await fetchAllMatches(['soccer_fifa_world_cup']);
     // Como a API /sports falhou e não havia cache de esportes ativos anterior,
     // o sistema aborta a busca retornando [] para evitar buscar 9 ligas às cegas
     expect(matches).toEqual([]);

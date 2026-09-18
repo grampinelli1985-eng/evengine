@@ -34,6 +34,7 @@ interface CalibracaoState {
 }
 
 import { getCachedProfile } from './planService';
+import { fetchViaOddsProxy } from './oddsProxyClient';
 
 function getScopedStorageKey(base: string): string {
   const profile = getCachedProfile();
@@ -173,12 +174,6 @@ async function fetchScoresForLeague(liga: string): Promise<any[]> {
     return [];
   }
 
-  const oddsApiKey = import.meta.env.VITE_ODDS_API_KEY || (typeof process !== 'undefined' ? process.env.VITE_ODDS_API_KEY : '');
-  if (!oddsApiKey || oddsApiKey.trim() === '' || oddsApiKey === 'YOUR_ODDS_API_KEY') {
-    console.warn('Odds API Key não configurada ou vazia. Ignorando consulta automática.');
-    return [];
-  }
-
   // Gate 1: Obter ligas monitoradas do localStorage
   let selectedLeagues: string[] = [];
   try {
@@ -211,9 +206,8 @@ async function fetchScoresForLeague(liga: string): Promise<any[]> {
 
   // Gate 3: Consumir cota da API apenas se não houver cache
   try {
-    const url = `https://api.the-odds-api.com/v4/sports/${liga}/scores/?apiKey=${oddsApiKey}&daysFrom=3`;
-    const res = await fetch(url);
-    
+    const res = await fetchViaOddsProxy(`/sports/${liga}/scores/?daysFrom=3`);
+
     if (res.status === 401) {
       console.warn(`Chave do Odds API não autorizada (${res.status}). Interrompendo chamadas subsequentes.`);
       isOddsApiUnauthorized = true;

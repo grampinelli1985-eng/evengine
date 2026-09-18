@@ -16,6 +16,8 @@
  *  - Para o polling automaticamente quando todas as partidas têm resultado
  */
 
+import { fetchViaOddsProxy } from './oddsProxyClient';
+
 const STORAGE_KEY = 'evengine_live_tracker';
 const API_BASE_URL = '/api/football';
 
@@ -319,15 +321,11 @@ const WC_LEAGUE_IDS = new Set([1, 9]); // 1=World Cup, 9=Confederations Cup / va
 async function fetchOddsApiScores(
   pending: TrackedMatch[]
 ): Promise<Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>> {
-  const oddsKey = (import.meta as any).env?.VITE_ODDS_API_KEY ?? '';
-  if (!oddsKey) return new Map();
-
   const results = new Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>();
 
   for (const sportKey of ODDS_API_SOCCER_KEYS) {
     try {
-      const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${oddsKey}&daysFrom=2`;
-      const res = await fetch(url, {
+      const res = await fetchViaOddsProxy(`/sports/${sportKey}/scores/?daysFrom=2`, {
         signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(8000) : undefined,
       });
 
