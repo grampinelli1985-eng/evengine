@@ -19,6 +19,8 @@
  *
  * Deploy: supabase functions deploy odds-proxy --no-verify-jwt
  * Secret: supabase secrets set ODDS_API_KEY=<platform key>
+ *         (falls back to the already-configured VITE_ODDS_API_KEY secret if
+ *         ODDS_API_KEY isn't set, so no new secret is required)
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -63,7 +65,7 @@ Deno.serve(async (req: Request) => {
     .eq("id", user.id)
     .single();
 
-  const platformKey = Deno.env.get("ODDS_API_KEY") ?? "";
+  const platformKey = Deno.env.get("ODDS_API_KEY") ?? Deno.env.get("VITE_ODDS_API_KEY") ?? "";
   const effectiveKey = (profile?.plan === "sharp" && profile?.api_key_own)
     ? profile.api_key_own as string
     : platformKey;
