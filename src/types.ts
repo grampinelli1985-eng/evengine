@@ -20,6 +20,19 @@ export interface Outcome {
   point?: number;
 }
 
+export interface MelhorPrecoOutcome {
+  odd: number;
+  bookmaker: string;
+  bookmakerTitle: string;
+  totalCotacoes: number;
+}
+
+export interface MelhoresPrecosH2H {
+  home: MelhorPrecoOutcome | null;
+  draw: MelhorPrecoOutcome | null;
+  away: MelhorPrecoOutcome | null;
+}
+
 export interface Market {
   key: string;
   last_update: string;
@@ -245,6 +258,7 @@ export interface AnalysisResponse {
   } | null;
 
   marketReference?: MarketReference;
+  melhoresPrecos?: MelhoresPrecosH2H;
 }
 
 export interface MarketValueBet {

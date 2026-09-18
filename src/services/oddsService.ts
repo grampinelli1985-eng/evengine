@@ -337,7 +337,14 @@ export async function fetchAllMatches(leagueKeys?: string[]): Promise<Match[]> {
 
     // 3️⃣ Cache miss total: buscar da Odds API
     try {
-      const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu';
+      // 'bet365' adicionado para permitir comparação de preço real (line
+      // shopping — ver lineShoppingService.ts) além da referência sharp
+      // Pinnacle/Betfair. NÃO CONFIRMADO ao vivo: se essa chave não existir
+      // na sua região/plano da Odds API, ela é simplesmente ignorada pela
+      // API (sem erro) e o line shopping continua funcionando só com
+      // Pinnacle/Betfair — verifique bookmakers retornados e ajuste esta
+      // lista conforme o que sua conta realmente tem acesso.
+      const SHARP_BOOKMAKERS = 'pinnacle,betfair_ex_eu,bet365';
       // spreads = handicap asiático/europeu real de mercado (substitui a
       // aproximação sintética usada antes em asianHandicapService.ts);
       // btts / draw_no_bet / alternate_totals = mercados que valueBetService.ts

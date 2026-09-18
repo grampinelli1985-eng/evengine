@@ -25,6 +25,7 @@ import { seedEloFromOdds, sanitizeEloRatings, calcularEstadoJogo, EstadoJogo, at
 import { registerOpeningOdds, detectLineMovement, getOpeningOddsForMatch, extractBetfairH2H } from './services/lineMovementService';
 import { registrarEntradaCLV, capturarOddsFechamento, corrigirEntradaCLV, sincronizarResultadoCLV, limparEntradasAntigas } from './services/clvService';
 import { analisarMatchAH } from './services/asianHandicapService';
+import { encontrarMelhoresPrecosH2H } from './services/lineShoppingService';
 import { calcularValueBets, validateReport } from './services/valueBetService';
 import { runTipsterEngine } from './services/tipsterEngine';
 import { buscarEstatisticasMedias, buscarH2H } from './services/scoutingService';
@@ -1594,6 +1595,11 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
           try {
             const ahAnalysis = analisarMatchAH(match.home_team, match.away_team, match.bookmakers || []);
             if (ahAnalysis) result.asianHandicap = ahAnalysis;
+          } catch { /* silencioso */ }
+
+          // Line shopping: melhor preço H2H entre os bookmakers retornados
+          try {
+            result.melhoresPrecos = encontrarMelhoresPrecosH2H(match.home_team, match.away_team, match.bookmakers || []);
           } catch { /* silencioso */ }
         }
       }

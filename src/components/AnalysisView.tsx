@@ -707,6 +707,34 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                   )}
                 </div>
 
+                {analysis?.melhoresPrecos && (analysis.melhoresPrecos.home || analysis.melhoresPrecos.draw || analysis.melhoresPrecos.away) && (
+                  <div className="bg-[#141416] border border-white/[0.08] rounded-[2rem] p-6">
+                    <div className="flex items-center gap-3 mb-4">
+                      <TrendingUp size={16} className="text-emerald-400/60" />
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">Melhor Preço Encontrado (H2H)</h4>
+                      <Tooltip text="Compara a odd 1X2 entre as casas de apostas retornadas pela busca (não é recomendação de mercado — use como ponto de partida para o campo de odd manual ao lado)." />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        { label: match.home_team, dado: analysis.melhoresPrecos.home },
+                        { label: 'Empate', dado: analysis.melhoresPrecos.draw },
+                        { label: match.away_team, dado: analysis.melhoresPrecos.away },
+                      ] as const).map((item, i) => (
+                        <div key={i} className="bg-white/[0.02] border border-white/5 rounded-xl p-3 flex flex-col items-center gap-1">
+                          <span className="text-[8px] font-black uppercase text-white/40 text-center leading-tight break-words">{item.label}</span>
+                          {item.dado ? (
+                            <>
+                              <span className="text-sm font-mono font-bold text-emerald-400">{item.dado.odd.toFixed(2)}</span>
+                              <span className="text-[8px] text-white/30 uppercase font-bold text-center">{item.dado.bookmakerTitle}</span>
+                            </>
+                          ) : (
+                            <span className="text-xs font-mono text-white/20">—</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {(() => {
                   const sanidade = teEngine?.sharp_context?.sanidade_odds;
