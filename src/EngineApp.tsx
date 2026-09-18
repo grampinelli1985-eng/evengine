@@ -15,7 +15,7 @@ import AnalysisView from './components/AnalysisView';
 import TicketModal from './components/TicketModal';
 import LiveNotification from './components/LiveNotification';
 import LeagueSidebar from './components/LeagueSidebar';
-import { getBanca, calculateKellyStake, carregarStopLossState, carregarStopLossStateFromDB, salvarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada, getBancaAtual, setBancaAtual, getBancasFromSupabase, addBancaToSupabase, switchActiveBanca, updateBancaBalance, BancaDB, getStopLossLimite, setStopLossLimite, podeEntrarNovaAposta, checkAndResetDaily, getStopLossAlertKey } from './services/bancaService';
+import { getBanca, calculateKellyStake, carregarStopLossState, carregarStopLossStateFromDB, salvarStopLossState, podeAumentarStake, aplicarModoConservador, registrarEntradaAprovada, getBancaAtual, setBancaAtual, getBancasFromSupabase, addBancaToSupabase, switchActiveBanca, updateBancaBalance, BancaDB, getStopLossLimite, setStopLossLimite, podeEntrarNovaAposta, checkAndResetDaily, getStopLossAlertKey, calcularFatorCorrelacao } from './services/bancaService';
 import { fetchBets, fetchAnalysisByMatchId, saveAnalysis, createBet, autoResolveBetFromLiveResult } from './services/betService';
 import { Trophy, Filter, RefreshCw, Search, AlertCircle, TrendingUp, Ticket, Menu, X, Zap, Flame, Shield, Activity, Crown, Star, Sun, Compass, Award, Home, BookOpen, ShieldOff, AlertTriangle, LogOut, FileText, CheckCircle, Eye, EyeOff, Users, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1430,12 +1430,14 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
       // Buscar histórico para aplicar proteções
       let pendentesCount = 0;
+      let pendentesParaCorrelacao: Awaited<ReturnType<typeof fetchBets>> = [];
       let stakeAnterior: number | null = null;
       if (user) {
         try {
           const pendentes = await fetchBets({ status: 'pending' });
           pendentesCount = pendentes.length;
-          
+          pendentesParaCorrelacao = pendentes;
+
           const resolvidas = await fetchBets({ status: 'resolved' });
           if (resolvidas.length > 0) {
             stakeAnterior = resolvidas[0].stake_amount || null;
@@ -1451,6 +1453,18 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         console.warn(`[Proteção de Capital] Stake cap aplicada: R$ ${kellyReaisValue} (aguardando 2 wins)`);
       }
       kellyReaisValue = aplicarModoConservador(kellyReaisValue);
+
+      // [PORTFOLIO-KELLY] Desconta o stake quando já há entradas pendentes
+      // correlacionadas (mesma liga ou mesmo time) — cada stake até aqui era
+      // dimensionada como se fosse 100% independente das outras do dia.
+      const correlacao = calcularFatorCorrelacao(
+        { liga: match.sport_title || match.sport_key, homeTeam: match.home_team, awayTeam: match.away_team },
+        pendentesParaCorrelacao
+      );
+      if (correlacao.fator < 1) {
+        kellyReaisValue = kellyReaisValue * correlacao.fator;
+        console.warn(`[Portfolio Kelly] ${correlacao.motivo}`);
+      }
 
       const kellyPercentualValue = parseFloat(
         Math.min((kellyReaisValue / bancaAtualTotal) * 100, 3).toFixed(2)

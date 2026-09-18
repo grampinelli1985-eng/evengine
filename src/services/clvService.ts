@@ -291,6 +291,48 @@ export function getCLVSummary(): CLVSummary {
   };
 }
 
+export interface CLVScoreLiga {
+  fator: number;        // multiplicador de confiança (1.0 = neutro)
+  amostras: number;
+  clvMedio: number;
+  motivo: string | null;
+}
+
+/**
+ * [CLV-GATE] Até aqui, CLV era só métrica de dashboard — nunca retroalimentava
+ * a confiança de novas entradas. Times sharp de verdade usam CLV negativo
+ * persistente numa liga/mercado como sinal de que o próprio modelo/timing de
+ * execução está com problema ali, e reduzem a confiança automaticamente até
+ * o quadro melhorar. Requer amostra mínima (10, mesmo piso usado em
+ * `isSharp`) para não penalizar por ruído de poucas entradas.
+ */
+export function getCLVScorePorLiga(sportKey: string, mercado?: string): CLVScoreLiga {
+  const entries = loadEntries().filter(e =>
+    e.sportKey === sportKey &&
+    e.clvPct !== null &&
+    e.resultado !== 'PENDENTE' &&
+    (mercado ? e.mercado === mercado : true)
+  );
+
+  if (entries.length < 10) {
+    return { fator: 1.0, amostras: entries.length, clvMedio: 0, motivo: null };
+  }
+
+  const clvMedio = parseFloat((entries.reduce((s, e) => s + (e.clvPct ?? 0), 0) / entries.length).toFixed(2));
+
+  let fator = 1.0;
+  let motivo: string | null = null;
+  if (clvMedio < -3) {
+    fator = 0.7;
+    motivo = `CLV médio ${clvMedio}% nesta liga nas últimas ${entries.length} entradas — confiança reduzida (histórico de comprar pior que o fechamento)`;
+  } else if (clvMedio < -1) {
+    fator = 0.85;
+    motivo = `CLV médio ${clvMedio}% nesta liga nas últimas ${entries.length} entradas — confiança levemente reduzida`;
+  }
+
+  return { fator, amostras: entries.length, clvMedio, motivo };
+}
+
 export function limparEntradasAntigas(): void {
   const CUTOFF_90D = Date.now() - 90 * 24 * 60 * 60 * 1000;
   // Jogo encerrado: kickoff + 3h já passou

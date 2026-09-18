@@ -354,6 +354,58 @@ export function podeEntrarNovaAposta(pendentesCount?: number): boolean {
   return true;
 }
 
+export interface PendenteParaCorrelacao {
+  analyses?: {
+    league?: string | null;
+    home_team?: string | null;
+    away_team?: string | null;
+  } | null;
+}
+
+/**
+ * [PORTFOLIO-KELLY] Cada stake hoje é dimensionada pelo Kelly como se fosse
+ * 100% independente das outras entradas pendentes do dia — mas duas entradas
+ * na mesma liga (ou envolvendo o mesmo time em jogos diferentes) carregam
+ * risco correlacionado real (ex: um cartão vermelho polêmico, clima, decisão
+ * de arbitragem que afeta o campeonato inteiro). Aplica um desconto simples
+ * e explicável no stake em vez de tratar cada entrada como isolada.
+ *
+ * Contagem de correlação = pendentes com a mesma liga OU mesmo time (casa ou
+ * fora) do novo confronto. Desconto: 0 correlacionadas → 1.0x; 1 → 0.7x;
+ * ≥2 → 0.5x.
+ */
+export function calcularFatorCorrelacao(
+  novaEntrada: { liga: string; homeTeam: string; awayTeam: string },
+  pendentes: PendenteParaCorrelacao[]
+): { fator: number; correlacionadas: number; motivo: string | null } {
+  const norm = (s: string | null | undefined) => (s || '').trim().toLowerCase();
+  const liga = norm(novaEntrada.liga);
+  const home = norm(novaEntrada.homeTeam);
+  const away = norm(novaEntrada.awayTeam);
+
+  const correlacionadas = pendentes.filter(p => {
+    const a = p.analyses;
+    if (!a) return false;
+    const mesmaLiga = liga && norm(a.league) === liga;
+    const mesmoTime =
+      (home && (norm(a.home_team) === home || norm(a.away_team) === home)) ||
+      (away && (norm(a.home_team) === away || norm(a.away_team) === away));
+    return mesmaLiga || mesmoTime;
+  }).length;
+
+  let fator = 1.0;
+  let motivo: string | null = null;
+  if (correlacionadas >= 2) {
+    fator = 0.5;
+    motivo = `${correlacionadas} entradas pendentes correlacionadas (mesma liga/time) — stake reduzido em 50%`;
+  } else if (correlacionadas === 1) {
+    fator = 0.7;
+    motivo = '1 entrada pendente correlacionada (mesma liga/time) — stake reduzido em 30%';
+  }
+
+  return { fator, correlacionadas, motivo };
+}
+
 export function dispararAlertaStopLoss(streak: number): void {
   localStorage.setItem(getStopLossAlertKey(), 'false');
   window.dispatchEvent(new CustomEvent('evengine_stop_loss_alert_trigger', { detail: { streak } }));

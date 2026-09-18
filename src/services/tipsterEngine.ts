@@ -1,5 +1,6 @@
 import { callGeminiAPI } from './geminiService';
 import { podeEntrarNovaAposta, carregarStopLossState, getEstadoProtecao, limiteEntradasAtingido } from './bancaService';
+import { getCLVScorePorLiga } from './clvService';
 
 const SYSTEM_PROMPT = `Você é GATE V2.0 — SHARP DECISION ENGINE, o módulo de decisão final do EVEngine.
 Seu papel é proteger o capital do usuário emitindo decisões matemáticas precisas e fundamentadas.
@@ -27,6 +28,7 @@ REGRAS DE VALIDAÇÃO (Etapas 1 a 5)
      - Playoff Game 2 (Leg 1 0-0): +5pp no EV visitante
      - Elo em calibração: -2pp confiança
      - H2H não verificado: -1pp confiança
+     - CLV historicamente negativo na liga (amostra >= 10): -2pp a -4pp confiança
 
 4. CÓDIGOS DE BLOQUEIO ABSOLUTOS:
    - [B-EV]    -> EV do mercado selecionado abaixo de +3%
@@ -1033,6 +1035,16 @@ export async function runTipsterEngine(
     const isEloCalibrated = eloCalibradoFlag !== undefined ? eloCalibradoFlag : true;
     const h2hVerificado = analysis.h2h?.fonte === 'api_football' || analysis.h2h?.fonte === 'api-football' || analysis.h2h?.fonte === 'gemini_factual';
 
+    // [CLV-GATE] CLV historicamente negativo nesta liga (amostra >= 10) reduz
+    // a confiança — sinal de que a execução/timing do sistema vem perdendo
+    // linha ali, não só um relatório para consultar depois no dashboard.
+    const clvLigaScore = analysis?.matchData?.sport_key
+      ? getCLVScorePorLiga(analysis.matchData.sport_key)
+      : null;
+    const clvPenalidade = clvLigaScore && clvLigaScore.fator < 1
+      ? (clvLigaScore.fator <= 0.7 ? 4 : 2)
+      : 0;
+
     // Calcule a confiança base e ajustada do jogo (ETAPA 3 — CONTEXTO SHARP)
     const baseConfianca = confianca;
     let adjustedConfianca = baseConfianca;
@@ -1041,6 +1053,9 @@ export async function runTipsterEngine(
     }
     if (!h2hVerificado) {
       adjustedConfianca -= 1;
+    }
+    if (clvPenalidade > 0) {
+      adjustedConfianca -= clvPenalidade;
     }
     adjustedConfianca = Math.max(0, Math.min(100, adjustedConfianca));
 
