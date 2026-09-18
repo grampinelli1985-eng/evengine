@@ -186,6 +186,7 @@ export interface AnalysisResponse {
     media_home?: number;
     media_away?: number;
     fonte?: string;
+    confiavel?: boolean;
   };
   finalizacoes: {
     faixa_esperada?: string;
@@ -196,6 +197,7 @@ export interface AnalysisResponse {
     media_home?: number;
     media_away?: number;
     fonte?: string;
+    confiavel?: boolean;
   };
   dupla_chance: {
     "1X": DoubleChanceAnalysis;

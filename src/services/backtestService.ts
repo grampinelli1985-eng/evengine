@@ -299,12 +299,17 @@ export function gerarRelatorioBacktest(): BacktestReport {
       : 0;
 
   // ROI realizado: from actual GREEN/RED results (not VOID)
-  // 1 unit per bet, profit = (oddFechamento - 1) if GREEN else -1
+  // 1 unit per bet, profit = (oddPinnacle - 1) if GREEN else -1.
+  // Uses oddPinnacle (the price available at analysis/signal time), NOT
+  // oddFechamento (closing price) — a bettor can only ever get the price
+  // that existed when they placed the bet. Using the closing price here
+  // would silently fold the system's own CLV into "realized" ROI, inflating
+  // it by exactly the edge CLV is supposed to measure separately.
   const bettingResults = withResults.filter((e) => e.resultado !== 'VOID');
   let sumRealProfit = 0;
   for (const e of bettingResults) {
     if (e.resultado === 'GREEN') {
-      const odd = e.oddFechamento ?? e.fairOdd;
+      const odd = e.oddPinnacle ?? e.fairOdd;
       sumRealProfit += odd - 1;
     } else {
       sumRealProfit -= 1;
@@ -360,7 +365,9 @@ export function gerarRelatorioBacktest(): BacktestReport {
 
     if (entry.resultado === 'GREEN') {
       existing.wins++;
-      const odd = entry.oddFechamento ?? entry.fairOdd;
+      // Realized ROI uses the entry-time price (oddPinnacle), not the
+      // closing price — see gerarRelatorioBacktest() for why.
+      const odd = entry.oddPinnacle ?? entry.fairOdd;
       existing.sumROI += odd - 1;
     } else if (entry.resultado === 'RED') {
       existing.losses++;

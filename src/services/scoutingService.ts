@@ -894,6 +894,21 @@ Retorne APENAS o JSON.`;
     };
   }
 
+  // Não há hoje nenhuma fonte de mercado real para escanteios/finalizações
+  // (Sportmonks só cobre xG/PPDA) — todo valor aqui é estimado pela IA ou um
+  // fallback estático. Embute fonte/confiavel DENTRO de cada sub-objeto (não
+  // só no nível raiz de baseResult) porque EngineApp.tsx faz
+  // `result.escanteios = statsMedias?.escanteios` — pegando só o sub-objeto —
+  // então um marcador apenas no nível raiz se perderia nesse merge.
+  if (baseResult.escanteios) {
+    baseResult.escanteios.fonte = baseResult.fonte;
+    baseResult.escanteios.confiavel = baseResult.confiavel;
+  }
+  if (baseResult.finalizacoes) {
+    baseResult.finalizacoes.fonte = baseResult.fonte;
+    baseResult.finalizacoes.confiavel = baseResult.confiavel;
+  }
+
   let xg_home_last5: number | null = null;
   let xg_away_last5: number | null = null;
   let ppda_home: number | null = null;

@@ -409,7 +409,7 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
       exige: 'Δ ≤ 15pp',
       bloqueante: false
     },
-    confianca: { valor: `${confExibido}%`, passa: confExibido >= 65, label: 'CONFIANÇA IA', exige: '≥ 65%', bloqueante: false },
+    confianca: { valor: `${confExibido}%`, passa: confExibido >= limiarConfianca, label: 'CONFIANÇA IA', exige: `≥ ${limiarConfianca}%`, bloqueante: false },
     tier: { valor: tierExibido, passa: ['A', 'B'].includes(tierExibido), label: 'TIER LIGA', exige: 'A ou B', bloqueante: true },
     tipoAposta: { valor: 'Simples', passa: true, label: 'TIPO APOSTA', exige: 'Simples/Dupla', bloqueante: false },
     clv: { valor: teEngine?.clv?.sinal || 'N/D', passa: teEngine?.clv?.sinal !== 'NEGATIVO', label: 'SINAL CLV', exige: 'POS/NEUTRO', bloqueante: false },
@@ -1505,6 +1505,12 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                       <Flag size={16} className="text-white/20" />
                       <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Escanteios</h4>
                       <Tooltip text="Estimativa baseada no volume de finalizações, cruzamentos e estilo tático de jogo das duas equipes." />
+                      {analysis?.escanteios?.confiavel === false && (
+                        <span className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider text-amber-400/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full ml-auto">
+                          <AlertTriangle size={9} />
+                          Estimativa não verificada
+                        </span>
+                      )}
                     </div>
                     {(() => {
                       const escMin = analysis?.escanteios?.total_min ?? 9;
@@ -1546,6 +1552,12 @@ export default function AnalysisView({ match, analysis, loading, onClose }: Anal
                       <Activity size={16} className="text-white/20" />
                       <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">Finalizações</h4>
                       <Tooltip text="Projeção de chutes a gol baseada no aproveitamento ofensivo e histórico de chances criadas nas últimas 5 partidas." />
+                      {analysis?.finalizacoes?.confiavel === false && (
+                        <span className="flex items-center gap-1 text-[8px] font-black uppercase tracking-wider text-amber-400/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full ml-auto">
+                          <AlertTriangle size={9} />
+                          Estimativa não verificada
+                        </span>
+                      )}
                     </div>
                     {(() => {
                       const finMin = analysis?.finalizacoes?.total_min ?? 24;

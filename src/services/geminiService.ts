@@ -319,6 +319,19 @@ ${mustWinText ? mustWinText + '\n' : ''}${weatherText ? weatherText + '\n' : ''}
   analysis = sanitizeMarketConsistency(analysis);
   analysis = validateEscanteiosFinal(analysis);
 
+  // Não existe hoje nenhuma fonte de mercado real para escanteios/finalizações
+  // — mesmo vindo direto do schema principal, é estimativa da IA. Marcar
+  // fonte/confiavel aqui (se buscarEstatisticasMedias não sobrescrever depois)
+  // permite à UI avisar que não é um dado verificado.
+  if (analysis.escanteios && analysis.escanteios.confiavel === undefined) {
+    analysis.escanteios.fonte = 'gemini_inferido';
+    analysis.escanteios.confiavel = false;
+  }
+  if (analysis.finalizacoes && analysis.finalizacoes.confiavel === undefined) {
+    analysis.finalizacoes.fonte = 'gemini_inferido';
+    analysis.finalizacoes.confiavel = false;
+  }
+
   // Sobrescrever com modelos reais
   analysis.scouting = scouting;
   analysis.scouting.desfalques = homeInjuries;
