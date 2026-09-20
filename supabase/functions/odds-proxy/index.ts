@@ -18,9 +18,10 @@
  * data, so no new status code is needed.
  *
  * Deploy: supabase functions deploy odds-proxy --no-verify-jwt
- * Secret: supabase secrets set ODDS_API_KEY=<platform key>
- *         (falls back to the already-configured VITE_ODDS_API_KEY secret if
- *         ODDS_API_KEY isn't set, so no new secret is required)
+ * Platform key, in priority order:
+ *   1. platform_secrets.ODDS_API_KEY — set from the app by an admin (set-odds-key)
+ *   2. supabase secrets set ODDS_API_KEY=<platform key>
+ *   3. the already-configured VITE_ODDS_API_KEY secret
  *
  * Key rotation: every response carries `x-odds-key-id` (truncated SHA-256 of the
  * key actually used). oddsProxyClient compares it with the last one it saw and
@@ -80,14 +81,20 @@ Deno.serve(async (req: Request) => {
   }
 
   const adminClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
-  const { data: profile } = await adminClient
-    .from("profiles")
-    .select("plan, api_key_own")
-    .eq("id", user.id)
-    .single();
+  const [{ data: profile }, { data: stored }] = await Promise.all([
+    adminClient.from("profiles").select("plan, api_key_own").eq("id", user.id).single(),
+    // Chave trocada pelo app (set-odds-key) tem prioridade sobre o secret do Supabase.
+    // Se a tabela não existir/falhar, `stored` fica null e cai no secret.
+    adminClient.from("platform_secrets").select("value").eq("name", "ODDS_API_KEY").maybeSingle(),
+  ]);
 
   // trim: um secret colado com \n/espaço ao final faria a Odds API responder 401.
-  const platformKey = (Deno.env.get("ODDS_API_KEY") || Deno.env.get("VITE_ODDS_API_KEY") || "").trim();
+  const platformKey = (
+    (stored?.value as string | undefined) ||
+    Deno.env.get("ODDS_API_KEY") ||
+    Deno.env.get("VITE_ODDS_API_KEY") ||
+    ""
+  ).trim();
   const effectiveKey = (profile?.plan === "sharp" && profile?.api_key_own)
     ? profile.api_key_own as string
     : platformKey;

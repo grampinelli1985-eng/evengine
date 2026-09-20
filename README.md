@@ -32,10 +32,16 @@ Certifique-se de ter as chaves configuradas no arquivo `.env` da raiz:
 
 ## 🔑 Rotação da chave da Odds API
 
-Em produção **toda** chamada à Odds API passa pela Edge Function `odds-proxy`, que lê a chave do **secret do Supabase** (não de uma env var da Vercel):
+Em produção **toda** chamada à Odds API passa pela Edge Function `odds-proxy`. Ela **não** lê env vars da Vercel. A chave da plataforma vem, em ordem de prioridade, de:
 
-```bash
-supabase secrets set ODDS_API_KEY=<nova chave>
+1. **Tabela `platform_secrets`** (`ODDS_API_KEY`) — gravada pelo próprio app. Quando a cota acaba ou a chave falha, o banner de demonstração mostra um campo "Nova chave da Odds API" **apenas para admins** (`profiles.is_admin = true`). A Edge Function `set-odds-key` testa a chave na Odds API (endpoint gratuito `/sports`), exige que ela seja aceita **e** tenha créditos, e só então grava. Vale já na próxima chamada, sem redeploy. A tabela só é acessível pelo service role (RLS sem policies e sem grants para o navegador).
+2. Secret do Supabase: `supabase secrets set ODDS_API_KEY=<nova chave>`.
+3. Secret `VITE_ODDS_API_KEY` do Supabase (legado).
+
+Para tornar alguém admin (só via SQL/service role — o trigger `protect_profile_admin_flag` impede que um usuário se promova):
+
+```sql
+update public.profiles set is_admin = true where email = '<email>';
 ```
 
 O proxy devolve `x-odds-key-id` (SHA-256 truncado da chave em uso). O cliente (`oddsProxyClient.ts`) compara com o último id visto e, se mudou, descarta o estado da chave antiga (flag de erro 401/429 e cota restante) — não é preciso limpar cache manualmente. Caches de odds/placares são dados públicos e não dependem da chave.

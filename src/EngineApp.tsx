@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Match, LEAGUES, AnalysisResponse } from './types';
 import { fetchAllMatches, getOddsApiQuotaInfo, fetchActiveMatches, syncApiEplFixtureToMatch, syncApiFootballFixtureToMatch, carregarLigasUsuario } from './services/oddsService';
 import { OUT_OF_CREDITS_STATUS } from './services/oddsApiErrors';
+import AdminOddsKeyForm from './components/AdminOddsKeyForm';
 import { analyzeMatch } from './services/geminiService';
 import { supabase } from './services/supabaseClient';
 import { updateMatchResultInSupabase, resetGeminiCallCounter, getGeminiCallCount } from './services/telemetryService';
@@ -2800,6 +2801,7 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
               >
                 Limpar Cache e Recarregar
               </button>
+              {profile?.is_admin && <AdminOddsKeyForm />}
             </div>
           </div>
         );

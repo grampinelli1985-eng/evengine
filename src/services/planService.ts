@@ -9,6 +9,8 @@ export interface UserProfile {
   analyses_reset_at: string;
   api_key_own: string | null;
   created_at: string;
+  /** Só a UI usa (mostrar o campo de troca de chave); quem manda é o set-odds-key no servidor. */
+  is_admin?: boolean;
 }
 
 let currentProfile: UserProfile | null = null;
