@@ -23,12 +23,22 @@ Se rodar só `npm run dev`, as chamadas H2H falharão com CORS.
 ## 📋 Pré-requisitos (.env)
 
 Certifique-se de ter as chaves configuradas no arquivo `.env` da raiz:
-- `VITE_ODDS_API_KEY`
+- `ODDS_API_KEY` (e `VITE_ODDS_API_KEY` como fallback local — veja "Rotação da chave da Odds API" abaixo)
 - `VITE_GEMINI_API_KEY`
 - `API_FOOTBALL_KEY` (Sem o prefixo VITE_ por segurança)
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 - `VITE_DEBUG_ENGINE` (Use `true` em ambiente local para visualizar os logs de payload no console)
+
+## 🔑 Rotação da chave da Odds API
+
+Em produção **toda** chamada à Odds API passa pela Edge Function `odds-proxy`, que lê a chave do **secret do Supabase** (não de uma env var da Vercel):
+
+```bash
+supabase secrets set ODDS_API_KEY=<nova chave>
+```
+
+O proxy devolve `x-odds-key-id` (SHA-256 truncado da chave em uso). O cliente (`oddsProxyClient.ts`) compara com o último id visto e, se mudou, descarta o estado da chave antiga (flag de erro 401/429 e cota restante) — não é preciso limpar cache manualmente. Caches de odds/placares são dados públicos e não dependem da chave.
 
 ## 🧠 Arquitetura DecisaoEngine (Gate v2.0)
 

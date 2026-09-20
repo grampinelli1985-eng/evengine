@@ -21,6 +21,11 @@
  * Secret: supabase secrets set ODDS_API_KEY=<platform key>
  *         (falls back to the already-configured VITE_ODDS_API_KEY secret if
  *         ODDS_API_KEY isn't set, so no new secret is required)
+ *
+ * Key rotation: every response carries `x-odds-key-id` (truncated SHA-256 of the
+ * key actually used). oddsProxyClient compares it with the last one it saw and
+ * clears stale per-key state when it changes, so swapping the secret needs no
+ * manual cache clearing on the client.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -28,9 +33,25 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  // Sem isso o browser esconde os headers customizados de cross-origin e o cliente
+  // nunca enxerga a cota restante nem o id da chave.
+  "Access-Control-Expose-Headers": "x-requests-remaining, x-requests-used, x-odds-key-id",
 };
 
 const UPSTREAM_BASE = "https://api.the-odds-api.com/v4";
+
+/**
+ * Identificador não reversível da chave em uso (12 primeiros hex do SHA-256). Deixa o
+ * cliente perceber que a chave foi trocada (secret rotacionado) e descartar o estado
+ * da chave antiga (flag 401/429, cota restante) sem que a chave saia do servidor.
+ */
+async function keyFingerprint(key: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 6)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -65,7 +86,8 @@ Deno.serve(async (req: Request) => {
     .eq("id", user.id)
     .single();
 
-  const platformKey = Deno.env.get("ODDS_API_KEY") ?? Deno.env.get("VITE_ODDS_API_KEY") ?? "";
+  // trim: um secret colado com \n/espaço ao final faria a Odds API responder 401.
+  const platformKey = (Deno.env.get("ODDS_API_KEY") || Deno.env.get("VITE_ODDS_API_KEY") || "").trim();
   const effectiveKey = (profile?.plan === "sharp" && profile?.api_key_own)
     ? profile.api_key_own as string
     : platformKey;
@@ -95,6 +117,7 @@ Deno.serve(async (req: Request) => {
         "Content-Type": upstreamRes.headers.get("content-type") ?? "application/json",
         "x-requests-remaining": upstreamRes.headers.get("x-requests-remaining") ?? "",
         "x-requests-used": upstreamRes.headers.get("x-requests-used") ?? "",
+        "x-odds-key-id": await keyFingerprint(effectiveKey),
       },
     });
   } catch (err) {
