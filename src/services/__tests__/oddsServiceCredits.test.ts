@@ -40,6 +40,24 @@ beforeEach(() => {
   store.clear();
 });
 
+describe('oddsService — 401 da Odds API', () => {
+  const quotaBody = { message: 'Usage quota has been reached.', error_code: 'OUT_OF_USAGE_CREDITS' };
+
+  it('401 OUT_OF_USAGE_CREDITS: marca "cota esgotada", não "chave inválida"', async () => {
+    route({ events: [event('1', 10)], odds: new Response(JSON.stringify(quotaBody), { status: 401 }) });
+    await fetchAllMatches(['soccer_epl']);
+
+    expect(store.get('odds_api_error_status')).toBe('OUT_OF_USAGE_CREDITS');
+  });
+
+  it('401 sem esse error_code: continua sendo chave inválida', async () => {
+    route({ events: [event('1', 10)], odds: new Response(JSON.stringify({ error_code: 'INVALID_KEY' }), { status: 401 }) });
+    await fetchAllMatches(['soccer_epl']);
+
+    expect(store.get('odds_api_error_status')).toBe('401');
+  });
+});
+
 describe('oddsService — economia de créditos', () => {
   it('liga SEM jogo em 7 dias: não chama /odds (0 créditos) e devolve vazio', async () => {
     route({ events: [event('1', 24 * 25)] }); // próximo jogo em 25 dias (ex.: Champions em pausa)

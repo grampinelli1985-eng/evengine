@@ -10,12 +10,13 @@
  * usuário: uma chave só, e o vazio também é cacheado.
  */
 import { fetchViaOddsProxy } from './oddsProxyClient';
+import { isOutOfCredits } from './oddsApiErrors';
 
 export const SCORES_CACHE_TTL_MS = 30 * 60 * 1000;
 /** /scores?daysFrom=3 só devolve jogos das últimas 72h. */
 export const SCORES_LOOKBACK_MS = 72 * 60 * 60 * 1000;
 
-export type ScoresStatus = 'cache' | 'ok' | 'unauthorized' | 'rate_limited' | 'unprocessable' | 'error';
+export type ScoresStatus = 'cache' | 'ok' | 'unauthorized' | 'out_of_credits' | 'rate_limited' | 'unprocessable' | 'error';
 
 export interface ScoresResult {
   games: any[];
@@ -55,7 +56,9 @@ export function fetchScoresCached(sportKey: string): Promise<ScoresResult> {
   const run = (async (): Promise<ScoresResult> => {
     try {
       const res = await fetchViaOddsProxy(`/sports/${sportKey}/scores/?daysFrom=3`);
-      if (res.status === 401) return { games: [], status: 'unauthorized' };
+      if (res.status === 401) {
+        return { games: [], status: (await isOutOfCredits(res)) ? 'out_of_credits' : 'unauthorized' };
+      }
       if (res.status === 429) return { games: [], status: 'rate_limited' };
       if (res.status === 422) return { games: [], status: 'unprocessable' };
       if (!res.ok) return { games: [], status: 'error' };

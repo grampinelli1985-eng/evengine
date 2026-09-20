@@ -6,6 +6,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Match, LEAGUES, AnalysisResponse } from './types';
 import { fetchAllMatches, getOddsApiQuotaInfo, fetchActiveMatches, syncApiEplFixtureToMatch, syncApiFootballFixtureToMatch, carregarLigasUsuario } from './services/oddsService';
+import { OUT_OF_CREDITS_STATUS } from './services/oddsApiErrors';
 import { analyzeMatch } from './services/geminiService';
 import { supabase } from './services/supabaseClient';
 import { updateMatchResultInSupabase, resetGeminiCallCounter, getGeminiCallCount } from './services/telemetryService';
@@ -2772,6 +2773,8 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         let motivo = "Chave de Odds ou IA (Gemini) expirada/ausente.";
         if (quotaInfo.errorStatus === '401') {
           motivo = "A chave da Odds API está ausente ou inválida no servidor. Contate o suporte.";
+        } else if (quotaInfo.errorStatus === OUT_OF_CREDITS_STATUS) {
+          motivo = "A cota de créditos da Odds API acabou (a chave é válida). Aguarde a renovação da cota ou troque por uma chave com créditos.";
         } else if (quotaInfo.errorStatus === '429') {
           motivo = "A chave da Odds API retornou erro 429 (Limite de requisições excedido). Aguarde a renovação da cota.";
         }

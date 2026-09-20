@@ -21,6 +21,7 @@
 import { Match, LEAGUES } from '../types';
 import { supabase } from './supabaseClient';
 import { fetchViaOddsProxy } from './oddsProxyClient';
+import { isOutOfCredits, OUT_OF_CREDITS_STATUS } from './oddsApiErrors';
 
 const MOCK_MATCHES: Match[] = [
   {
@@ -424,11 +425,13 @@ export async function fetchAllMatches(leagueKeys?: string[]): Promise<Match[]> {
 
       if (!response.ok) {
         if (response.status === 401) {
-          lsSet('odds_api_error_status', '401');
+          // 401 da Odds API também significa "créditos esgotados": a chave é válida.
+          const outOfCredits = await isOutOfCredits(response);
+          lsSet('odds_api_error_status', outOfCredits ? OUT_OF_CREDITS_STATUS : '401');
           // Limpar valores stale de sessão anterior para que o banner apareça
           lsRemove('odds_api_remaining');
           lsRemove('odds_api_used');
-          throw new Error('API_KEY_INVALID');
+          throw new Error(outOfCredits ? 'QUOTA_EXCEEDED' : 'API_KEY_INVALID');
         }
         if (response.status === 429) {
           lsSet('odds_api_error_status', '429');

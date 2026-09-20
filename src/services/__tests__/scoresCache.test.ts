@@ -84,6 +84,18 @@ describe('scoresCache', () => {
     expect(proxy).toHaveBeenCalledTimes(2);
   });
 
+  it('401 com error_code OUT_OF_USAGE_CREDITS -> out_of_credits (chave válida, cota zerada) e NÃO cacheia', async () => {
+    proxy.mockImplementation(async () => new Response(
+      JSON.stringify({ message: 'Usage quota has been reached.', error_code: 'OUT_OF_USAGE_CREDITS' }),
+      { status: 401 },
+    ));
+    const r = await fetchScoresCached('soccer_epl');
+    expect(r).toEqual({ games: [], status: 'out_of_credits' });
+
+    await fetchScoresCached('soccer_epl');
+    expect(proxy).toHaveBeenCalledTimes(2);
+  });
+
   it('corpo que não é array não é cacheado', async () => {
     proxy.mockResolvedValue(ok({ message: 'oops' }));
     const r = await fetchScoresCached('soccer_epl');

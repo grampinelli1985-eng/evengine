@@ -199,6 +199,9 @@ async function fetchScoresForLeague(liga: string): Promise<any[]> {
   if (status === 'unauthorized') {
     console.warn('Chave do Odds API não autorizada (401). Interrompendo chamadas subsequentes.');
     isOddsApiUnauthorized = true;
+  } else if (status === 'out_of_credits') {
+    console.warn('Créditos da Odds API esgotados (a chave é válida). Interrompendo chamadas subsequentes.');
+    isOddsApiUnauthorized = true;
   } else if (status === 'rate_limited') {
     console.warn('Limite de requisições atingido na Odds API (429). Interrompendo consulta.');
   }
