@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient';
 import { registrarResultadoDiario, registrarResultado, getBancaAtual, setBancaAtual, getBancasFromSupabase, updateBancaBalance } from './bancaService';
+import { sincronizarResultadoCLV } from './clvService';
 
 async function adjustBancaBy(delta: number): Promise<void> {
   const current = getBancaAtual();
@@ -351,6 +352,15 @@ export async function resolveBet(
 }
 
 /**
+ * matchId (id do jogo na Odds API) gravado nas notes como "| matchId:<id>". É a única
+ * ligação entre a aposta e o jogo: as apostas do gate nascem com analysis_id = null.
+ */
+export function extractMatchId(notes: string | null): string | null {
+  const m = notes?.match(/matchId:([^\s|]+)/);
+  return m ? m[1] : null;
+}
+
+/**
  * Extrai metadados sharp embutidos no campo notes da aposta.
  */
 export function extractSharpMeta(notes: string | null): { opening_odd?: number; betfair_odd?: number } {
@@ -556,6 +566,16 @@ export async function autoResolveBetFromLiveResult(params: {
       });
 
       if (result) resolved++;
+
+      // Sem isto o painel de CLV nunca vê o resultado das apostas auto-resolvidas (só a
+      // resolução manual sincronizava). Nunca lança: a aposta já está resolvida.
+      if (result && (result.status === 'green' || result.status === 'red')) {
+        await sincronizarResultadoCLV(
+          params.matchId,
+          result.status === 'green' ? 'GREEN' : 'RED',
+          bet.market
+        ).catch(e => console.warn('[BetService] Falha ao sincronizar CLV após auto-resolve:', e));
+      }
     }
 
     return resolved;

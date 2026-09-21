@@ -251,9 +251,20 @@ export function capturarOddsFechamento(matchesAtivos: Match[]): void {
   }
 }
 
-export function atualizarResultadoCLV(matchId: string, resultado: 'GREEN' | 'RED' | 'VOID'): void {
+/**
+ * Entrada CLV de um jogo. Com `mercado`, prefere a entrada exata (jogo + mercado); sem
+ * casar, só aceita o fallback por jogo se houver uma única entrada para ele — com várias,
+ * escolher a primeira poderia gravar o resultado no mercado errado.
+ */
+function findEntryFor(entries: CLVEntry[], matchId: string, mercado?: string): CLVEntry | undefined {
+  const byMatch = entries.filter(e => e.matchId === matchId);
+  if (!mercado) return byMatch[0];
+  return byMatch.find(e => e.mercado === mercado) ?? (byMatch.length === 1 ? byMatch[0] : undefined);
+}
+
+export function atualizarResultadoCLV(matchId: string, resultado: 'GREEN' | 'RED' | 'VOID', mercado?: string): void {
   const entries = loadEntries();
-  const entry = entries.find(e => e.matchId === matchId);
+  const entry = findEntryFor(entries, matchId, mercado);
   if (entry) {
     entry.resultado = resultado;
     saveEntries(entries);
@@ -407,26 +418,33 @@ export function corrigirEntradaCLV(matchId: string, novoMercado: string, novaOdd
  */
 export async function sincronizarResultadoCLV(
   matchId: string,
-  resultado: 'GREEN' | 'RED' | 'VOID'
+  resultado: 'GREEN' | 'RED' | 'VOID',
+  mercado?: string
 ): Promise<void> {
+  // O local vem antes do Supabase: é o que o painel de CLV lê, e não pode ficar
+  // dependente de o cliente Supabase existir ou de a chamada de rede funcionar.
+  const entries = loadEntries();
+  const entry = findEntryFor(entries, matchId, mercado);
+  // VOID local sem resultado real é o que limparEntradasAntigas grava quando o jogo passa de
+  // kickoff+3h sem odd de fechamento — o placar que chega depois deve sobrescrever isso.
+  if (entry && (entry.resultado === 'PENDENTE' || (entry.resultado === 'VOID' && resultado !== 'VOID'))) {
+    entry.resultado = resultado;
+    saveEntries(entries);
+  }
+
   if (!supabase) return;
   try {
     const profile = getCachedProfile();
-    await supabase
+    let query = supabase
       .from('clv_entries')
       .update({ resultado })
       .eq('match_id', matchId)
       .eq('resultado', 'PENDENTE')
       .eq('user_id', profile?.id ?? '');
+    if (mercado) query = query.eq('mercado', mercado);
+    await query;
   } catch (e) {
     console.warn('[CLV] Falha ao sincronizar resultado:', e);
-  }
-
-  const entries = loadEntries();
-  const entry = entries.find(e => e.matchId === matchId);
-  if (entry && entry.resultado === 'PENDENTE') {
-    entry.resultado = resultado;
-    saveEntries(entries);
   }
 }
 

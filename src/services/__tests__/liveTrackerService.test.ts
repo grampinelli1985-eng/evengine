@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const proxy = vi.fn();
 vi.mock('../oddsProxyClient', () => ({ fetchViaOddsProxy: (...a: any[]) => proxy(...a) }));
@@ -19,6 +19,9 @@ import {
   sportKeysToPoll,
   getDueTrackedMatches,
   hasPendingLiveMatches,
+  onApiError,
+  __resetLiveTrackerState,
+  type ApiErrorType,
 } from '../liveTrackerService';
 
 const started = () => new Date(Date.now() - 60 * 60 * 1000).toISOString(); // começou há 1h
@@ -31,6 +34,7 @@ const ok = (body: any) => new Response(JSON.stringify(body), { status: 200 });
 beforeEach(() => {
   proxy.mockReset();
   store.clear();
+  __resetLiveTrackerState();
 });
 
 describe('liveTracker — custo de créditos do /scores', () => {
@@ -141,5 +145,97 @@ describe('liveTracker — janela de consulta (jogos antigos / não resolvíveis)
     await pollLiveResults();
     expect(proxy).not.toHaveBeenCalled();
     expect(hasPendingLiveMatches()).toBe(false);
+  });
+});
+
+describe('liveTracker — aviso quando o /scores falha (apostas sem resolução automática)', () => {
+  const quotaBody = { message: 'Usage quota has been reached.', error_code: 'OUT_OF_USAGE_CREDITS' };
+  const status = (code: number, body?: unknown) => new Response(body ? JSON.stringify(body) : '{}', { status: code });
+
+  let emitted: ApiErrorType[];
+  let unsubscribe: () => void;
+  beforeEach(() => {
+    emitted = [];
+    unsubscribe = onApiError(e => emitted.push(e));
+  });
+  afterEach(() => unsubscribe());
+
+  const track = () => registerMatchForTracking('m1', 'Arsenal', 'Chelsea', started(), 'soccer_epl');
+
+  it('401 OUT_OF_USAGE_CREDITS: avisa "créditos acabaram" com HTTP 401', async () => {
+    track();
+    proxy.mockResolvedValue(status(401, quotaBody));
+
+    await pollLiveResults();
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ kind: 'scores_unavailable', statusCode: 401 });
+    expect(emitted[0]!.detail).toContain('créditos');
+  });
+
+  it('401 sem error_code de cota: avisa chave inválida, não créditos', async () => {
+    track();
+    proxy.mockResolvedValue(status(401, { message: 'Invalid key' }));
+
+    await pollLiveResults();
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.detail).toContain('chave');
+    expect(emitted[0]!.detail).not.toContain('créditos');
+  });
+
+  it('429: avisa limite excedido', async () => {
+    track();
+    proxy.mockResolvedValue(status(429));
+
+    await pollLiveResults();
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ kind: 'scores_unavailable', statusCode: 429 });
+  });
+
+  it('não repete o aviso a cada ciclo de 10 min (usuário que fechou o banner não o vê voltar)', async () => {
+    track();
+    proxy.mockResolvedValue(status(401, quotaBody));
+
+    await pollLiveResults();
+    await pollLiveResults();
+    await pollLiveResults();
+
+    expect(emitted.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('volta a avisar depois que o /scores se recupera e falha de novo', async () => {
+    track();
+    proxy.mockResolvedValueOnce(status(401, quotaBody));
+    await pollLiveResults();
+
+    proxy.mockResolvedValueOnce(ok([])); // recuperou (jogo ainda em andamento, sem placar)
+    await pollLiveResults();
+
+    proxy.mockResolvedValueOnce(status(401, quotaBody));
+    await pollLiveResults();
+
+    expect(emitted.filter(e => e?.kind === 'scores_unavailable')).toHaveLength(2);
+  });
+
+  it('falha de chave/créditos não carimba o jogo como consultado (não segura a retentativa)', async () => {
+    registerMatchForTracking('m1', 'Sport', 'Avai', new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(), 'soccer_brazil_serie_b');
+    proxy.mockResolvedValue(status(401, quotaBody));
+
+    await pollLiveResults();
+    await pollLiveResults(); // sem carimbo: jogo de 5h continua elegível no ciclo seguinte
+
+    expect(proxy).toHaveBeenCalledTimes(2);
+    expect(getPendingTrackedMatches()[0].lastCheckedAt).toBeUndefined();
+  });
+
+  it('sem falha nenhuma, nenhum aviso é emitido', async () => {
+    track();
+    proxy.mockResolvedValue(ok(scoresBody('Arsenal', 'Chelsea', true)));
+
+    await pollLiveResults();
+
+    expect(emitted.filter(e => e?.kind === 'scores_unavailable')).toHaveLength(0);
   });
 });

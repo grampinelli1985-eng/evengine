@@ -798,6 +798,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
         try {
           await createBet(payload);
           removePendingBetFromStorage(matchId);
+          const tracked = currentMatches.find(m => m.id === matchId);
+          if (tracked) {
+            registerMatchForTracking(tracked.id, tracked.home_team, tracked.away_team, tracked.commence_time, tracked.sport_key);
+          }
           console.info(`[SyncBets] Aposta recuperada para matchId ${matchId}`);
         } catch (e) {
           console.warn(`[SyncBets] Falha ao recuperar aposta ${matchId}:`, e);
@@ -850,6 +854,10 @@ export default function EngineApp({ isPreviewMode = false, onSignOut }: EngineAp
 
     // Salva no localStorage ANTES do Supabase — garante que retry é possível se falhar
     savePendingBetToStorage(match.id, payload);
+
+    // A aposta só se resolve sozinha se o tracker conhecer o jogo. Registrar aqui (e não só
+    // ao analisar) cobre análise vinda do cache, de outra sessão ou de outro dispositivo.
+    registerMatchForTracking(match.id, match.home_team, match.away_team, match.commence_time, match.sport_key);
 
     const isAutoSharp = plan === 'sharp' && !!overrideAnalysis;
 

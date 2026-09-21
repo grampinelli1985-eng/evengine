@@ -33,6 +33,12 @@ const KIND_CONFIG = {
     icon: WifiOff,
     color: 'blue',
   },
+  scores_unavailable: {
+    title: 'Resolução Automática Indisponível',
+    fallbackDetail: 'Não foi possível buscar placares na Odds API. Apostas pendentes não serão resolvidas automaticamente.',
+    icon: AlertTriangle,
+    color: 'amber',
+  },
 } as const;
 
 export default function ApiErrorBanner({ errorType, onDismiss }: ApiErrorBannerProps) {

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
-  fetchBets, resolveBet, calculatePerformanceMetrics, resetBets, Bet
+  fetchBets, resolveBet, calculatePerformanceMetrics, resetBets, extractMatchId, Bet
 } from '../services/betService';
 import CLVDashboard from './Sharp/CLVDashboard';
 import { 
@@ -162,9 +162,11 @@ export default function BetsView({ onBack }: BetsViewProps) {
 
         // Sincronizar resultado no tracker CLV — localStorage + Supabase
         const clvStatus = resStatus === 'green' ? 'GREEN' : resStatus === 'red' ? 'RED' : 'VOID';
-        if (resolvingBet.analysis_id) {
-          atualizarResultadoCLV(resolvingBet.analysis_id, clvStatus);
-          sincronizarResultadoCLV(resolvingBet.analysis_id, clvStatus).catch(console.warn);
+        // analysis_id é null nas apostas do gate: o jogo só está identificado nas notes.
+        const clvMatchId = extractMatchId(resolvingBet.notes) ?? resolvingBet.analysis_id;
+        if (clvMatchId) {
+          atualizarResultadoCLV(clvMatchId, clvStatus, resolvingBet.market);
+          sincronizarResultadoCLV(clvMatchId, clvStatus, resolvingBet.market).catch(console.warn);
         }
 
         setResolvingBet(null);

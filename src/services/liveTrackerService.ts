@@ -17,6 +17,7 @@
  */
 
 import { fetchViaOddsProxy } from './oddsProxyClient';
+import { isOutOfCredits } from './oddsApiErrors';
 
 const STORAGE_KEY = 'evengine_live_tracker';
 const API_BASE_URL = '/api/football';
@@ -85,7 +86,10 @@ export interface LiveScore {
 
 export type LiveUpdate = LiveResult | LiveScore;
 
-export type ApiErrorKind = 'suspended' | 'quota' | 'network';
+export type ApiErrorKind = 'suspended' | 'quota' | 'network' | 'scores_unavailable';
+
+/** Por que o /scores da Odds API não trouxe placares (a chamada em si falhou). */
+export type ScoresFailure = 'out_of_credits' | 'unauthorized' | 'rate_limited';
 
 export interface ApiErrorInfo {
   kind: ApiErrorKind;
@@ -134,6 +138,40 @@ function cancelAndClearError(): void {
     _pendingErrorTimer = null;
   }
   emitApiError(null);
+}
+
+const SCORES_FAILURE_INFO: Record<ScoresFailure, { statusCode: number; detail: string }> = {
+  out_of_credits: {
+    statusCode: 401,
+    detail: 'Os créditos da Odds API acabaram. Apostas pendentes não serão resolvidas automaticamente — resolva manualmente em Apostas ou recarregue a chave.',
+  },
+  unauthorized: {
+    statusCode: 401,
+    detail: 'A chave da Odds API está ausente ou inválida. Apostas pendentes não serão resolvidas automaticamente.',
+  },
+  rate_limited: {
+    statusCode: 429,
+    detail: 'Limite de requisições da Odds API excedido. A resolução automática de apostas tenta de novo no próximo ciclo.',
+  },
+};
+
+// Último motivo já avisado. O poll roda a cada 10 min: sem isto o banner que o usuário
+// fechou reapareceria em todo ciclo. Só volta a avisar se o motivo mudar ou após recuperar.
+let _reportedScoresFailure: ScoresFailure | null = null;
+
+/** Avisa (uma vez por motivo) que placares não puderam ser buscados e há jogos sem resultado. */
+function reportScoresFailure(failure: ScoresFailure): void {
+  if (_reportedScoresFailure === failure) return;
+  _reportedScoresFailure = failure;
+  console.warn(`[LiveTracker] /scores indisponível (${failure}) — apostas pendentes não serão auto-resolvidas`);
+  // Sem o limiar de 2 falhas do scheduleError: crédito zerado/chave inválida não é transitório.
+  emitApiError({ kind: 'scores_unavailable', ...SCORES_FAILURE_INFO[failure] });
+}
+
+/** Só para testes. */
+export function __resetLiveTrackerState(): void {
+  _reportedScoresFailure = null;
+  _consecutiveFailures = 0;
 }
 
 function parseApiError(errors: Record<string, string>): ApiErrorKind {
@@ -340,6 +378,16 @@ export function getDueTrackedMatches(now: number = Date.now()): TrackedMatch[] {
   });
 }
 
+/**
+ * Carimba os jogos como consultados (base do limite de 1x/3h dos jogos velhos). Uma falha
+ * de chave/créditos (401) não conta como consulta: não gastou nada e nada foi verificado —
+ * carimbar seguraria o jogo por mais 3h depois de a cota voltar.
+ */
+function markCheckedUnlessKeyFailed(matches: TrackedMatch[], failure: ScoresFailure | null): void {
+  if (failure === 'out_of_credits' || failure === 'unauthorized') return;
+  markChecked(matches);
+}
+
 function markChecked(matches: TrackedMatch[]): void {
   if (matches.length === 0) return;
   const ids = new Set(matches.map(m => m.matchId));
@@ -376,8 +424,13 @@ export function sportKeysToPoll(pending: TrackedMatch[]): string[] {
  */
 async function fetchOddsApiScores(
   pending: TrackedMatch[]
-): Promise<Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>> {
+): Promise<{
+  results: Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>;
+  /** Motivo da falha da chamada (null se nenhuma falhou). Só 401/429 — 422/404 é liga sem cobertura. */
+  failure: ScoresFailure | null;
+}> {
   const results = new Map<string, { homeGoals: number; awayGoals: number; completed: boolean; live: boolean }>();
+  let failure: ScoresFailure | null = null;
 
   for (const sportKey of sportKeysToPoll(pending)) {
     // Todos os jogos pendentes já encerrados: não gasta créditos nas ligas restantes.
@@ -388,7 +441,13 @@ async function fetchOddsApiScores(
       });
 
       if (!res.ok) {
-        if (res.status === 401 || res.status === 422) break; // chave inválida — parar
+        if (res.status === 401) {
+          // Mesmo 401 para chave inválida e créditos esgotados; o corpo diferencia.
+          failure = (await isOutOfCredits(res)) ? 'out_of_credits' : 'unauthorized';
+          break; // a chave vale para todas as ligas — parar
+        }
+        if (res.status === 422) break; // parâmetro rejeitado — parar
+        if (res.status === 429) failure = 'rate_limited';
         continue; // liga não disponível ou rate limit — continuar
       }
 
@@ -425,7 +484,7 @@ async function fetchOddsApiScores(
     }
   }
 
-  return results;
+  return { results, failure };
 }
 
 /**
@@ -497,8 +556,9 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
   // ── MODO NORMAL: The Odds API como fonte primária ──────────────────────────
   if (!forceToday) {
     console.info('[LiveTracker] Polling via The Odds API scores...');
-    const oddsScores = await fetchOddsApiScores(pending);
-    markChecked(pending);
+    const { results: oddsScores, failure } = await fetchOddsApiScores(pending);
+    markCheckedUnlessKeyFailed(pending, failure);
+    if (!failure) _reportedScoresFailure = null;
 
     for (const match of pending) {
       const key = buildLiveKey(match.homeTeam, match.awayTeam);
@@ -539,8 +599,12 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
     const stillPending = pending.filter(m => !resolvedIds.has(m.matchId));
 
     if (stillPending.length === 0 || updates.length > 0) {
-      // Limpa banner de erro (The Odds API funcionou)
-      if (oddsScores.size > 0) cancelAndClearError();
+      if (failure && stillPending.length > 0) {
+        reportScoresFailure(failure);
+      } else if (oddsScores.size > 0) {
+        // Limpa banner de erro (The Odds API funcionou)
+        cancelAndClearError();
+      }
       return updates;
     }
 
@@ -552,7 +616,8 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
       const fixtures = await fetchApiFootballFixtures(date, true);
       if (fixtures.length === 0) continue;
 
-      cancelAndClearError();
+      // Com o /scores falhando, o banner é do aviso de placares — não o apaga por causa do fallback.
+      if (!failure) cancelAndClearError();
       console.info(`[LiveTracker][Fallback] ${fixtures.length} fixture(s) para ${date}`);
 
       for (const fixture of fixtures) {
@@ -582,6 +647,11 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
           updates.push({ matchId: match.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, placar, minuto, statusShort: status, finished: false });
         }
       }
+    }
+
+    // Nem a Odds API (falhou) nem o fallback resolveram algum jogo: o usuário precisa saber.
+    if (failure && stillPending.some(m => !updates.some(u => u.finished && u.matchId === m.matchId))) {
+      reportScoresFailure(failure);
     }
 
     return updates;
@@ -615,8 +685,9 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
   } else {
     // Fallback Copa: The Odds API (ligas de Copa/seleções podem estar cobertas)
     console.info('[LiveTracker][Copa] API-Football indisponível — tentando OddsAPI...');
-    const oddsScores = await fetchOddsApiScores(pending);
-    markChecked(pending);
+    const { results: oddsScores, failure } = await fetchOddsApiScores(pending);
+    markCheckedUnlessKeyFailed(pending, failure);
+    if (!failure) _reportedScoresFailure = null;
     for (const match of pending) {
       const key = buildLiveKey(match.homeTeam, match.awayTeam);
       const score = oddsScores.get(key);
@@ -626,6 +697,9 @@ export async function pollLiveResults(forceToday = false): Promise<LiveUpdate[]>
         updates.push({ matchId: match.matchId, homeTeam: match.homeTeam, awayTeam: match.awayTeam, placar, statusShort: 'FT', homeGoals: score.homeGoals, awayGoals: score.awayGoals, finished: true });
         markMatchResolved(match.matchId, placar);
       }
+    }
+    if (failure && pending.some(m => !updates.some(u => u.finished && u.matchId === m.matchId))) {
+      reportScoresFailure(failure);
     }
   }
 
